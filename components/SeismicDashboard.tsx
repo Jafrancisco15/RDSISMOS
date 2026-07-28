@@ -4,26 +4,30 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
   EventsApiResponse,
+  MapLayerVisibility,
   MigrationProjection,
   SeismicEvent,
 } from "@/lib/types";
 
 const WorldMap = dynamic(
   () => import("./WorldMap").then((module) => module.WorldMap),
-  { ssr: false, loading: () => <div className="map-loading">Cargando mapa mundial…</div> },
+  {
+    ssr: false,
+    loading: () => <div className="map-loading">Cargando mapa sísmico…</div>,
+  },
 );
 
 const levelCopy = {
-  green: { title: "Sin señal destacada", tone: "Estable" },
-  yellow: { title: "Vigilancia estadística", tone: "Atención" },
-  orange: { title: "Actividad elevada", tone: "Elevada" },
-  red: { title: "Posible actividad sísmica", tone: "Experimental" },
+  green: { tone: "Bajo" },
+  yellow: { tone: "Observación" },
+  orange: { tone: "Moderado" },
+  red: { tone: "Elevado" },
 };
 
 const projectionStatusCopy = {
-  active: { label: "Proyección activa", detail: "En seguimiento" },
-  fulfilled: { label: "Proyección cumplida", detail: "Coincidencia encontrada" },
-  expired: { label: "Proyección vencida", detail: "Sin coincidencia en el plazo" },
+  active: { label: "Cápsula activa", detail: "Dentro del plazo" },
+  fulfilled: { label: "Coincidencia observada", detail: "Evento posterior asociado" },
+  expired: { label: "Cápsula vencida", detail: "Sin coincidencia en el plazo" },
 };
 
 function formatUtc(value: string) {
@@ -44,12 +48,14 @@ function formatDate(value: string) {
 function EventRow({ event }: { event: SeismicEvent }) {
   return (
     <article className="event-row">
-      <div className={`magnitude ${event.magnitude >= 6 ? "magnitude-strong" : ""}`}>
+      <div className={`magnitude ${event.magnitude >= 5 ? "magnitude-strong" : ""}`}>
         M{event.magnitude.toFixed(1)}
       </div>
       <div>
         <strong>{event.place}</strong>
-        <span>{formatUtc(event.time)} UTC · {event.depthKm.toFixed(0)} km</span>
+        <span>
+          {formatUtc(event.time)} UTC · {event.depthKm.toFixed(0)} km · {event.source}
+        </span>
       </div>
     </article>
   );
@@ -57,15 +63,15 @@ function EventRow({ event }: { event: SeismicEvent }) {
 
 function ProjectionCapsule({ projection }: { projection: MigrationProjection }) {
   const status = projectionStatusCopy[projection.status];
-
   return (
     <article className={`projection-capsule projection-${projection.status}`}>
       <div className="capsule-header">
         <div>
-          <span className="eyebrow">Cápsula predictiva experimental</span>
-          <h2>{projection.sourceRegionName}</h2>
+          <span className="eyebrow">Cápsula ETAS vinculada a un evento anterior</span>
+          <h2>{projection.targetCountry.name}</h2>
           <p className="capsule-origin">
-            Evento origen: <strong>M{projection.sourceEvent.magnitude.toFixed(1)}</strong> · {projection.sourceEvent.place}
+            Evento padre: <strong>M{projection.sourceEvent.magnitude.toFixed(1)}</strong> ·{" "}
+            {projection.sourceEvent.place} · {formatUtc(projection.sourceEvent.time)} UTC
           </p>
         </div>
         <div className="projection-status">
@@ -75,36 +81,67 @@ function ProjectionCapsule({ projection }: { projection: MigrationProjection }) 
       </div>
 
       <div className="capsule-stats">
-        <div><span>Rango estimado</span><strong>M{projection.magnitudeMin.toFixed(1)}–{projection.magnitudeMax.toFixed(1)}</strong></div>
-        <div><span>Plazo máximo</span><strong>{projection.maxDays} días</strong></div>
-        <div><span>Inicio</span><strong>{formatDate(projection.startTime)}</strong></div>
-        <div><span>Vencimiento</span><strong>{formatDate(projection.expiresAt)}</strong></div>
-        <div><span>Consistencia heurística</span><strong>{projection.consistencyScore}/100</strong></div>
+        <div>
+          <span>Probabilidad condicional</span>
+          <strong>{projection.probabilityPct}%</strong>
+        </div>
+        <div>
+          <span>Magnitud contemplada</span>
+          <strong>
+            M{projection.magnitudeMin.toFixed(1)}–{projection.magnitudeMax.toFixed(1)}
+          </strong>
+        </div>
+        <div>
+          <span>Plazo</span>
+          <strong>{projection.maxDays} días</strong>
+        </div>
+        <div>
+          <span>Vencimiento</span>
+          <strong>{formatDate(projection.expiresAt)}</strong>
+        </div>
+        <div>
+          <span>Conteo esperado ETAS</span>
+          <strong>{projection.expectedCount.toFixed(3)}</strong>
+        </div>
       </div>
 
       <div className="migration-points">
-        <h3>Puntos de migración sugeridos</h3>
-        <ol>
-          {projection.targets.map((target) => (
-            <li key={target.id} className={projection.matchedTargetId === target.id ? "matched-target" : ""}>
-              {target.name}
-              {projection.matchedTargetId === target.id && <strong> · coincidencia observada</strong>}
-            </li>
-          ))}
-        </ol>
+        <h3>Zona proyectada</h3>
+        <p>
+          {projection.projectedZone.name}. Radio aproximado:{" "}
+          {Math.round(projection.projectedZone.radiusKm)} km.
+        </p>
+        <p>
+          Asociación auditable: cápsula <code>{projection.id}</code> → evento padre{" "}
+          <code>{projection.parentEventId}</code>.
+        </p>
       </div>
 
       {projection.matchedEvent && (
         <div className="projection-result">
-          <strong>Proyección cumplida</strong>
+          <strong>Evento posterior que cumplió los criterios</strong>
           <span>
-            M{projection.matchedEvent.magnitude.toFixed(1)} en {projection.matchedEvent.place}, {formatUtc(projection.matchedEvent.time)} UTC.
+            M{projection.matchedEvent.magnitude.toFixed(1)} en{" "}
+            {projection.matchedEvent.place}, {formatUtc(projection.matchedEvent.time)} UTC.
           </span>
         </div>
       )}
 
+      <details className="model-details">
+        <summary>Modelo y razones del cálculo</summary>
+        <p>
+          <strong>{projection.model.modelName}</strong>. Mc={projection.model.magnitudeCompleteness.toFixed(1)}, p={projection.model.omoriP.toFixed(1)}, q={projection.model.spatialQ.toFixed(1)}, b={projection.model.gutenbergRichterB.toFixed(1)}.
+        </p>
+        <ol>
+          {projection.rationale.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ol>
+        <p>{projection.model.calibration}</p>
+      </details>
+
       <p className="capsule-disclaimer">
-        Esta cápsula aplica reglas configuradas a eventos del catálogo. Es una hipótesis cuantificable y auditable, no una alerta oficial ni una predicción sísmica validada.
+        Es un pronóstico probabilístico de agrupamiento regional, no una predicción exacta ni una alerta oficial.
       </p>
     </article>
   );
@@ -114,23 +151,36 @@ export function SeismicDashboard() {
   const [data, setData] = useState<EventsApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [countryCode, setCountryCode] = useState("DO");
   const [secondsToRefresh, setSecondsToRefresh] = useState(60);
-  const [minimumMagnitude, setMinimumMagnitude] = useState(4.5);
+  const [minimumMagnitude, setMinimumMagnitude] = useState(2);
   const [selectedProjectionId, setSelectedProjectionId] = useState<string | null>(null);
+  const [layers, setLayers] = useState<MapLayerVisibility>({
+    occurred: true,
+    faults: false,
+    projected: true,
+    preceding: true,
+  });
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (selectedCountry = countryCode) => {
     try {
-      const response = await fetch("/api/events", { cache: "no-store" });
+      const response = await fetch(
+        `/api/events?country=${encodeURIComponent(selectedCountry)}&_=${Date.now()}`,
+        { cache: "no-store" },
+      );
       if (!response.ok) throw new Error(`Error HTTP ${response.status}`);
       const payload = (await response.json()) as EventsApiResponse;
       setData(payload);
+      setCountryCode(payload.target.code);
       setSelectedProjectionId((current) => {
         if (current && payload.projections.some((projection) => projection.id === current)) {
           return current;
         }
-        return payload.projections.find((projection) => projection.status === "active")?.id
-          ?? payload.projections[0]?.id
-          ?? null;
+        return (
+          payload.projections.find((projection) => projection.status === "active")?.id ??
+          payload.projections[0]?.id ??
+          null
+        );
       });
       setError(null);
       setSecondsToRefresh(payload.refreshSeconds);
@@ -143,13 +193,13 @@ export function SeismicDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [countryCode]);
 
   useEffect(() => {
-    void loadData();
-    const refresh = window.setInterval(() => void loadData(), 60_000);
+    void loadData(countryCode);
+    const refresh = window.setInterval(() => void loadData(countryCode), 60_000);
     return () => window.clearInterval(refresh);
-  }, [loadData]);
+  }, [countryCode, loadData]);
 
   useEffect(() => {
     const countdown = window.setInterval(
@@ -161,24 +211,25 @@ export function SeismicDashboard() {
 
   const relevantEvents = useMemo(() => {
     if (!data) return [];
-    return data.events
+    return [...data.events]
       .filter(
-        (event) =>
-          event.magnitude >= minimumMagnitude &&
-          (event.regionId || event.isDominicanRegion),
+        (event) => event.isTargetRegion && event.magnitude >= minimumMagnitude,
       )
-      .slice(0, 40);
+      .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
+      .slice(0, 80);
   }, [data, minimumMagnitude]);
 
   const selectedProjection = useMemo(() => {
     if (!data) return null;
-    return data.projections.find((projection) => projection.id === selectedProjectionId)
-      ?? data.projections[0]
-      ?? null;
+    return (
+      data.projections.find((projection) => projection.id === selectedProjectionId) ??
+      data.projections[0] ??
+      null
+    );
   }, [data, selectedProjectionId]);
 
   if (loading && !data) {
-    return <main className="center-state">Conectando con el catálogo sísmico…</main>;
+    return <main className="center-state">Conectando con los catálogos sísmicos…</main>;
   }
 
   if (!data) {
@@ -186,25 +237,44 @@ export function SeismicDashboard() {
       <main className="center-state error-state">
         <h1>RDSISMOS</h1>
         <p>{error ?? "No hay datos disponibles."}</p>
-        <button onClick={() => void loadData()}>Reintentar</button>
+        <button onClick={() => void loadData(countryCode)}>Reintentar</button>
       </main>
     );
   }
 
   const status = levelCopy[data.analysis.level];
+  const toggleLayer = (key: keyof MapLayerVisibility) =>
+    setLayers((current) => ({ ...current, [key]: !current[key] }));
 
   return (
     <main className={`dashboard level-${data.analysis.level}`}>
       <header className="topbar">
         <div>
           <div className="brand-line"><span className="pulse-dot" /> RDSISMOS</div>
-          <h1>Observatorio experimental de migración sísmica</h1>
-          <p>Ventana móvil de {data.windowDays} días · actualización cada minuto</p>
+          <h1>Pronóstico sísmico probabilístico por país</h1>
+          <p>
+            Ventana histórica de {data.windowDays} días · actualización cada minuto
+          </p>
         </div>
         <div className="live-meta">
-          <span>Fuente: {data.provider}</span>
+          <label className="country-control">
+            País de intención del análisis
+            <select
+              value={countryCode}
+              onChange={(event) => {
+                setLoading(true);
+                setSelectedProjectionId(null);
+                setCountryCode(event.target.value);
+              }}
+            >
+              {data.countries.map((country) => (
+                <option key={country.code} value={country.code}>{country.name}</option>
+              ))}
+            </select>
+          </label>
+          <span>Fuentes combinadas: {data.provider}</span>
           <strong>Próxima actualización: {secondsToRefresh}s</strong>
-          <button onClick={() => void loadData()}>Actualizar ahora</button>
+          <button onClick={() => void loadData(countryCode)}>Actualizar ahora</button>
         </div>
       </header>
 
@@ -215,7 +285,7 @@ export function SeismicDashboard() {
         <article className="risk-card">
           <div className="risk-head">
             <div>
-              <span className="eyebrow">Índice exploratorio general</span>
+              <span className="eyebrow">Pronóstico operacional para {data.target.name}</span>
               <h2>{data.analysis.label}</h2>
             </div>
             <div className="score-ring"><strong>{data.analysis.score}</strong><span>/100</span></div>
@@ -223,19 +293,18 @@ export function SeismicDashboard() {
           <div className="status-pill">{status.tone}</div>
           <p className="risk-summary">{data.analysis.summary}</p>
           <div className="metrics-grid">
-            <div><span>Zonas fuente</span><strong>{data.analysis.sourceActivityRatio.toFixed(2)}×</strong></div>
-            <div><span>Entorno RD</span><strong>{data.analysis.caribbeanActivityRatio.toFixed(2)}×</strong></div>
-            <div><span>Tendencia</span><strong>{data.analysis.distanceTrendKmPerDay.toFixed(0)} km/día</strong></div>
-            <div><span>Cadena</span><strong>{data.analysis.approachChainLength} eventos</strong></div>
+            <div><span>Actividad reciente</span><strong>{data.analysis.targetActivityRatio.toFixed(2)}×</strong></div>
+            <div><span>Tasa 7 días</span><strong>{data.analysis.recentRatePerDay.toFixed(2)}/día</strong></div>
+            <div><span>Cápsulas activas</span><strong>{data.analysis.activeCapsules}</strong></div>
+            <div><span>Máxima probabilidad</span><strong>{data.analysis.maxCapsuleProbabilityPct}%</strong></div>
           </div>
         </article>
 
         <article className="science-card">
-          <span className="eyebrow">Interpretación responsable</span>
-          <h2>Proyección experimental, no alerta oficial</h2>
+          <span className="eyebrow">Base científica</span>
+          <h2>ETAS + Omori–Utsu + Gutenberg–Richter</h2>
           <p>
-            Las cápsulas convierten cada evento origen en destinos, magnitud y plazo verificables.
-            El sistema conserva también las proyecciones vencidas para medir aciertos y fallos sin seleccionar solamente coincidencias favorables.
+            El modelo trata cada sismo relevante como un evento padre capaz de elevar temporalmente la tasa de eventos cercanos. No crea rutas mundiales arbitrarias.
           </p>
           <ul>
             {data.analysis.limitations.map((limitation) => <li key={limitation}>{limitation}</li>)}
@@ -248,15 +317,15 @@ export function SeismicDashboard() {
           <ProjectionCapsule projection={selectedProjection} />
         ) : (
           <article className="projection-capsule empty-capsule">
-            <span className="eyebrow">Cápsula predictiva experimental</span>
-            <h2>No hay una proyección activa</h2>
-            <p>Se necesita un evento M4.7 o mayor en una zona fuente configurada durante los últimos 30 días.</p>
+            <span className="eyebrow">Cápsulas ETAS</span>
+            <h2>No hay una cápsula activa para {data.target.name}</h2>
+            <p>No se identificó un evento padre regional que supere los umbrales actuales.</p>
           </article>
         )}
 
         <aside className="projection-selector">
           <span className="eyebrow">Cápsulas recientes</span>
-          <h2>Seleccionar proyección</h2>
+          <h2>Evento padre asociado</h2>
           <div className="projection-tabs">
             {data.projections.length ? data.projections.map((projection) => (
               <button
@@ -264,8 +333,8 @@ export function SeismicDashboard() {
                 className={projection.id === selectedProjection?.id ? "active" : ""}
                 onClick={() => setSelectedProjectionId(projection.id)}
               >
-                <span>M{projection.sourceEvent.magnitude.toFixed(1)} · {projection.sourceRegionName}</span>
-                <strong>{projectionStatusCopy[projection.status].label}</strong>
+                <span>M{projection.sourceEvent.magnitude.toFixed(1)} · {projection.sourceEvent.place}</span>
+                <strong>{projection.probabilityPct}% · {projectionStatusCopy[projection.status].label}</strong>
               </button>
             )) : <p>No existen cápsulas en la ventana actual.</p>}
           </div>
@@ -273,23 +342,43 @@ export function SeismicDashboard() {
       </section>
 
       <section className="map-card">
-        <div className="section-heading">
+        <div className="section-heading map-heading">
           <div>
-            <span className="eyebrow">Mapa mundial</span>
-            <h2>Ruta y destinos de la cápsula seleccionada</h2>
+            <span className="eyebrow">Mapa por capas</span>
+            <h2>Eventos, fallas, proyecciones y eventos precedentes</h2>
           </div>
-          <div className="legend">
-            <span><i className="legend-source" /> Zona histórica</span>
-            <span><i className="legend-projection" /> Ruta proyectada</span>
-            <span><i className="legend-rd" /> Entorno RD</span>
-            <span><i className="legend-global" /> M6+ global</span>
+          <div className="layer-controls" role="group" aria-label="Capas del mapa">
+            {([
+              ["occurred", "Eventos ocurridos"],
+              ["faults", "Fallas activas"],
+              ["projected", "Eventos proyectados"],
+              ["preceding", "Eventos precedentes"],
+            ] as Array<[keyof MapLayerVisibility, string]>).map(([key, label]) => (
+              <button
+                key={key}
+                className={layers[key] ? "active" : ""}
+                onClick={() => toggleLayer(key)}
+                aria-pressed={layers[key]}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
+        <div className="legend">
+          <span><i className="legend-target-event" /> Evento del país/entorno</span>
+          <span><i className="legend-parent" /> Evento precedente</span>
+          <span><i className="legend-projection" /> Zona ETAS proyectada</span>
+          <span><i className="legend-fault" /> Falla activa GEM</span>
+        </div>
         <WorldMap
+          key={data.target.code}
           events={data.events}
-          watchedRegions={data.watchedRegions}
+          target={data.target}
           level={data.analysis.level}
-          projection={selectedProjection}
+          projections={data.projections}
+          selectedProjection={selectedProjection}
+          layers={layers}
         />
       </section>
 
@@ -297,8 +386,8 @@ export function SeismicDashboard() {
         <article className="panel events-panel">
           <div className="section-heading compact">
             <div>
-              <span className="eyebrow">Actividad relevante</span>
-              <h2>Eventos recientes</h2>
+              <span className="eyebrow">Actividad relevante actualizada</span>
+              <h2>Eventos de {data.target.name} y su entorno</h2>
             </div>
             <label>
               Magnitud mínima
@@ -306,11 +395,11 @@ export function SeismicDashboard() {
                 value={minimumMagnitude}
                 onChange={(event) => setMinimumMagnitude(Number(event.target.value))}
               >
+                <option value={2}>M2.0</option>
                 <option value={2.5}>M2.5</option>
+                <option value={3}>M3.0</option>
                 <option value={4}>M4.0</option>
-                <option value={4.5}>M4.5</option>
                 <option value={5}>M5.0</option>
-                <option value={6}>M6.0</option>
               </select>
             </label>
           </div>
@@ -322,37 +411,23 @@ export function SeismicDashboard() {
         </article>
 
         <article className="panel evidence-panel">
-          <span className="eyebrow">Por qué cambió el índice</span>
-          <h2>Evidencia calculada</h2>
+          <span className="eyebrow">Trazabilidad</span>
+          <h2>Datos y cálculo</h2>
           <ol>
             {data.analysis.evidence.map((item) => <li key={item}>{item}</li>)}
           </ol>
+          <details>
+            <summary>Estado de los proveedores</summary>
+            <ul>
+              {data.providerStatus.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </details>
           <p className="updated-at">Calculado: {formatUtc(data.generatedAt)} UTC</p>
         </article>
       </section>
 
-      <section className="panel regions-panel">
-        <div className="section-heading compact">
-          <div>
-            <span className="eyebrow">Base histórica y experimental</span>
-            <h2>Zonas incluidas en el modelo</h2>
-          </div>
-          <span>{data.watchedRegions.length} áreas vigiladas</span>
-        </div>
-        <div className="region-grid">
-          {data.watchedRegions.map((region) => (
-            <article key={region.id}>
-              <strong>{region.name}</strong>
-              <p>{region.historicalNote}</p>
-            </article>
-          ))}
-        </div>
-      </section>
-
       <footer>
-        Datos principales: Raspberry Shake QuakeLink. Respaldo opcional: USGS ComCat.
-        RDSISMOS es una herramienta educativa y experimental; siga siempre al Centro Nacional
-        de Sismología y a las autoridades de protección civil.
+        Eventos: Raspberry Shake QuakeLink y USGS ComCat/GeoJSON en tiempo real. Fallas: GEM Global Active Faults Database, CC BY-SA 4.0. El sistema es experimental y no sustituye las comunicaciones de las autoridades sismológicas.
       </footer>
     </main>
   );
