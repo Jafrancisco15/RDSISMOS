@@ -1,5 +1,5 @@
-import { SeismicDashboard } from "@/components/SeismicDashboard";
+import { AppShell } from "@/components/AppShell";
 
 export default function HomePage() {
-  return <SeismicDashboard />;
+  return <AppShell />;
 }
