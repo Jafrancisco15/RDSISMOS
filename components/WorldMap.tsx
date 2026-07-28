@@ -1,20 +1,24 @@
 "use client";
 
+import { Fragment, useEffect, useMemo, useState } from "react";
+import type { GeoJsonObject } from "geojson";
 import {
   Circle,
   CircleMarker,
+  GeoJSON,
   MapContainer,
   Polyline,
   Popup,
   TileLayer,
   Tooltip,
+  useMap,
 } from "react-leaflet";
-import { DOMINICAN_TARGET } from "@/lib/regions";
 import type {
   AlertLevel,
+  CountryTarget,
+  MapLayerVisibility,
   MigrationProjection,
   SeismicEvent,
-  WatchedRegion,
 } from "@/lib/types";
 
 const levelColors: Record<AlertLevel, string> = {
@@ -25,160 +29,240 @@ const levelColors: Record<AlertLevel, string> = {
 };
 
 const projectionColors = {
-  active: "#38bdf8",
+  active: "#a855f7",
   fulfilled: "#22c55e",
-  expired: "#94a3b8",
+  expired: "#64748b",
 };
 
-function eventColor(event: SeismicEvent) {
-  if (event.isDominicanRegion) return "#ef4444";
-  if (event.regionId) return "#f59e0b";
+function RecenterMap({ target }: { target: CountryTarget }) {
+  const map = useMap();
+  useEffect(() => {
+    const zoom = target.radiusKm < 400 ? 6 : target.radiusKm < 900 ? 5 : 4;
+    map.setView([target.latitude, target.longitude], zoom, { animate: true });
+  }, [map, target]);
+  return null;
+}
+
+function formatUtc(value: string) {
+  return new Intl.DateTimeFormat("es-DO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(new Date(value));
+}
+
+function occurredColor(event: SeismicEvent) {
+  if (event.isTargetRegion) return "#38bdf8";
   return "#94a3b8";
 }
 
 export function WorldMap({
   events,
-  watchedRegions,
+  target,
   level,
-  projection,
+  projections,
+  selectedProjection,
+  layers,
 }: {
   events: SeismicEvent[];
-  watchedRegions: WatchedRegion[];
+  target: CountryTarget;
   level: AlertLevel;
-  projection: MigrationProjection | null;
+  projections: MigrationProjection[];
+  selectedProjection: MigrationProjection | null;
+  layers: MapLayerVisibility;
 }) {
-  const displayedEvents = events.filter(
-    (event) => event.isDominicanRegion || event.regionId || event.magnitude >= 6,
+  const [faultData, setFaultData] = useState<GeoJsonObject | null>(null);
+  const [faultStatus, setFaultStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!layers.faults) return;
+    const controller = new AbortController();
+    setFaultStatus("Cargando fallas activas…");
+    fetch(`/api/faults?country=${encodeURIComponent(target.code)}`, {
+      cache: "force-cache",
+      signal: controller.signal,
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<
+          GeoJsonObject & { warning?: string; attribution?: string }
+        >;
+      })
+      .then((payload) => {
+        setFaultData(payload);
+        setFaultStatus(payload.warning ?? payload.attribution ?? null);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setFaultData(null);
+        setFaultStatus(
+          error instanceof Error ? error.message : "No se pudieron cargar las fallas.",
+        );
+      });
+    return () => controller.abort();
+  }, [layers.faults, target.code]);
+
+  const occurredEvents = useMemo(
+    () =>
+      events
+        .filter(
+          (event) =>
+            layers.occurred && (event.isTargetRegion || event.magnitude >= 5.5),
+        )
+        .slice(0, 1_200),
+    [events, layers.occurred],
   );
-  const projectionColor = projection
-    ? projectionColors[projection.status]
-    : projectionColors.expired;
+
+  const displayedProjections = layers.projected
+    ? projections.filter(
+        (projection) =>
+          projection.status === "active" || projection.id === selectedProjection?.id,
+      )
+    : [];
+  const parentEvents = layers.preceding
+    ? projections.map((projection) => projection.sourceEvent)
+    : [];
 
   return (
-    <MapContainer center={[14, -36]} zoom={2} minZoom={2} className="world-map" worldCopyJump>
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-
-      {watchedRegions.map((region) => (
-        <Circle
-          key={region.id}
-          center={[region.latitude, region.longitude]}
-          radius={region.radiusKm * 1_000}
-          pathOptions={{ color: "#f59e0b", fillColor: "#f59e0b", fillOpacity: 0.035, weight: 1 }}
-        >
-          <Tooltip sticky>{region.name}</Tooltip>
-        </Circle>
-      ))}
-
-      <Circle
-        center={[DOMINICAN_TARGET.latitude, DOMINICAN_TARGET.longitude]}
-        radius={DOMINICAN_TARGET.radiusKm * 1_000}
-        pathOptions={{
-          color: levelColors[level],
-          fillColor: levelColors[level],
-          fillOpacity: level === "red" ? 0.32 : 0.13,
-          weight: level === "red" ? 3 : 2,
-        }}
+    <div className="map-wrapper">
+      <MapContainer
+        center={[target.latitude, target.longitude]}
+        zoom={5}
+        minZoom={2}
+        className="world-map"
+        worldCopyJump
       >
-        <Tooltip permanent direction="top" className="dominican-label">
-          República Dominicana · {level.toUpperCase()}
-        </Tooltip>
-      </Circle>
+        <RecenterMap target={target} />
+        <TileLayer
+          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
 
-      {projection && (
-        <>
-          <CircleMarker
-            center={[projection.sourceEvent.latitude, projection.sourceEvent.longitude]}
-            radius={10}
-            pathOptions={{
-              color: projectionColor,
-              fillColor: projectionColor,
-              fillOpacity: 0.92,
-              weight: 3,
+        {layers.faults && faultData && (
+          <GeoJSON
+            key={`faults-${target.code}`}
+            data={faultData}
+            style={{ color: "#f97316", weight: 1.6, opacity: 0.78 }}
+            onEachFeature={(feature, layer) => {
+              const properties = feature.properties as Record<string, unknown> | undefined;
+              const name =
+                properties?.name ??
+                properties?.fault_name ??
+                properties?.Fault_Name ??
+                "Falla activa registrada";
+              layer.bindTooltip(String(name), { sticky: true });
             }}
-          >
-            <Tooltip permanent direction="top" className="projection-label">
-              Origen M{projection.sourceEvent.magnitude.toFixed(1)}
-            </Tooltip>
-            <Popup>
-              <strong>Evento origen: {projection.sourceRegionName}</strong>
-              <br />
-              M{projection.sourceEvent.magnitude.toFixed(1)} · {projection.sourceEvent.place}
-              <br />
-              Ventana: {projection.maxDays} días
-            </Popup>
-          </CircleMarker>
+          />
+        )}
 
-          {projection.targets.map((target) => {
-            const matched = projection.matchedTargetId === target.id;
-            const targetColor = matched ? "#22c55e" : projectionColor;
-            return (
+        <Circle
+          center={[target.latitude, target.longitude]}
+          radius={target.radiusKm * 1_000}
+          pathOptions={{
+            color: levelColors[level],
+            fillColor: levelColors[level],
+            fillOpacity: 0.055,
+            weight: 2,
+          }}
+        >
+          <Tooltip permanent direction="top" className="target-label">
+            {target.name} · {level.toUpperCase()}
+          </Tooltip>
+        </Circle>
+
+        {displayedProjections.map((projection) => {
+          const selected = projection.id === selectedProjection?.id;
+          const color = projectionColors[projection.status];
+          return (
+            <Fragment key={projection.id}>
               <Circle
-                key={`${projection.id}-${target.id}`}
-                center={[target.latitude, target.longitude]}
-                radius={target.radiusKm * 1_000}
+                center={[
+                  projection.projectedZone.latitude,
+                  projection.projectedZone.longitude,
+                ]}
+                radius={projection.projectedZone.radiusKm * 1_000}
                 pathOptions={{
-                  color: targetColor,
-                  fillColor: targetColor,
-                  fillOpacity: matched ? 0.2 : 0.08,
-                  weight: matched ? 3 : 2,
-                  dashArray: matched ? undefined : "7 7",
+                  color,
+                  fillColor: color,
+                  fillOpacity: selected ? 0.2 : 0.08,
+                  weight: selected ? 3 : 1.5,
+                  dashArray: projection.status === "fulfilled" ? undefined : "8 7",
                 }}
               >
                 <Tooltip sticky>
-                  {matched ? "Proyección cumplida: " : "Destino candidato: "}{target.name}
+                  {projection.projectedZone.name} · {projection.probabilityPct}%
                 </Tooltip>
               </Circle>
-            );
-          })}
+              <Polyline
+                positions={[
+                  [projection.sourceEvent.latitude, projection.sourceEvent.longitude],
+                  [projection.projectedZone.latitude, projection.projectedZone.longitude],
+                ]}
+                pathOptions={{
+                  color,
+                  weight: selected ? 3 : 1.5,
+                  opacity: selected ? 0.9 : 0.55,
+                  dashArray: "9 8",
+                }}
+              />
+            </Fragment>
+          );
+        })}
 
-          {projection.targets.map((target) => (
-            <Polyline
-              key={`route-${projection.id}-${target.id}`}
-              positions={[
-                [projection.sourceEvent.latitude, projection.sourceEvent.longitude],
-                [target.latitude, target.longitude],
-              ]}
-              pathOptions={{
-                color: projection.matchedTargetId === target.id ? "#22c55e" : projectionColor,
-                weight: projection.matchedTargetId === target.id ? 4 : 2,
-                opacity: 0.82,
-                dashArray: projection.matchedTargetId === target.id ? undefined : "10 9",
-              }}
-            />
-          ))}
-        </>
+        {parentEvents.map((event) => (
+          <CircleMarker
+            key={`parent-${event.source}-${event.id}`}
+            center={[event.latitude, event.longitude]}
+            radius={9}
+            pathOptions={{
+              color: "#facc15",
+              fillColor: "#7c3aed",
+              fillOpacity: 0.95,
+              weight: 3,
+            }}
+          >
+            <Tooltip sticky>Evento precedente M{event.magnitude.toFixed(1)}</Tooltip>
+            <Popup>
+              <strong>Evento padre / precedente</strong>
+              <br />M{event.magnitude.toFixed(1)} · {event.place}
+              <br />{formatUtc(event.time)} UTC
+              <br />Fuente: {event.source}
+            </Popup>
+          </CircleMarker>
+        ))}
+
+        {occurredEvents.map((event) => (
+          <CircleMarker
+            key={`occurred-${event.source}-${event.id}`}
+            center={[event.latitude, event.longitude]}
+            radius={Math.max(3, Math.min(11, (event.magnitude - 1) * 1.45))}
+            pathOptions={{
+              color: occurredColor(event),
+              fillColor: occurredColor(event),
+              fillOpacity: event.isTargetRegion ? 0.84 : 0.52,
+              weight: event.isTargetRegion ? 1.7 : 1,
+            }}
+          >
+            <Popup>
+              <strong>M{event.magnitude.toFixed(1)} · {event.place}</strong>
+              <br />{formatUtc(event.time)} UTC
+              <br />Profundidad: {event.depthKm.toFixed(0)} km
+              <br />Fuente: {event.source}
+              {event.detailUrl && (
+                <>
+                  <br />
+                  <a href={event.detailUrl} target="_blank" rel="noreferrer">
+                    Ver registro original
+                  </a>
+                </>
+              )}
+            </Popup>
+          </CircleMarker>
+        ))}
+      </MapContainer>
+      {layers.faults && faultStatus && (
+        <div className="fault-attribution">{faultStatus}</div>
       )}
-
-      {displayedEvents.map((event) => (
-        <CircleMarker
-          key={`${event.source}-${event.id}`}
-          center={[event.latitude, event.longitude]}
-          radius={Math.max(3, (event.magnitude - 1.5) * 1.5)}
-          pathOptions={{
-            color: eventColor(event),
-            fillColor: eventColor(event),
-            fillOpacity: 0.72,
-            weight: 1,
-          }}
-        >
-          <Popup>
-            <strong>M{event.magnitude.toFixed(1)} · {event.place}</strong>
-            <br />
-            {new Intl.DateTimeFormat("es-DO", {
-              dateStyle: "medium",
-              timeStyle: "short",
-              timeZone: "UTC",
-            }).format(new Date(event.time))} UTC
-            <br />
-            Profundidad: {event.depthKm.toFixed(0)} km
-            <br />
-            Fuente: {event.source}
-          </Popup>
-        </CircleMarker>
-      ))}
-    </MapContainer>
+    </div>
   );
 }
