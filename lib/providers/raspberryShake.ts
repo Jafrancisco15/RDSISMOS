@@ -61,10 +61,14 @@ function parseRaspberryShakeText(text: string): SeismicEvent[] {
     .filter((event): event is SeismicEvent => Boolean(event));
 }
 
+function toQuakeLinkTime(value: Date) {
+  return value.toISOString().replace(/\.\d{3}Z$/, "");
+}
+
 function buildRaspberryShakeUrl(options: QueryOptions) {
   const url = new URL(process.env.RASPBERRY_SHAKE_EVENTS_URL || DEFAULT_RASPBERRY_SHAKE_URL);
-  url.searchParams.set("start", options.start.toISOString());
-  url.searchParams.set("end", options.end.toISOString());
+  url.searchParams.set("start", toQuakeLinkTime(options.start));
+  url.searchParams.set("end", toQuakeLinkTime(options.end));
   url.searchParams.set("minmag", String(options.minMagnitude));
   url.searchParams.set("limit", String(options.limit));
   url.searchParams.set("sort", "-time");
@@ -185,6 +189,9 @@ export async function fetchSeismicCatalog(start: Date, end: Date): Promise<{
       fetchRaspberryShakeQuery(globalQuery),
       fetchRaspberryShakeQuery(dominicanQuery),
     ]);
+    if (!globalEvents.length) {
+      throw new Error("QuakeLink devolvió un catálogo global vacío o con formato inesperado");
+    }
     return {
       events: uniqueEvents([...globalEvents, ...dominicanEvents]),
       provider: "Raspberry Shake QuakeLink",
