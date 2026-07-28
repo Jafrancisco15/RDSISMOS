@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { calculateMigrationAnalysis } from "@/lib/migration";
+import { generateMigrationProjections } from "@/lib/projections";
 import { WATCHED_REGIONS } from "@/lib/regions";
 import { fetchSeismicCatalog } from "@/lib/providers/raspberryShake";
 import type { EventsApiResponse } from "@/lib/types";
@@ -17,6 +18,7 @@ export async function GET() {
   try {
     const catalog = await fetchSeismicCatalog(start, generatedAt);
     const analysis = calculateMigrationAnalysis(catalog.events, generatedAt);
+    const projections = generateMigrationProjections(catalog.events, generatedAt);
     const payload: EventsApiResponse = {
       generatedAt: generatedAt.toISOString(),
       windowDays: WINDOW_DAYS,
@@ -25,6 +27,7 @@ export async function GET() {
       fallbackUsed: catalog.fallbackUsed,
       events: catalog.events,
       analysis,
+      projections,
       watchedRegions: WATCHED_REGIONS,
       warning: catalog.warning,
     };

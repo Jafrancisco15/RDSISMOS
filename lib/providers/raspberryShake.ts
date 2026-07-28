@@ -171,7 +171,7 @@ export async function fetchSeismicCatalog(start: Date, end: Date): Promise<{
   const globalQuery: QueryOptions = {
     start,
     end,
-    minMagnitude: 5,
+    minMagnitude: 4.5,
     limit: 5_000,
   };
   const dominicanQuery: QueryOptions = {
