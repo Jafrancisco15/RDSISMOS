@@ -132,6 +132,9 @@ function parseGeoJsonFeatures(
       const time = parseEventTime(
         properties.time ?? properties.datetime ?? properties.originTime,
       );
+      if (Number.isNaN(time.getTime())) return null;
+
+      const isoTime = time.toISOString();
       const magnitude = firstNumber(properties, ["mag", "magnitude"]);
       const longitude = Number(coordinates[0]);
       const latitude = Number(coordinates[1]);
@@ -141,8 +144,8 @@ function parseGeoJsonFeatures(
         id:
           feature.id ??
           firstString(properties, ["unid", "eventid", "source_id"]) ??
-          `${time.toISOString()}-${latitude}-${longitude}-${index}`,
-        time: time.toISOString(),
+          `${isoTime}-${latitude}-${longitude}-${index}`,
+        time: isoTime,
         magnitude,
         magnitudeType:
           firstString(properties, ["magType", "magtype", "magnitudeType"]) ?? "M",
