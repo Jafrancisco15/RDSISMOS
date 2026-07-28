@@ -38,6 +38,7 @@ export function EarthquakeEventsDashboard() {
       if (key === "reviewed") restored.reviewed = params.get("reviewed") === "true";
       else if (params.has(key)) (restored[key] as string) = params.get(key) ?? "";
     }
+    if (!["25", "50", "100", "250", "500"].includes(restored.limit)) restored.limit = "50";
     setForm(restored);
     void load(restored, 1, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -67,7 +68,11 @@ export function EarthquakeEventsDashboard() {
   async function loadStats(nextForm = form) {
     setStatsLoading(true);
     try {
-      const params = buildParams(nextForm, 1); params.set("limit", "20000");
+      const params = buildParams(nextForm, 1);
+      // La ruta de estadísticas controla internamente sus lotes. No debe recibir
+      // un limit superior al máximo permitido para la paginación pública.
+      params.delete("limit");
+      params.delete("offset");
       const response = await fetch(`/api/earthquakes/stats?${params}`, { cache: "no-store" });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "No fue posible calcular estadísticas.");
@@ -145,13 +150,10 @@ function SummaryCards({ stats, page, loading }: { stats: EarthquakeStats | null;
     ["Total", stats?.total ?? page?.total ?? null], ["Magnitud máxima", stats?.maxMagnitude?.toFixed(1) ?? null], ["Magnitud promedio", stats?.averageMagnitude?.toFixed(2) ?? null], ["Profundidad promedio", stats?.averageDepthKm !== null && stats?.averageDepthKm !== undefined ? `${stats.averageDepthKm.toFixed(1)} km` : null],
     ["Últimas 24 h", stats?.last24Hours ?? null], ["Últimos 7 días", stats?.last7Days ?? null], ["Últimos 30 días", stats?.last30Days ?? null], ["Evento más reciente", stats?.latestEvent ? `M${stats.latestEvent.magnitude.toFixed(1)} · ${stats.latestEvent.place}` : null], ["Más fuerte del rango", stats?.strongestEvent ? `M${stats.strongestEvent.magnitude.toFixed(1)} · ${stats.strongestEvent.place}` : null],
   ];
-  return <div className="summary-card-grid">{values.map(([label, value]) => <article key={String(label)}><span>{label}</span><strong>{loading ? "…" : value ?? "—"}</strong></article>)}</div>;
+  return <div className="earthquake-summary-grid">{values.map(([label, value]) => <article key={String(label)}><span>{label}</span><strong>{loading ? "…" : value ?? "—"}</strong></article>)}</div>;
 }
-function EventDetail({ event }: { event: EarthquakeEvent }) {
-  const rows: Array<[string, string | number | undefined]> = [["Identificador", event.externalId], ["UTC", formatUtc(event.timeUtc)], ["Hora local", new Date(event.timeUtc).toLocaleString()], ["Lugar", event.place], ["Coordenadas", `${event.latitude}, ${event.longitude}`], ["Magnitud", `${event.magnitude} ${event.magnitudeType}`], ["Profundidad", `${event.depthKm} km`], ["Agencia/red", event.network], ["Estado", event.status], ["Estaciones", event.stationCount], ["Gap", event.gap], ["RMS", event.rms], ["Error horizontal", event.horizontalError], ["Error profundidad", event.depthError], ["Error magnitud", event.magnitudeError], ["Actualizado", formatUtc(event.updatedUtc)]];
-  return <><span className="eyebrow">Detalle del evento</span><h2>M{event.magnitude.toFixed(1)} · {event.place}</h2><dl>{rows.map(([key, value]) => value !== undefined && <div key={key}><dt>{key}</dt><dd>{value}</dd></div>)}</dl>{event.sourceUrl && <a href={event.sourceUrl} target="_blank" rel="noreferrer">Abrir evento original en USGS</a>}</>;
-}
-function buildParams(form: FormState, offset: number) { const params = new URLSearchParams(); for (const [key, value] of Object.entries(form)) { if (value !== "" && value !== false) params.set(key, String(value)); } params.set("offset", String(offset)); return params; }
+function EventDetail({ event }: { event: EarthquakeEvent }) { const fields = [["ID", event.id], ["UTC", formatUtc(event.timeUtc)], ["Hora local", new Date(event.timeUtc).toLocaleString()], ["Lugar", event.place], ["Coordenadas", `${event.latitude}, ${event.longitude}`], ["Magnitud", `${event.magnitudeType} ${event.magnitude}`], ["Profundidad", `${event.depthKm} km`], ["Red", event.network], ["Estado", event.status], ["Estaciones", event.stationCount], ["Gap", event.gap], ["RMS", event.rms], ["Error horizontal", event.horizontalError], ["Error profundidad", event.depthError], ["Error magnitud", event.magnitudeError], ["Actualizado", formatUtc(event.updatedUtc)]]; return <><span className="eyebrow">Detalle del evento</span><h2>{event.place}</h2><dl>{fields.map(([key, value]) => <div key={String(key)}><dt>{key}</dt><dd>{value ?? "—"}</dd></div>)}</dl>{event.sourceUrl && <a href={event.sourceUrl} target="_blank" rel="noreferrer">Abrir evento original en USGS</a>}</>; }
+function buildParams(form: FormState, offset: number) { const params = new URLSearchParams(); Object.entries(form).forEach(([key, value]) => { if (typeof value === "boolean") { if (value) params.set(key, "true"); } else if (value !== "") params.set(key, value); }); params.set("offset", String(Math.max(1, Math.trunc(offset) || 1))); return params; }
 function dateInput(date: Date) { return date.toISOString().slice(0, 10); }
 function daysBetween(form: FormState) { return Math.max(1, Math.ceil((new Date(form.endtime).getTime() - new Date(form.starttime).getTime()) / 86_400_000)); }
 function formatUtc(value: string) { return new Intl.DateTimeFormat("es-DO", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(new Date(value)); }
