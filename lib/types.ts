@@ -25,6 +25,33 @@ export interface WatchedRegion {
 }
 
 export type AlertLevel = "green" | "yellow" | "orange" | "red";
+export type ProjectionStatus = "active" | "fulfilled" | "expired";
+
+export interface ProjectionTarget {
+  id: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusKm: number;
+  includesDominicanRepublic: boolean;
+}
+
+export interface MigrationProjection {
+  id: string;
+  status: ProjectionStatus;
+  sourceEvent: SeismicEvent;
+  sourceRegionName: string;
+  startTime: string;
+  expiresAt: string;
+  maxDays: number;
+  magnitudeMin: number;
+  magnitudeMax: number;
+  targets: ProjectionTarget[];
+  matchedEvent: SeismicEvent | null;
+  matchedTargetId: string | null;
+  consistencyScore: number;
+  rationale: string[];
+}
 
 export interface MigrationAnalysis {
   score: number;
@@ -49,6 +76,7 @@ export interface EventsApiResponse {
   fallbackUsed: boolean;
   events: SeismicEvent[];
   analysis: MigrationAnalysis;
+  projections: MigrationProjection[];
   watchedRegions: WatchedRegion[];
   warning?: string;
 }
