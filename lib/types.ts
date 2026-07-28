@@ -1,8 +1,25 @@
-export type DataProvider = "Raspberry Shake QuakeLink" | "USGS fallback";
+export type EventSource =
+  | "Raspberry Shake QuakeLink"
+  | "USGS ComCat"
+  | "USGS real-time";
+
+export type CatalogProvider =
+  | "Raspberry Shake + USGS"
+  | "Raspberry Shake"
+  | "USGS";
+
+export interface CountryTarget {
+  code: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusKm: number;
+}
 
 export interface SeismicEvent {
   id: string;
   time: string;
+  updatedAt?: string;
   magnitude: number;
   magnitudeType: string;
   latitude: number;
@@ -10,9 +27,10 @@ export interface SeismicEvent {
   depthKm: number;
   place: string;
   agency: string;
-  source: DataProvider;
+  source: EventSource;
+  detailUrl?: string;
   regionId?: string;
-  isDominicanRegion?: boolean;
+  isTargetRegion?: boolean;
 }
 
 export interface WatchedRegion {
@@ -27,29 +45,42 @@ export interface WatchedRegion {
 export type AlertLevel = "green" | "yellow" | "orange" | "red";
 export type ProjectionStatus = "active" | "fulfilled" | "expired";
 
-export interface ProjectionTarget {
-  id: string;
-  name: string;
+export interface EtasModelParameters {
+  modelName: string;
+  magnitudeCompleteness: number;
+  productivityK: number;
+  productivityAlpha: number;
+  omoriC: number;
+  omoriP: number;
+  spatialQ: number;
+  gutenbergRichterB: number;
+  calibration: string;
+}
+
+export interface ProjectedZone {
   latitude: number;
   longitude: number;
   radiusKm: number;
-  includesDominicanRepublic: boolean;
+  name: string;
 }
 
 export interface MigrationProjection {
   id: string;
+  parentEventId: string;
   status: ProjectionStatus;
   sourceEvent: SeismicEvent;
   sourceRegionName: string;
+  targetCountry: CountryTarget;
+  projectedZone: ProjectedZone;
   startTime: string;
   expiresAt: string;
   maxDays: number;
   magnitudeMin: number;
   magnitudeMax: number;
-  targets: ProjectionTarget[];
+  probabilityPct: number;
+  expectedCount: number;
   matchedEvent: SeismicEvent | null;
-  matchedTargetId: string | null;
-  consistencyScore: number;
+  model: EtasModelParameters;
   rationale: string[];
 }
 
@@ -58,12 +89,11 @@ export interface MigrationAnalysis {
   level: AlertLevel;
   label: string;
   summary: string;
-  leadEvent: SeismicEvent | null;
-  leadRegionName: string | null;
-  sourceActivityRatio: number;
-  caribbeanActivityRatio: number;
-  distanceTrendKmPerDay: number;
-  approachChainLength: number;
+  targetActivityRatio: number;
+  recentRatePerDay: number;
+  baselineRatePerDay: number;
+  activeCapsules: number;
+  maxCapsuleProbabilityPct: number;
   evidence: string[];
   limitations: string[];
 }
@@ -72,11 +102,20 @@ export interface EventsApiResponse {
   generatedAt: string;
   windowDays: number;
   refreshSeconds: number;
-  provider: DataProvider;
-  fallbackUsed: boolean;
+  provider: CatalogProvider;
+  providerStatus: string[];
   events: SeismicEvent[];
   analysis: MigrationAnalysis;
   projections: MigrationProjection[];
   watchedRegions: WatchedRegion[];
+  target: CountryTarget;
+  countries: CountryTarget[];
   warning?: string;
+}
+
+export interface MapLayerVisibility {
+  occurred: boolean;
+  faults: boolean;
+  projected: boolean;
+  preceding: boolean;
 }

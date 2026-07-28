@@ -1,247 +1,303 @@
-import { WATCHED_REGIONS, haversineKm } from "./regions";
+import { haversineKm } from "./regions";
 import type {
+  CountryTarget,
+  EtasModelParameters,
   MigrationProjection,
-  ProjectionTarget,
   SeismicEvent,
 } from "./types";
 
 const DAY_MS = 86_400_000;
 
-export const PROJECTION_TARGETS: ProjectionTarget[] = [
-  {
-    id: "north-south-america",
-    name: "Norte de Sudamérica: Colombia, Venezuela, norte de Perú y sur de Ecuador",
-    latitude: 2.5,
-    longitude: -75.5,
-    radiusKm: 1_850,
-    includesDominicanRepublic: false,
-  },
-  {
-    id: "mexico-panama-caribbean",
-    name: "México, Panamá, Antillas, Puerto Rico y República Dominicana",
-    latitude: 15.2,
-    longitude: -78.5,
-    radiusKm: 2_050,
-    includesDominicanRepublic: true,
-  },
-  {
-    id: "japan-philippines-indonesia",
-    name: "Costa de Japón, Filipinas e Indonesia",
-    latitude: 13.5,
-    longitude: 132,
-    radiusKm: 2_700,
-    includesDominicanRepublic: false,
-  },
-  {
-    id: "dominican-puerto-rico",
-    name: "Puerto Rico y República Dominicana",
-    latitude: 18.5,
-    longitude: -68.7,
-    radiusKm: 760,
-    includesDominicanRepublic: true,
-  },
-  {
-    id: "panama-costa-rica",
-    name: "Zona limítrofe de Panamá y Costa Rica",
-    latitude: 8.9,
-    longitude: -82.3,
-    radiusKm: 650,
-    includesDominicanRepublic: false,
-  },
-  {
-    id: "north-peru-south-ecuador",
-    name: "Norte de Perú y sur de Ecuador",
-    latitude: -3.8,
-    longitude: -78.7,
-    radiusKm: 820,
-    includesDominicanRepublic: false,
-  },
-  {
-    id: "new-zealand-kermadec",
-    name: "Nueva Zelanda e islas Kermadec",
-    latitude: -31,
-    longitude: -177,
-    radiusKm: 1_550,
-    includesDominicanRepublic: false,
-  },
-  {
-    id: "central-america-caribbean",
-    name: "Centroamérica y arco del Caribe",
-    latitude: 15,
-    longitude: -76,
-    radiusKm: 1_650,
-    includesDominicanRepublic: true,
-  },
-];
-
-const ROUTES: Record<string, string[]> = {
-  vanuatu: [
-    "north-south-america",
-    "mexico-panama-caribbean",
-    "japan-philippines-indonesia",
-  ],
-  fiji: [
-    "north-south-america",
-    "mexico-panama-caribbean",
-    "japan-philippines-indonesia",
-  ],
-  "north-atlantic": ["dominican-puerto-rico", "panama-costa-rica"],
-  "alaska-aleutians": ["north-peru-south-ecuador", "new-zealand-kermadec"],
-  kermadec: [
-    "north-peru-south-ecuador",
-    "mexico-panama-caribbean",
-    "japan-philippines-indonesia",
-  ],
-  mexico: ["dominican-puerto-rico", "panama-costa-rica", "north-south-america"],
-  chile: ["north-peru-south-ecuador", "central-america-caribbean"],
-  peru: ["central-america-caribbean", "dominican-puerto-rico"],
-  java: ["new-zealand-kermadec", "north-south-america"],
-  flores: ["new-zealand-kermadec", "north-south-america"],
-  celebes: ["japan-philippines-indonesia", "new-zealand-kermadec"],
-};
+const BASE_PARAMETERS = {
+  productivityK: 0.005,
+  productivityAlpha: 1.4,
+  omoriC: 0.05,
+  omoriP: 1.1,
+  spatialQ: 1.6,
+  gutenbergRichterB: 1,
+} as const;
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
 function ageDays(event: SeismicEvent, now: Date) {
-  return (now.getTime() - new Date(event.time).getTime()) / DAY_MS;
+  return Math.max(0, (now.getTime() - new Date(event.time).getTime()) / DAY_MS);
 }
 
-function targetsForRegion(regionId: string): ProjectionTarget[] {
-  const ids = ROUTES[regionId] ?? [];
-  return ids
-    .map((id) => PROJECTION_TARGETS.find((target) => target.id === id))
-    .filter((target): target is ProjectionTarget => Boolean(target));
-}
-
-function eventMatchesTarget(
-  event: SeismicEvent,
-  target: ProjectionTarget,
-  magnitudeMin: number,
-  magnitudeMax: number,
+function estimateMagnitudeCompleteness(
+  events: SeismicEvent[],
+  target: CountryTarget,
 ) {
+  const localMagnitudes = events
+    .filter(
+      (event) =>
+        haversineKm(
+          event.latitude,
+          event.longitude,
+          target.latitude,
+          target.longitude,
+        ) <= target.radiusKm + 1_200,
+    )
+    .map((event) => event.magnitude)
+    .filter(Number.isFinite);
+
+  if (localMagnitudes.length < 20) return 3;
+  const bins = new Map<number, number>();
+  for (const magnitude of localMagnitudes) {
+    const bin = Math.round(magnitude * 10) / 10;
+    bins.set(bin, (bins.get(bin) ?? 0) + 1);
+  }
+  const modalBin = [...bins.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 2.8;
+  return clamp(Number((modalBin + 0.2).toFixed(1)), 2.5, 4.5);
+}
+
+function integratedOmori(t0: number, t1: number, c: number, p: number) {
+  if (Math.abs(p - 1) < 0.0001) return Math.log((t1 + c) / (t0 + c));
   return (
-    event.magnitude >= magnitudeMin &&
-    event.magnitude <= magnitudeMax &&
-    haversineKm(event.latitude, event.longitude, target.latitude, target.longitude) <=
-      target.radiusKm
+    (Math.pow(t1 + c, 1 - p) - Math.pow(t0 + c, 1 - p)) /
+    (1 - p)
+  );
+}
+
+function normalizeLongitudeDifference(value: number) {
+  if (value > 180) return value - 360;
+  if (value < -180) return value + 360;
+  return value;
+}
+
+function projectedPoint(source: SeismicEvent, target: CountryTarget) {
+  const distance = haversineKm(
+    source.latitude,
+    source.longitude,
+    target.latitude,
+    target.longitude,
+  );
+  if (distance <= target.radiusKm) {
+    return { latitude: source.latitude, longitude: source.longitude };
+  }
+
+  const ratio = clamp((target.radiusKm * 0.82) / Math.max(distance, 1), 0, 1);
+  const longitudeDifference = normalizeLongitudeDifference(
+    source.longitude - target.longitude,
+  );
+  let longitude = target.longitude + longitudeDifference * ratio;
+  if (longitude > 180) longitude -= 360;
+  if (longitude < -180) longitude += 360;
+  return {
+    latitude: target.latitude + (source.latitude - target.latitude) * ratio,
+    longitude,
+  };
+}
+
+function matchesProjection(
+  event: SeismicEvent,
+  projection: {
+    source: SeismicEvent;
+    expiresAt: Date;
+    projectedLatitude: number;
+    projectedLongitude: number;
+    projectedRadiusKm: number;
+    magnitudeMin: number;
+    magnitudeMax: number;
+    target: CountryTarget;
+  },
+) {
+  const time = new Date(event.time).getTime();
+  return (
+    event.id !== projection.source.id &&
+    time > new Date(projection.source.time).getTime() &&
+    time <= projection.expiresAt.getTime() &&
+    event.magnitude >= projection.magnitudeMin &&
+    event.magnitude <= projection.magnitudeMax &&
+    haversineKm(
+      event.latitude,
+      event.longitude,
+      projection.target.latitude,
+      projection.target.longitude,
+    ) <= projection.target.radiusKm + 350 &&
+    haversineKm(
+      event.latitude,
+      event.longitude,
+      projection.projectedLatitude,
+      projection.projectedLongitude,
+    ) <= projection.projectedRadiusKm + 220
   );
 }
 
 function buildProjection(
   sourceEvent: SeismicEvent,
   events: SeismicEvent[],
+  target: CountryTarget,
+  magnitudeCompleteness: number,
   generatedAt: Date,
 ): MigrationProjection | null {
-  if (!sourceEvent.regionId) return null;
+  const distanceToTarget = haversineKm(
+    sourceEvent.latitude,
+    sourceEvent.longitude,
+    target.latitude,
+    target.longitude,
+  );
+  const projectedRadiusKm = clamp(
+    120 * Math.pow(10, 0.35 * (sourceEvent.magnitude - 5)),
+    90,
+    750,
+  );
 
-  const targets = targetsForRegion(sourceEvent.regionId);
-  if (!targets.length) return null;
+  // ETAS describes regional triggering. Reject remote, non-overlapping routes.
+  if (distanceToTarget > target.radiusKm + projectedRadiusKm + 900) return null;
 
-  const maxDays = clamp(Math.round(8 + (sourceEvent.magnitude - 5) * 3), 8, 12);
+  const maxDays = clamp(Math.round(7 + (sourceEvent.magnitude - 5) * 2), 5, 14);
   const startTime = new Date(sourceEvent.time);
   const expiresAt = new Date(startTime.getTime() + maxDays * DAY_MS);
-  const magnitudeMin = Math.max(2.5, Number((sourceEvent.magnitude - 0.3).toFixed(1)));
-  const magnitudeMax = Number((sourceEvent.magnitude + 0.3).toFixed(1));
+  const currentAge = ageDays(sourceEvent, generatedAt);
+  const endAge = currentAge + maxDays;
 
-  const matching = events
-    .filter((candidate) => {
-      const candidateTime = new Date(candidate.time).getTime();
-      return (
-        candidate.id !== sourceEvent.id &&
-        candidateTime > startTime.getTime() &&
-        candidateTime <= expiresAt.getTime() &&
-        targets.some((target) =>
-          eventMatchesTarget(candidate, target, magnitudeMin, magnitudeMax),
-        )
-      );
-    })
+  const magnitudeMin = Number(
+    Math.max(magnitudeCompleteness, sourceEvent.magnitude - 1.8).toFixed(1),
+  );
+  const magnitudeMax = Number(Math.min(8.8, sourceEvent.magnitude + 0.4).toFixed(1));
+  const productivity =
+    BASE_PARAMETERS.productivityK *
+    Math.exp(
+      BASE_PARAMETERS.productivityAlpha *
+        (sourceEvent.magnitude - magnitudeCompleteness),
+    );
+  const temporalWeight = integratedOmori(
+    currentAge,
+    endAge,
+    BASE_PARAMETERS.omoriC,
+    BASE_PARAMETERS.omoriP,
+  );
+  const outsideDistance = Math.max(0, distanceToTarget - target.radiusKm);
+  const spatialWeight = Math.pow(
+    1 + outsideDistance / (projectedRadiusKm + 80),
+    -BASE_PARAMETERS.spatialQ,
+  );
+  const magnitudeWeight = Math.pow(
+    10,
+    -BASE_PARAMETERS.gutenbergRichterB *
+      Math.max(0, magnitudeMin - magnitudeCompleteness),
+  );
+  const expectedCount = clamp(
+    productivity * temporalWeight * spatialWeight * magnitudeWeight,
+    0,
+    3,
+  );
+  const probabilityPct = Math.round(
+    clamp((1 - Math.exp(-expectedCount)) * 100, 1, 95),
+  );
+
+  const center = projectedPoint(sourceEvent, target);
+  const match = events
+    .filter((event) =>
+      matchesProjection(event, {
+        source: sourceEvent,
+        expiresAt,
+        projectedLatitude: center.latitude,
+        projectedLongitude: center.longitude,
+        projectedRadiusKm,
+        magnitudeMin,
+        magnitudeMax,
+        target,
+      }),
+    )
     .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())[0];
 
-  const matchedTarget = matching
-    ? targets.find((target) =>
-        eventMatchesTarget(matching, target, magnitudeMin, magnitudeMax),
-      )
-    : undefined;
-
-  const status = matching
+  const status = match
     ? "fulfilled"
     : generatedAt.getTime() > expiresAt.getTime()
       ? "expired"
       : "active";
 
-  const nearbySourceEvents = events.filter(
-    (candidate) =>
-      candidate.regionId === sourceEvent.regionId &&
-      candidate.id !== sourceEvent.id &&
-      Math.abs(new Date(candidate.time).getTime() - startTime.getTime()) <= 7 * DAY_MS &&
-      candidate.magnitude >= 4,
-  ).length;
-
-  const consistencyScore = clamp(
-    Math.round(42 + (sourceEvent.magnitude - 4.7) * 13 + Math.min(nearbySourceEvents, 4) * 5),
-    20,
-    88,
-  );
-
-  const sourceRegionName =
-    WATCHED_REGIONS.find((region) => region.id === sourceEvent.regionId)?.name ??
-    sourceEvent.place;
+  const model: EtasModelParameters = {
+    modelName: "ETAS espacio-tiempo simplificado",
+    magnitudeCompleteness,
+    ...BASE_PARAMETERS,
+    calibration:
+      "Parámetros generales iniciales; aún no calibrados específicamente para este país.",
+  };
 
   return {
-    id: `projection-${sourceEvent.id}`,
+    id: `etas-${target.code}-${sourceEvent.id}`,
+    parentEventId: sourceEvent.id,
     status,
     sourceEvent,
-    sourceRegionName,
+    sourceRegionName: sourceEvent.place,
+    targetCountry: target,
+    projectedZone: {
+      latitude: center.latitude,
+      longitude: center.longitude,
+      radiusKm: Math.min(projectedRadiusKm, target.radiusKm + 250),
+      name: `Zona ETAS asociada a M${sourceEvent.magnitude.toFixed(1)} para ${target.name}`,
+    },
     startTime: startTime.toISOString(),
     expiresAt: expiresAt.toISOString(),
     maxDays,
     magnitudeMin,
     magnitudeMax,
-    targets,
-    matchedEvent: matching ?? null,
-    matchedTargetId: matchedTarget?.id ?? null,
-    consistencyScore,
+    probabilityPct,
+    expectedCount: Number(expectedCount.toFixed(3)),
+    matchedEvent: match ?? null,
+    model,
     rationale: [
-      `El evento origen es M${sourceEvent.magnitude.toFixed(1)} en ${sourceRegionName}.`,
-      `El rango proyectado conserva una banda experimental de ±0.3 unidades de magnitud.`,
-      `La ventana temporal calculada es de ${maxDays} días desde el evento origen.`,
-      `Se vigilan ${targets.length} zonas candidatas definidas por el patrón migratorio configurado.`,
+      `Evento padre M${sourceEvent.magnitude.toFixed(1)} a ${Math.round(distanceToTarget)} km del centro de análisis.`,
+      `Productividad ETAS: K·exp[α(M−Mc)], con Mc=${magnitudeCompleteness.toFixed(1)}.`,
+      `Decaimiento temporal según Omori–Utsu, p=${BASE_PARAMETERS.omoriP.toFixed(1)}, durante ${maxDays} días.`,
+      `Decaimiento espacial q=${BASE_PARAMETERS.spatialQ.toFixed(1)}; no se aceptan rutas mundiales sin solapamiento regional.`,
+      `Rango de magnitud derivado de Gutenberg–Richter, b=${BASE_PARAMETERS.gutenbergRichterB.toFixed(1)}.`,
     ],
   };
 }
 
 export function generateMigrationProjections(
   events: SeismicEvent[],
+  target: CountryTarget,
   generatedAt = new Date(),
 ): MigrationProjection[] {
-  const latestByRegion = new Map<string, SeismicEvent>();
+  const magnitudeCompleteness = estimateMagnitudeCompleteness(events, target);
+  const minimumParentMagnitude = Math.max(4.5, magnitudeCompleteness + 0.9);
 
-  events
-    .filter(
-      (event) =>
-        Boolean(event.regionId && ROUTES[event.regionId]) &&
-        event.magnitude >= 4.7 &&
-        ageDays(event, generatedAt) >= 0 &&
-        ageDays(event, generatedAt) <= 30,
-    )
-    .sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime())
-    .forEach((event) => {
-      if (event.regionId && !latestByRegion.has(event.regionId)) {
-        latestByRegion.set(event.regionId, event);
-      }
+  const parentEvents = events
+    .filter((event) => {
+      const age = ageDays(event, generatedAt);
+      const distance = haversineKm(
+        event.latitude,
+        event.longitude,
+        target.latitude,
+        target.longitude,
+      );
+      return (
+        age >= 0 &&
+        age <= 45 &&
+        event.magnitude >= minimumParentMagnitude &&
+        distance <= target.radiusKm + 2_000
+      );
+    })
+    .sort((a, b) => {
+      const magnitudeDifference = b.magnitude - a.magnitude;
+      if (Math.abs(magnitudeDifference) > 0.2) return magnitudeDifference;
+      return new Date(b.time).getTime() - new Date(a.time).getTime();
     });
 
   const statusOrder = { active: 0, fulfilled: 1, expired: 2 } as const;
-
-  return [...latestByRegion.values()]
-    .map((event) => buildProjection(event, events, generatedAt))
+  return parentEvents
+    .map((event) =>
+      buildProjection(
+        event,
+        events,
+        target,
+        magnitudeCompleteness,
+        generatedAt,
+      ),
+    )
     .filter((projection): projection is MigrationProjection => Boolean(projection))
     .sort((a, b) => {
       const statusDifference = statusOrder[a.status] - statusOrder[b.status];
       if (statusDifference !== 0) return statusDifference;
+      const probabilityDifference = b.probabilityPct - a.probabilityPct;
+      if (probabilityDifference !== 0) return probabilityDifference;
       return new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
     })
-    .slice(0, 8);
+    .slice(0, 12);
 }
