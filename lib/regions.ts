@@ -20,6 +20,22 @@ export const WATCHED_REGIONS: WatchedRegion[] = [
     historicalNote: "Registró un M7.0 el 9 de julio de 1946, 26 días antes del gran sismo dominicano.",
   },
   {
+    id: "fiji",
+    name: "Fiji y Levuka",
+    latitude: -17.7,
+    longitude: 178.1,
+    radiusKm: 850,
+    historicalNote: "Zona fuente añadida para evaluar las rutas experimentales de proyección del Pacífico sur.",
+  },
+  {
+    id: "north-atlantic",
+    name: "Región norte del océano Atlántico",
+    latitude: 31,
+    longitude: -43,
+    radiusKm: 2_150,
+    historicalNote: "Zona fuente experimental para estudiar posibles rutas hacia el Caribe y Centroamérica.",
+  },
+  {
     id: "mexico",
     name: "México y Veracruz",
     latitude: 19.2,
