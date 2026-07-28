@@ -37,14 +37,38 @@ export async function queryEarthquakeById(id: string, signal?: AbortSignal) {
   return event;
 }
 
+export function parseUsgsCount(raw: string): number | null {
+  const value = raw.trim();
+  if (!value || value.startsWith("<")) return null;
+
+  if (/^\d+$/.test(value)) {
+    const count = Number(value);
+    return Number.isSafeInteger(count) && count >= 0 ? count : null;
+  }
+
+  try {
+    const payload = JSON.parse(value) as { count?: unknown } | number;
+    const candidate = typeof payload === "number" ? payload : Number(payload.count);
+    return Number.isSafeInteger(candidate) && candidate >= 0 ? candidate : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function countEarthquakes(filters: EarthquakeFilters, signal?: AbortSignal) {
   const params = toUsgsParams({ ...filters, limit: 1, offset: 1 }, "geojson");
+  params.delete("format");
   params.delete("limit");
   params.delete("offset");
   params.delete("orderby");
-  const response = await fetchWithRetry(`${USGS_COUNT}?${params}`, signal);
-  const value = Number(await response.text());
-  if (!Number.isFinite(value)) throw new Error("USGS devolvió un conteo inválido.");
+
+  const response = await fetchWithRetry(`${USGS_COUNT}?${params}`, signal, "text/plain, application/json");
+  const raw = await response.text();
+  const value = parseUsgsCount(raw);
+  if (value === null) {
+    const preview = raw.trim().replace(/\s+/g, " ").slice(0, 160);
+    throw new Error(`USGS devolvió un conteo inválido${preview ? `: ${preview}` : "."}`);
+  }
   return value;
 }
 
@@ -115,17 +139,29 @@ function applyLocalFilters(events: EarthquakeEvent[], filters: EarthquakeFilters
 }
 
 async function fetchJson(url: string, signal?: AbortSignal) {
-  const response = await fetchWithRetry(url, signal);
-  return response.json() as Promise<unknown>;
+  const response = await fetchWithRetry(url, signal, "application/json");
+  const contentType = response.headers.get("content-type") ?? "";
+  const textBody = await response.text();
+  if (!contentType.includes("json")) {
+    throw new Error(`USGS devolvió un formato inesperado: ${textBody.trim().slice(0, 120)}`);
+  }
+  try {
+    return JSON.parse(textBody) as unknown;
+  } catch {
+    throw new Error("USGS devolvió JSON inválido.");
+  }
 }
-async function fetchWithRetry(url: string, signal?: AbortSignal) {
+
+async function fetchWithRetry(url: string, signal?: AbortSignal, accept = "application/json") {
   let lastError: unknown;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "RDSISMOS/1.0" }, cache: "no-store", signal });
+      const response = await fetch(url, { headers: { Accept: accept, "User-Agent": "RDSISMOS/1.0" }, cache: "no-store", signal });
       if (response.ok) return response;
-      if (![429, 500, 502, 503, 504].includes(response.status)) throw new Error(`USGS respondió HTTP ${response.status}`);
-      lastError = new Error(`USGS respondió HTTP ${response.status}`);
+      const body = (await response.text()).trim().replace(/\s+/g, " ").slice(0, 160);
+      const message = `USGS respondió HTTP ${response.status}${body ? `: ${body}` : ""}`;
+      if (![429, 500, 502, 503, 504].includes(response.status)) throw new Error(message);
+      lastError = new Error(message);
     } catch (error) {
       lastError = error;
       if (signal?.aborted) throw error;
