@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 interface LearningStatus {
   databaseConfigured: boolean;
   databaseConnected: boolean;
+  migrationPending?: boolean;
   modelVersion: string;
   capsulesTotal: number;
   capsulesActive: number;
@@ -42,6 +43,7 @@ export function LearningStatusPanel() {
       setStatus({
         databaseConfigured: true,
         databaseConnected: false,
+        migrationPending: false,
         modelVersion: "migration-country-v2",
         capsulesTotal: 0,
         capsulesActive: 0,
@@ -68,6 +70,19 @@ export function LearningStatusPanel() {
     };
   }, [load]);
 
+  const connectionClass = status?.databaseConnected
+    ? "connected"
+    : status?.migrationPending
+      ? "pending"
+      : "disconnected";
+  const connectionLabel = loading
+    ? "Comprobando…"
+    : status?.databaseConnected
+      ? "Supabase conectado"
+      : status?.migrationPending
+        ? "Migración pendiente"
+        : "Base no disponible";
+
   return (
     <section className="panel learning-status-panel">
       <div className="section-heading compact">
@@ -75,8 +90,8 @@ export function LearningStatusPanel() {
           <span className="eyebrow">Memoria del modelo</span>
           <h2>Aprendizaje y evaluación</h2>
         </div>
-        <span className={`learning-db-badge ${status?.databaseConnected ? "connected" : "disconnected"}`}>
-          {loading ? "Comprobando…" : status?.databaseConnected ? "Supabase conectado" : "Base no disponible"}
+        <span className={`learning-db-badge ${connectionClass}`}>
+          {connectionLabel}
         </span>
       </div>
 
