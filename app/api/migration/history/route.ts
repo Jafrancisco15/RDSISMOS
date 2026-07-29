@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildHistoricalMigrationCapsuleV2 } from "@/lib/historicalMigrationV2";
+import { persistMigrationCapsule } from "@/lib/learning/store";
 import type { EventSource, SeismicEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -76,7 +77,19 @@ export async function POST(request: NextRequest) {
       countryCode,
       request.signal,
     );
-    return NextResponse.json(capsule, {
+
+    let learningStorage: Awaited<ReturnType<typeof persistMigrationCapsule>>;
+    try {
+      learningStorage = await persistMigrationCapsule(capsule);
+    } catch (storageError) {
+      learningStorage = {
+        persisted: false,
+        reason: storageError instanceof Error ? storageError.message : "No fue posible guardar la cápsula.",
+      };
+      console.error("No fue posible persistir la cápsula de migración", storageError);
+    }
+
+    return NextResponse.json({ ...capsule, learningStorage }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   } catch (error) {
