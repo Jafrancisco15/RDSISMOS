@@ -16,6 +16,7 @@ import {
 import type {
   AlertLevel,
   CountryTarget,
+  HistoricalMigrationCapsule,
   MapLayerVisibility,
   MigrationProjection,
   SeismicEvent,
@@ -43,6 +44,21 @@ function RecenterMap({ target }: { target: CountryTarget }) {
   return null;
 }
 
+function FitHistoricalCapsule({ capsule }: { capsule: HistoricalMigrationCapsule | null }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!capsule || !capsule.destinations.length) return;
+    const points: Array<[number, number]> = [
+      [capsule.sourceEvent.latitude, capsule.sourceEvent.longitude],
+      ...capsule.destinations.slice(0, 6).map(
+        (destination) => [destination.latitude, destination.longitude] as [number, number],
+      ),
+    ];
+    map.fitBounds(points, { padding: [35, 35], maxZoom: 4, animate: true });
+  }, [capsule, map]);
+  return null;
+}
+
 function formatUtc(value: string) {
   return new Intl.DateTimeFormat("es-DO", {
     dateStyle: "medium",
@@ -62,6 +78,7 @@ export function WorldMap({
   level,
   projections,
   selectedProjection,
+  historicalCapsule,
   layers,
 }: {
   events: SeismicEvent[];
@@ -69,6 +86,7 @@ export function WorldMap({
   level: AlertLevel;
   projections: MigrationProjection[];
   selectedProjection: MigrationProjection | null;
+  historicalCapsule: HistoricalMigrationCapsule | null;
   layers: MapLayerVisibility;
 }) {
   const [faultData, setFaultData] = useState<GeoJsonObject | null>(null);
@@ -122,6 +140,10 @@ export function WorldMap({
   const parentEvents = layers.preceding
     ? projections.map((projection) => projection.sourceEvent)
     : [];
+  const historicalDestinations =
+    layers.historical && historicalCapsule
+      ? historicalCapsule.destinations.slice(0, 8)
+      : [];
 
   return (
     <div className="map-wrapper">
@@ -132,7 +154,11 @@ export function WorldMap({
         className="world-map"
         worldCopyJump
       >
-        <RecenterMap target={target} />
+        {layers.historical && historicalCapsule ? (
+          <FitHistoricalCapsule capsule={historicalCapsule} />
+        ) : (
+          <RecenterMap target={target} />
+        )}
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -230,6 +256,76 @@ export function WorldMap({
             </Popup>
           </CircleMarker>
         ))}
+
+        {layers.historical && historicalCapsule && (
+          <CircleMarker
+            center={[
+              historicalCapsule.sourceEvent.latitude,
+              historicalCapsule.sourceEvent.longitude,
+            ]}
+            radius={12}
+            pathOptions={{
+              color: "#ffffff",
+              fillColor: "#dc2626",
+              fillOpacity: 0.95,
+              weight: 3,
+            }}
+          >
+            <Tooltip permanent direction="top">
+              Origen histórico M{historicalCapsule.sourceEvent.magnitude.toFixed(1)}
+            </Tooltip>
+            <Popup>
+              <strong>Evento origen de la cápsula histórica</strong>
+              <br />{historicalCapsule.sourceEvent.place}
+              <br />{formatUtc(historicalCapsule.sourceEvent.time)} UTC
+            </Popup>
+          </CircleMarker>
+        )}
+
+        {historicalDestinations.map((destination, index) => {
+          const opacity = Math.max(0.06, Math.min(0.28, destination.recurrencePct / 260));
+          const color = destination.targetOverlap ? "#22c55e" : "#ef4444";
+          return (
+            <Fragment key={`historical-${destination.zoneId}`}>
+              <Circle
+                center={[destination.latitude, destination.longitude]}
+                radius={destination.radiusKm * 1_000}
+                pathOptions={{
+                  color,
+                  fillColor: color,
+                  fillOpacity: opacity,
+                  weight: index < 3 ? 2.8 : 1.5,
+                  dashArray: "7 6",
+                }}
+              >
+                <Tooltip sticky>
+                  {destination.name}: recurrencia {destination.recurrencePct}%
+                </Tooltip>
+                <Popup>
+                  <strong>{destination.name}</strong>
+                  <br />Recurrencia ponderada: {destination.recurrencePct}%
+                  <br />Peso relativo: {destination.relativeWeightPct}%
+                  <br />Coincidencias: {destination.analogHits}/{historicalCapsule.analogsEvaluated}
+                  {destination.medianLeadDays !== null && (
+                    <><br />Mediana temporal: {destination.medianLeadDays} días</>
+                  )}
+                </Popup>
+              </Circle>
+              <Polyline
+                positions={[
+                  [historicalCapsule.sourceEvent.latitude, historicalCapsule.sourceEvent.longitude],
+                  [destination.latitude, destination.longitude],
+                ]}
+                pathOptions={{
+                  color,
+                  opacity: index < 3 ? 0.75 : 0.42,
+                  weight: index < 3 ? 2.5 : 1.2,
+                  dashArray: "10 9",
+                }}
+              />
+            </Fragment>
+          );
+        })}
 
         {occurredEvents.map((event) => (
           <CircleMarker
