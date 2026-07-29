@@ -164,5 +164,4 @@ export interface MapLayerVisibility {
   faults: boolean;
   projected: boolean;
   preceding: boolean;
-  historical: boolean;
 }
