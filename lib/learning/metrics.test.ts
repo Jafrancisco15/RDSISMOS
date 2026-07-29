@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { calculateForecastMetrics } from "./metrics.ts";
+import { calculateForecastMetrics } from "./metrics";
 
 test("returns zero metrics for an empty sample", () => {
   assert.deepEqual(calculateForecastMetrics([]), {
