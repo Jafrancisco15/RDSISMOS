@@ -84,6 +84,52 @@ export interface MigrationProjection {
   rationale: string[];
 }
 
+export interface HistoricalMigrationDestination {
+  zoneId: string;
+  name: string;
+  latitude: number;
+  longitude: number;
+  radiusKm: number;
+  recurrencePct: number;
+  relativeWeightPct: number;
+  analogHits: number;
+  weightedHits: number;
+  targetOverlap: boolean;
+  medianLeadDays: number | null;
+  strongestObservedMagnitude: number | null;
+}
+
+export interface HistoricalAnalogEvidence {
+  analogEvent: SeismicEvent;
+  similarityPct: number;
+  followerCount: number;
+  hitZoneIds: string[];
+  strongestFollower: SeismicEvent | null;
+}
+
+export interface HistoricalMigrationCapsule {
+  id: string;
+  generatedAt: string;
+  sourceEvent: SeismicEvent;
+  targetCountry: CountryTarget;
+  historyStart: string;
+  historyEnd: string;
+  sourceRadiusKm: number;
+  analogMagnitudeMin: number;
+  analogMagnitudeMax: number;
+  analogsFound: number;
+  analogsEvaluated: number;
+  windowDays: number;
+  forecastMagnitudeMin: number;
+  forecastMagnitudeMax: number;
+  confidencePct: number;
+  destinations: HistoricalMigrationDestination[];
+  analogs: HistoricalAnalogEvidence[];
+  modelName: string;
+  methodology: string[];
+  limitations: string[];
+}
+
 export interface MigrationAnalysis {
   score: number;
   level: AlertLevel;
@@ -118,4 +164,5 @@ export interface MapLayerVisibility {
   faults: boolean;
   projected: boolean;
   preceding: boolean;
+  historical: boolean;
 }
