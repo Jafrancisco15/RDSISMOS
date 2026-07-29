@@ -7,11 +7,12 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types lib/earthquakes/*.test.ts"
+    "test": "tsx --test lib/earthquakes/*.test.ts lib/learning/*.test.ts"
   },
   "dependencies": {
     "leaflet": "1.9.4",
     "next": "16.2.12",
+    "postgres": "3.4.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-leaflet": "5.0.0"
@@ -21,6 +22,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
+    "tsx": "4.20.6",
     "typescript": "^5.9.2"
   }
 }

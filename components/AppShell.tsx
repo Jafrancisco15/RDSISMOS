@@ -4,6 +4,7 @@ import { useState } from "react";
 import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { HistoricalMigrationDashboardV2 } from "./HistoricalMigrationDashboardV2";
+import { LearningStatusPanel } from "./LearningStatusPanel";
 
 export function AppShell() {
   const [tab, setTab] = useState<"historical" | "forecast" | "events">("historical");
@@ -14,7 +15,12 @@ export function AppShell() {
         <button className={tab === "forecast" ? "active" : ""} onClick={() => setTab("forecast")}>Pronóstico sísmico</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
       </nav>
-      {tab === "historical" && <HistoricalMigrationDashboardV2 />}
+      {tab === "historical" && (
+        <>
+          <div className="learning-panel-wrap"><LearningStatusPanel /></div>
+          <HistoricalMigrationDashboardV2 />
+        </>
+      )}
       {tab === "forecast" && <SeismicDashboard />}
       {tab === "events" && <EarthquakeEventsDashboard />}
     </>
