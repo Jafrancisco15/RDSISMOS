@@ -51,9 +51,23 @@
 .country-source-grid button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .country-source-grid button small { color: var(--muted); }
 .country-source-grid button em { color: #bae6fd; font-style: normal; font-size: .72rem; font-weight: 800; }
+.learning-panel-wrap { max-width: 1480px; margin: 22px auto -8px; padding: 0 28px; }
+.learning-status-panel { padding: 20px 22px; background: linear-gradient(135deg, rgba(34,197,94,.07), transparent 45%), var(--panel); }
+.learning-db-badge { border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font-size: .7rem; font-weight: 800; }
+.learning-db-badge.connected { border-color: rgba(34,197,94,.48); color: #86efac; background: rgba(34,197,94,.1); }
+.learning-db-badge.disconnected { border-color: rgba(248,113,113,.45); color: #fca5a5; background: rgba(248,113,113,.08); }
+.learning-status-message { margin: 0 0 12px; color: #fca5a5; font-size: .78rem; }
+.learning-status-grid { display: grid; grid-template-columns: repeat(6, minmax(0,1fr)); gap: 8px; }
+.learning-status-grid div, .learning-metrics-row div { border: 1px solid var(--line); border-radius: 11px; padding: 10px; background: rgba(0,0,0,.15); }
+.learning-status-grid span, .learning-metrics-row span { display: block; color: var(--muted); font-size: .65rem; margin-bottom: 4px; }
+.learning-status-grid strong { font-size: 1.05rem; }
+.learning-metrics-row { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; margin-top: 8px; }
+.learning-metrics-row strong { font-size: .82rem; }
+.learning-status-footnote { margin: 10px 0 0; color: var(--muted); font-size: .72rem; line-height: 1.45; }
 @media (max-width: 1050px) {
   .country-card-grid { grid-template-columns: 1fr; }
   .country-metrics-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
+  .learning-status-grid { grid-template-columns: repeat(3, minmax(0,1fr)); }
 }
 @media (max-width: 760px) {
   .country-migration-dashboard { padding-top: 14px; }
@@ -68,9 +82,12 @@
   .country-probability { text-align: left; }
   .country-watch-grid { grid-template-columns: 1fr; }
   .country-source-grid { grid-template-columns: 1fr; }
+  .learning-panel-wrap { margin-top: 14px; padding: 0 14px; }
+  .learning-status-grid, .learning-metrics-row { grid-template-columns: repeat(2, minmax(0,1fr)); }
 }
 @media (max-width: 480px) {
   .country-metrics-grid { grid-template-columns: 1fr 1fr; }
   .country-source-grid button { grid-template-columns: 48px 1fr; }
   .country-source-grid button em { grid-column: 2; }
+  .learning-status-grid, .learning-metrics-row { grid-template-columns: 1fr 1fr; }
 }
