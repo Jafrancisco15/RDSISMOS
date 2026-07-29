@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildHistoricalMigrationCapsule } from "@/lib/historicalMigration";
+import { buildHistoricalMigrationCapsuleV2 } from "@/lib/historicalMigrationV2";
 import type { EventSource, SeismicEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
         ? body.countryCode.toUpperCase()
         : "DO";
     const sourceEvent = parseSourceEvent(body.sourceEvent);
-    const capsule = await buildHistoricalMigrationCapsule(
+    const capsule = await buildHistoricalMigrationCapsuleV2(
       sourceEvent,
       countryCode,
       request.signal,
