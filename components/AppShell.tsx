@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
-import { HistoricalMigrationDashboardV2 } from "./HistoricalMigrationDashboardV2";
+import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
 import { LearningStatusPanel } from "./LearningStatusPanel";
 
 export function AppShell() {
@@ -11,14 +11,14 @@ export function AppShell() {
   return (
     <>
       <nav className="main-tabs" aria-label="Navegación principal">
-        <button className={tab === "historical" ? "active" : ""} onClick={() => setTab("historical")}>Migración histórica</button>
-        <button className={tab === "forecast" ? "active" : ""} onClick={() => setTab("forecast")}>Pronóstico sísmico</button>
+        <button className={tab === "historical" ? "active" : ""} onClick={() => setTab("historical")}>Proyección por país</button>
+        <button className={tab === "forecast" ? "active" : ""} onClick={() => setTab("forecast")}>Pronóstico regional</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
       </nav>
       {tab === "historical" && (
         <>
           <div className="learning-panel-wrap"><LearningStatusPanel /></div>
-          <HistoricalMigrationDashboardV2 />
+          <AutomaticCountryOutlookDashboard />
         </>
       )}
       {tab === "forecast" && <SeismicDashboard />}
