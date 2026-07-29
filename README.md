@@ -1,6 +1,6 @@
 # RDSISMOS
 
-Aplicación Next.js para monitoreo sísmico, pronóstico probabilístico regional y exploración del catálogo mundial USGS ComCat.
+Aplicación Next.js para monitoreo sísmico, pronóstico probabilístico regional, migración histórica y exploración del catálogo mundial USGS ComCat.
 
 ## Arquitectura
 
@@ -9,18 +9,22 @@ Aplicación Next.js para monitoreo sísmico, pronóstico probabilístico regiona
 - Route Handlers en `app/api` como backend interno.
 - Leaflet y React-Leaflet para mapas.
 - CSS propio; no existe una librería de componentes.
-- Gráficos SVG/CSS propios para evitar introducir una dependencia adicional.
-- No hay autenticación ni base de datos configurada en el despliegue actual.
+- Gráficos SVG/CSS propios.
+- PostgreSQL/PostGIS en Supabase para memoria durable del modelo.
 
 ## Pestañas
 
+### Migración histórica
+
+Pantalla principal. Compara un evento reciente con análogos de los últimos 50 años, utiliza ventanas posteriores y de control y desglosa recurrencias por país. Cada cápsula generada se guarda antes de conocer su resultado.
+
 ### Pronóstico sísmico
 
-Mantiene el módulo ETAS existente, el mapa por capas, la selección de país y las cápsulas vinculadas a eventos padre.
+Mantiene el módulo ETAS regional, el mapa por capas, la selección de país y las cápsulas vinculadas a eventos padre.
 
 ### Eventos Sísmicos
 
-Nueva pantalla para consultar USGS ComCat con:
+Pantalla para consultar USGS ComCat con:
 
 - filtros por fecha, magnitud, profundidad, coordenadas, radio, tipo, red, estado y texto;
 - filtros rápidos de 24 horas a 50 años;
@@ -42,8 +46,11 @@ Nueva pantalla para consultar USGS ComCat con:
 - `GET /api/earthquakes/export`
 - `POST /api/earthquakes/sync`
 - `GET|POST /api/earthquakes/sync/status`
+- `POST /api/migration/history`
+- `GET /api/migration/learning/status`
+- `POST /api/migration/learning/evaluate`
 
-El frontend no consulta USGS directamente.
+El frontend consume únicamente estas APIs internas.
 
 ## Límites y estrategia histórica
 
@@ -53,14 +60,46 @@ Para comparaciones globales de largo plazo se recomienda usar M4.5 o M5.0, porqu
 
 ## Persistencia
 
-El repositorio no tenía base de datos. Se añadió `database/earthquakes.sql`, compatible con PostgreSQL/PostGIS, con:
+Ejecute en Supabase, en este orden:
 
-- clave única `external_id`;
-- índices por fecha, magnitud, profundidad y fuente;
-- índice geoespacial;
-- tabla de jobs de sincronización.
+1. `database/earthquakes.sql`
+2. `database/learning.sql`
 
-El endpoint de sincronización actual procesa lotes y mantiene el progreso en memoria. En Vercel este estado no es durable entre reinicios. Para una importación real de 50 años se debe aprovisionar PostgreSQL y un worker/cola, ejecutar el esquema y reemplazar el adaptador de memoria por upserts SQL. No se finge persistencia donde la infraestructura actual no la ofrece.
+`database/earthquakes.sql` crea el catálogo sísmico y los jobs de sincronización. `database/learning.sql` crea:
+
+- `migration_model_versions`;
+- `migration_capsules`;
+- `migration_country_predictions`;
+- `migration_outcomes`;
+- `migration_model_metrics`.
+
+Las cápsulas se guardan con el modelo que las produjo, el evento origen, el periodo de vigilancia, el rango de magnitud y todas las probabilidades nacionales. Las predicciones históricas no se sobrescriben con información del futuro.
+
+## Ciclo de aprendizaje: Fase 1
+
+1. El usuario crea una cápsula mediante `POST /api/migration/history`.
+2. La API guarda la cápsula y sus predicciones en Supabase.
+3. Cuando termina la vigilancia, el evaluador consulta USGS.
+4. Cada predicción recibe un resultado observado.
+5. Se calculan Brier Score, Log Loss, frecuencia observada y precisión al umbral de 50%.
+6. Las métricas quedan asociadas a la versión `migration-country-v2`.
+
+Evaluar hasta cinco cápsulas vencidas:
+
+```bash
+curl -X POST https://rdsismos.vercel.app/api/migration/learning/evaluate \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $EARTHQUAKE_ADMIN_TOKEN" \
+  -d '{"limitCapsules":5}'
+```
+
+Consultar el estado de aprendizaje:
+
+```bash
+curl https://rdsismos.vercel.app/api/migration/learning/status
+```
+
+El evaluador es idempotente: una predicción con resultado guardado no se vuelve a evaluar. Puede ejecutarse periódicamente desde un cron o job externo.
 
 ## Importación histórica
 
@@ -84,10 +123,12 @@ curl "http://localhost:3000/api/earthquakes/sync/status?id=<JOB_ID>"
 ```env
 RASPBERRY_SHAKE_EVENTS_URL=https://quakelink.raspberryshake.org/events/query
 EARTHQUAKE_ADMIN_TOKEN=un-token-largo-y-secreto
-DATABASE_URL=postgresql://... # reservado para persistencia durable
+DATABASE_URL=postgresql://...
 ```
 
-`EARTHQUAKE_ADMIN_TOKEN` protege la creación de jobs cuando está definido.
+- `DATABASE_URL` debe usar una conexión server-side; nunca utilice el prefijo `NEXT_PUBLIC_`.
+- `EARTHQUAKE_ADMIN_TOKEN` protege sincronización y evaluación cuando está definido.
+- Con Transaction Pooler de Supabase, el cliente usa `prepare: false`.
 
 ## Desarrollo y pruebas
 
@@ -104,7 +145,9 @@ Abra `http://localhost:3000`.
 
 1. Importe el repositorio como proyecto Next.js.
 2. No configure una carpeta de salida estática.
-3. Configure `EARTHQUAKE_ADMIN_TOKEN` si habilitará importaciones.
-4. Para catálogo histórico persistente, conecte PostgreSQL/PostGIS y un worker externo o Vercel Functions con una cola adecuada.
+3. Configure `DATABASE_URL` y `EARTHQUAKE_ADMIN_TOKEN`.
+4. Ejecute ambas migraciones SQL en Supabase.
+5. Despliegue nuevamente después de cambiar variables de entorno.
+6. Programe la llamada protegida a `/api/migration/learning/evaluate` cuando quiera automatizar el cierre de cápsulas.
 
-> RDSISMOS no sustituye las alertas ni recomendaciones de las autoridades sismológicas y de protección civil.
+> RDSISMOS no sustituye las alertas ni recomendaciones de las autoridades sismológicas y de protección civil. Las asociaciones históricas no demuestran causalidad entre placas distantes.
