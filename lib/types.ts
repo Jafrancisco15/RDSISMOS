@@ -86,24 +86,38 @@ export interface MigrationProjection {
 
 export interface HistoricalMigrationDestination {
   zoneId: string;
+  zoneName?: string;
+  countryCode?: string;
   name: string;
   latitude: number;
   longitude: number;
   radiusKm: number;
   recurrencePct: number;
+  baselinePct?: number;
+  liftPct?: number;
   relativeWeightPct: number;
   analogHits: number;
+  controlHits?: number;
   weightedHits: number;
   targetOverlap: boolean;
   medianLeadDays: number | null;
   strongestObservedMagnitude: number | null;
+  surveillanceStart?: string;
+  surveillanceEnd?: string;
+  magnitudeMin?: number;
+  magnitudeMax?: number;
+  observedMagnitudeMin?: number | null;
+  observedMagnitudeMax?: number | null;
 }
 
 export interface HistoricalAnalogEvidence {
   analogEvent: SeismicEvent;
   similarityPct: number;
   followerCount: number;
+  controlFollowerCount?: number;
   hitZoneIds: string[];
+  hitCountryCodes?: string[];
+  controlHitCountryCodes?: string[];
   strongestFollower: SeismicEvent | null;
 }
 
