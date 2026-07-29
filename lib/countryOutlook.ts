@@ -220,7 +220,7 @@ export function buildCountryOutlook(
     magnitudeMin,
     magnitudeMax,
     activeContributors: contributions.length,
-    contributors,
+    contributors: contributions,
     methodology: [
       "Selecciona automáticamente hasta tres eventos recientes, fuertes y separados de una misma secuencia.",
       "Cada evento se compara con 50 años de análogos y con una ventana histórica de control.",
