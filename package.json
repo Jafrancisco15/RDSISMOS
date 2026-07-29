@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test": "tsx --test lib/earthquakes/*.test.ts lib/learning/*.test.ts"
+    "test": "tsx --test lib/*.test.ts lib/earthquakes/*.test.ts lib/learning/*.test.ts"
   },
   "dependencies": {
     "leaflet": "1.9.4",
