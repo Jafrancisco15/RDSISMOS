@@ -1,0 +1,17 @@
+.outlook-candidate-list article {
+  grid-template-columns: 1fr auto;
+}
+
+.outlook-candidate-list button {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  .outlook-candidate-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .outlook-candidate-list article > span {
+    grid-column: 1;
+  }
+}
