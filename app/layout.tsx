@@ -2,11 +2,12 @@ import type { Metadata } from "next";
 import "leaflet/dist/leaflet.css";
 import "./globals.css";
 import "./historical.css";
+import "./historical-country.css";
 
 export const metadata: Metadata = {
   title: "RDSISMOS | Observatorio experimental",
   description:
-    "Mapa experimental de actividad sísmica, pronóstico probabilístico y recurrencias históricas.",
+    "Mapa experimental de actividad sísmica, pronóstico probabilístico y recurrencias históricas por país.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
