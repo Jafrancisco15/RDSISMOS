@@ -13,6 +13,12 @@ const MODEL_PARAMETERS = {
   controlGapDays: 7,
 };
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+function toJsonValue(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
+}
+
 export interface LearningStatus {
   databaseConfigured: boolean;
   databaseConnected: boolean;
@@ -65,10 +71,7 @@ export interface PredictionOutcomeInput {
     latitude: number;
     longitude: number;
   } | null;
-  strongestEvent?: {
-    id: string;
-    magnitude: number;
-  } | null;
+  strongestEvent?: { id: string; magnitude: number } | null;
   daysToFirstEvent?: number | null;
   payload: unknown;
 }
@@ -101,13 +104,7 @@ export async function persistMigrationCapsule(capsule: HistoricalMigrationCapsul
   await sql.begin(async (tx) => {
     await tx`
       INSERT INTO migration_model_versions (id, name, status, parameters, updated_at)
-      VALUES (
-        ${CURRENT_MODEL_VERSION},
-        ${capsule.modelName},
-        'champion',
-        ${tx.json(MODEL_PARAMETERS)},
-        NOW()
-      )
+      VALUES (${CURRENT_MODEL_VERSION}, ${capsule.modelName}, 'champion', ${tx.json(toJsonValue(MODEL_PARAMETERS))}, NOW())
       ON CONFLICT (id) DO UPDATE SET
         name = EXCLUDED.name,
         parameters = EXCLUDED.parameters,
@@ -130,7 +127,7 @@ export async function persistMigrationCapsule(capsule: HistoricalMigrationCapsul
         ${capsule.generatedAt}, ${surveillanceStart}, ${surveillanceEnd},
         ${capsule.forecastMagnitudeMin}, ${capsule.forecastMagnitudeMax},
         ${capsule.confidencePct}, ${capsule.analogsFound}, ${capsule.analogsEvaluated},
-        ${status}, ${tx.json(capsule)}, NOW()
+        ${status}, ${tx.json(toJsonValue(capsule))}, NOW()
       )
       ON CONFLICT (id) DO UPDATE SET
         generated_at = EXCLUDED.generated_at,
@@ -167,7 +164,7 @@ export async function persistMigrationCapsule(capsule: HistoricalMigrationCapsul
           ${destination.surveillanceEnd ?? surveillanceEnd},
           ${destination.magnitudeMin ?? capsule.forecastMagnitudeMin},
           ${destination.magnitudeMax ?? capsule.forecastMagnitudeMax},
-          ${tx.json(destination)}, NOW()
+          ${tx.json(toJsonValue(destination))}, NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
           probability_pct = EXCLUDED.probability_pct,
@@ -332,7 +329,7 @@ export async function savePredictionOutcome(input: PredictionOutcomeInput) {
       ${input.firstEvent?.place ?? null}, ${input.firstEvent?.latitude ?? null},
       ${input.firstEvent?.longitude ?? null}, ${input.strongestEvent?.id ?? null},
       ${input.strongestEvent?.magnitude ?? null}, ${input.daysToFirstEvent ?? null},
-      ${sql.json(input.payload)}, NOW()
+      ${sql.json(toJsonValue(input.payload))}, NOW()
     )
     ON CONFLICT (prediction_id) DO UPDATE SET
       occurred = EXCLUDED.occurred,
