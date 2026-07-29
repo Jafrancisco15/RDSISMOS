@@ -3,6 +3,7 @@ import "leaflet/dist/leaflet.css";
 import "./globals.css";
 import "./historical.css";
 import "./historical-country.css";
+import "./outlook-overrides.css";
 
 export const metadata: Metadata = {
   title: "RDSISMOS | Observatorio experimental",
