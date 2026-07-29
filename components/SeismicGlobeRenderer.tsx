@@ -210,8 +210,8 @@ export function SeismicGlobeRenderer({
         ringLat="latitude"
         ringLng="longitude"
         ringAltitude={0.012}
-        ringColor={(ring) => [String((ring as { color: string }).color), "rgba(255,255,255,0)"]}
-        ringMaxRadius={(ring) => 2.5 + clamp(Number((ring as GlobeProjection).radiusKm) / 600, 0, 7)}
+        ringColor={(ring: unknown) => [String((ring as { color: string }).color), "rgba(255,255,255,0)"]}
+        ringMaxRadius={(ring: unknown) => 2.5 + clamp(Number((ring as GlobeProjection).radiusKm) / 600, 0, 7)}
         ringPropagationSpeed={1.6}
         ringRepeatPeriod={1_450}
         enablePointerInteraction
