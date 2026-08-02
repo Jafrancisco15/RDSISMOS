@@ -1,8 +1,4 @@
-export type EventSource =
-  | "Raspberry Shake QuakeLink"
-  | "USGS ComCat"
-  | "USGS real-time"
-  | "EMSC SeismicPortal";
+export type EventSource = string;
 
 export type CatalogProvider =
   | "Raspberry Shake + USGS + EMSC"
