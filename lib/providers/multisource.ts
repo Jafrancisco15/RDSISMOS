@@ -1,14 +1,18 @@
 import { haversineKm } from "../regions";
-import type { CatalogProvider, CountryTarget, EventSource, SeismicEvent } from "../types";
+import type { CatalogProvider, CountryTarget, SeismicEvent } from "../types";
 import { fetchEmscEvents } from "./emsc";
 import { fetchSeismicCatalog } from "./raspberryShake";
 
-const SOURCE_PRIORITY: Record<EventSource, number> = {
+const SOURCE_PRIORITY: Record<string, number> = {
   "Raspberry Shake QuakeLink": 4,
   "EMSC SeismicPortal": 3,
   "USGS real-time": 2,
   "USGS ComCat": 1,
 };
+
+function priority(event: SeismicEvent) {
+  return SOURCE_PRIORITY[event.source] ?? 0;
+}
 
 function sameEvent(a: SeismicEvent, b: SeismicEvent) {
   const seconds = Math.abs(new Date(a.time).getTime() - new Date(b.time).getTime()) / 1_000;
@@ -18,17 +22,27 @@ function sameEvent(a: SeismicEvent, b: SeismicEvent) {
 }
 
 export function mergeProviderEvents(events: SeismicEvent[]) {
-  const ordered = [...events].sort((a, b) => {
-    const timeDifference = new Date(b.time).getTime() - new Date(a.time).getTime();
-    if (timeDifference !== 0) return timeDifference;
-    return SOURCE_PRIORITY[b.source] - SOURCE_PRIORITY[a.source];
-  });
+  const chronological = [...events].sort(
+    (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
+  );
   const result: SeismicEvent[] = [];
-  for (const event of ordered) {
-    if (result.some((existing) => sameEvent(existing, event))) continue;
-    result.push(event);
+
+  for (const event of chronological) {
+    const duplicateIndex = result.findIndex((existing) => sameEvent(existing, event));
+    if (duplicateIndex < 0) {
+      result.push(event);
+      continue;
+    }
+
+    const existing = result[duplicateIndex];
+    if (priority(event) > priority(existing)) {
+      result[duplicateIndex] = event;
+    }
   }
-  return result;
+
+  return result.sort(
+    (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
+  );
 }
 
 function providerName(baseProvider: CatalogProvider, emscAvailable: boolean): CatalogProvider {
