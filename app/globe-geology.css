@@ -1,0 +1,70 @@
+.globe-stage-first { margin-bottom: 16px; }
+.globe-layer-controls {
+  position: relative;
+  z-index: 4;
+  margin: 14px 18px 0;
+  border-color: rgba(148,163,184,.2);
+  background: rgba(3,10,22,.78);
+  backdrop-filter: blur(14px);
+}
+.globe-layer-controls .globe-switch { background: rgba(255,255,255,.025); }
+.globe-switch input:checked + .globe-switch-track.fault {
+  background: linear-gradient(90deg,#f43f5e,#fb7185);
+}
+.globe-switch input:checked + .globe-switch-track.plate {
+  background: linear-gradient(90deg,#0284c7,#38bdf8);
+}
+.globe-switch input:checked + .globe-switch-track.country {
+  background: linear-gradient(90deg,#64748b,#e2e8f0);
+}
+.globe-legend i.fault,
+.globe-legend i.plate,
+.globe-legend i.country {
+  width: 22px;
+  height: 3px;
+  border-radius: 99px;
+}
+.globe-legend i.fault {
+  background: repeating-linear-gradient(90deg,#fb7185 0 3px,transparent 3px 6px);
+}
+.globe-legend i.plate {
+  background: repeating-linear-gradient(90deg,#38bdf8 0 4px,transparent 4px 7px);
+}
+.globe-legend i.country { background: rgba(226,232,240,.68); }
+.globe-time-controls-after-map { margin-top: 16px; }
+.seismic-globe-canvas { isolation: isolate; }
+.globe-layer-status {
+  position: absolute;
+  z-index: 8;
+  left: 14px;
+  bottom: 12px;
+  max-width: min(620px,calc(100% - 28px));
+  border: 1px solid rgba(56,189,248,.28);
+  border-radius: 10px;
+  padding: 7px 10px;
+  color: #bae6fd;
+  background: rgba(2,8,23,.84);
+  backdrop-filter: blur(10px);
+  font-size: .64rem;
+  line-height: 1.35;
+  pointer-events: none;
+}
+.globe-layer-status.warning {
+  border-color: rgba(250,204,21,.35);
+  color: #fde68a;
+}
+.globe-layer-status.error {
+  border-color: rgba(248,113,113,.42);
+  color: #fecaca;
+}
+@media (max-width: 1180px) {
+  .globe-layer-controls { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 700px) {
+  .globe-layer-controls {
+    grid-template-columns: 1fr;
+    margin-inline: 12px;
+  }
+  .globe-legend { gap: 8px 12px; }
+  .globe-layer-status { bottom: 8px; font-size: .6rem; }
+}

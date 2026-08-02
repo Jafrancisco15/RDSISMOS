@@ -52,6 +52,9 @@ export function SeismicGlobe3D() {
   const [showObserved, setShowObserved] = useState(true);
   const [showProjected, setShowProjected] = useState(true);
   const [showComparison, setShowComparison] = useState(false);
+  const [showFaults, setShowFaults] = useState(true);
+  const [showPlateBoundaries, setShowPlateBoundaries] = useState(true);
+  const [showCountryBorders, setShowCountryBorders] = useState(true);
   const [autoRotate, setAutoRotate] = useState(false);
   const [selected, setSelected] = useState<SeismicGlobePoint | null>(null);
   const [focusTarget, setFocusTarget] = useState<{ key: string; latitude: number; longitude: number } | null>(null);
@@ -135,7 +138,7 @@ export function SeismicGlobe3D() {
         <div>
           <div className="brand-line"><span className="pulse-dot" /> RDSISMOS</div>
           <h1>Mapa sísmico 3D interactivo</h1>
-          <p>Explora sismos M4.2+ de los últimos 90 días, proyecciones activas y el estado histórico que tenía el modelo en cualquier fecha disponible.</p>
+          <p>Explora sismos M4.2+, proyecciones activas, fallas, placas tectónicas y el estado histórico que tenía el modelo en cualquier fecha disponible.</p>
         </div>
         <div className="globe-update-chip">
           <span>Actualización</span>
@@ -143,109 +146,64 @@ export function SeismicGlobe3D() {
         </div>
       </header>
 
-      <section className="panel globe-time-controls" aria-label="Fecha y país de análisis">
-        <label>
-          <span>País de estudio</span>
-          <select value={countryCode} onChange={(event) => setCountryCode(event.target.value)}>
-            {(data?.countries ?? []).map((country) => (
-              <option key={country.code} value={country.code}>{country.name}</option>
-            ))}
-            {!data && <option value="DO">República Dominicana</option>}
-          </select>
-        </label>
-        <label>
-          <span>Estado del modelo en</span>
-          <input type="date" value={dateDraft} max={today} onChange={(event) => setDateDraft(event.target.value)} />
-        </label>
-        <label>
-          <span>Comparar con</span>
-          <input type="date" value={comparisonDraft} max={today} disabled={!compareEnabled} onChange={(event) => setComparisonDraft(event.target.value)} />
-        </label>
-        <label className="globe-compare-check">
-          <input type="checkbox" checked={compareEnabled} onChange={(event) => setCompareEnabled(event.target.checked)} />
-          <span>Activar comparación histórica</span>
-        </label>
-        <button type="button" onClick={applyDates}>Aplicar</button>
-      </section>
-
-      <section className="panel globe-controls" aria-label="Controles del mapa 3D">
-        <label className="globe-switch">
-          <input type="checkbox" checked={showObserved} onChange={(event) => setShowObserved(event.target.checked)} />
-          <span className="globe-switch-track" aria-hidden="true" />
-          <div><strong>Sismos observados</strong><small>90 días hasta la fecha seleccionada · M4.2+</small></div>
-        </label>
-        <label className="globe-switch">
-          <input type="checkbox" checked={showProjected} onChange={(event) => setShowProjected(event.target.checked)} />
-          <span className="globe-switch-track projected" aria-hidden="true" />
-          <div><strong>Proyecciones de la fecha</strong><small>Analogía histórica y ETAS regional</small></div>
-        </label>
-        <label className="globe-switch" aria-disabled={!compareEnabled}>
-          <input type="checkbox" disabled={!compareEnabled} checked={showComparison} onChange={(event) => setShowComparison(event.target.checked)} />
-          <span className="globe-switch-track comparison" aria-hidden="true" />
-          <div><strong>Fecha comparada</strong><small>{compareEnabled ? comparisonDate : "Activa primero la comparación"}</small></div>
-        </label>
-        <label className="globe-switch compact">
-          <input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} />
-          <span className="globe-switch-track rotation" aria-hidden="true" />
-          <div><strong>Rotación automática</strong><small>Desactivada inicialmente</small></div>
-        </label>
-      </section>
-
-      <section className="globe-summary-grid">
-        <article className="metric-card">
-          <span>Eventos observados</span>
-          <strong className="viz-stat-value">{data?.observedEvents.length.toLocaleString() ?? "—"}</strong>
-          <small>{data?.provider ?? "Multifuente"} · M{data?.observedMinimumMagnitude ?? 4.2}+</small>
-        </article>
-        <article className="metric-card">
-          <span>Mayor magnitud observada</span>
-          <strong className="viz-stat-value">{strongestObserved ? `M${strongestObserved.magnitude.toFixed(1)}` : "—"}</strong>
-          <small>{strongestObserved?.place ?? "Sin datos"}</small>
-        </article>
-        <article className="metric-card">
-          <span>Proyecciones de {data?.viewDate ?? viewDate}</span>
-          <strong className="viz-stat-value">{data?.projections.length.toLocaleString() ?? "—"}</strong>
-          <small>{data?.databaseConnected ? "Supabase + cálculo regional" : "Cálculo regional sin memoria"}</small>
-        </article>
-        <article className="metric-card">
-          <span>Mayor recurrencia proyectada</span>
-          <strong className="viz-stat-value">{strongestProjection ? `${strongestProjection.probabilityPct}%` : "—"}</strong>
-          <small>{strongestProjection?.countryName ?? "Sin proyección activa"}</small>
-        </article>
-      </section>
-
-      {error && <div className="warning-banner globe-error">{error}</div>}
-      {(data?.warnings.length ?? 0) > 0 && (
-        <details className="globe-warnings">
-          <summary>{data?.warnings.length} avisos de datos</summary>
-          <ul>{data?.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
-        </details>
-      )}
-      {(data?.providerStatus.length ?? 0) > 0 && (
-        <details className="globe-provider-status">
-          <summary>Fuentes consultadas: {data?.provider}</summary>
-          <ul>{data?.providerStatus.map((status) => <li key={status}>{status}</li>)}</ul>
-        </details>
-      )}
-
-      <section className="globe-stage">
+      <section className="globe-stage globe-stage-first">
         <div className="globe-stage-head">
           <div>
             <span className="eyebrow">Visualización global</span>
-            <h2>Tierra sísmica en movimiento</h2>
+            <h2>Tierra sísmica y tectónica</h2>
           </div>
           <div className="globe-legend" aria-label="Leyenda">
             <span><i className="observed" /> Observado M4.2+</span>
-            <span><i className="projected" /> Proyección seleccionada</span>
-            <span><i className="comparison" /> Fecha comparada</span>
-            <span><i className="arc" /> Asociación histórica</span>
+            <span><i className="projected" /> Proyección</span>
+            <span><i className="comparison" /> Comparación</span>
+            <span><i className="fault" /> Falla activa</span>
+            <span><i className="plate" /> Placa tectónica</span>
+            <span><i className="country" /> País</span>
           </div>
         </div>
+
+        <section className="panel globe-controls globe-layer-controls" aria-label="Capas del mapa 3D">
+          <label className="globe-switch">
+            <input type="checkbox" checked={showObserved} onChange={(event) => setShowObserved(event.target.checked)} />
+            <span className="globe-switch-track" aria-hidden="true" />
+            <div><strong>Sismos observados</strong><small>90 días · magnitud M4.2+</small></div>
+          </label>
+          <label className="globe-switch">
+            <input type="checkbox" checked={showProjected} onChange={(event) => setShowProjected(event.target.checked)} />
+            <span className="globe-switch-track projected" aria-hidden="true" />
+            <div><strong>Proyecciones</strong><small>Analogía histórica y ETAS regional</small></div>
+          </label>
+          <label className="globe-switch" aria-disabled={!compareEnabled}>
+            <input type="checkbox" disabled={!compareEnabled} checked={showComparison} onChange={(event) => setShowComparison(event.target.checked)} />
+            <span className="globe-switch-track comparison" aria-hidden="true" />
+            <div><strong>Fecha comparada</strong><small>{compareEnabled ? comparisonDate : "Actívala debajo del mapa"}</small></div>
+          </label>
+          <label className="globe-switch">
+            <input type="checkbox" checked={showFaults} onChange={(event) => setShowFaults(event.target.checked)} />
+            <span className="globe-switch-track fault" aria-hidden="true" />
+            <div><strong>Fallas activas</strong><small>Líneas rosadas puntuadas · GEM</small></div>
+          </label>
+          <label className="globe-switch">
+            <input type="checkbox" checked={showPlateBoundaries} onChange={(event) => setShowPlateBoundaries(event.target.checked)} />
+            <span className="globe-switch-track plate" aria-hidden="true" />
+            <div><strong>Placas tectónicas</strong><small>Límites azules puntuados · PB2002</small></div>
+          </label>
+          <label className="globe-switch">
+            <input type="checkbox" checked={showCountryBorders} onChange={(event) => setShowCountryBorders(event.target.checked)} />
+            <span className="globe-switch-track country" aria-hidden="true" />
+            <div><strong>Bordes de países</strong><small>Fronteras internacionales · Natural Earth</small></div>
+          </label>
+          <label className="globe-switch compact">
+            <input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} />
+            <span className="globe-switch-track rotation" aria-hidden="true" />
+            <div><strong>Rotación automática</strong><small>Desactivada inicialmente</small></div>
+          </label>
+        </section>
 
         <div className="globe-visual-layout">
           <div className="globe-visual-main">
             {loading && !data ? (
-              <div className="globe-loading">Consultando 90 días de actividad y reconstruyendo las proyecciones…</div>
+              <div className="globe-loading">Consultando actividad, proyecciones y capas tectónicas…</div>
             ) : data ? (
               <SeismicGlobeRenderer
                 observedEvents={data.observedEvents}
@@ -254,6 +212,9 @@ export function SeismicGlobe3D() {
                 showObserved={showObserved}
                 showProjected={showProjected}
                 showComparison={showComparison}
+                showFaults={showFaults}
+                showPlateBoundaries={showPlateBoundaries}
+                showCountryBorders={showCountryBorders}
                 autoRotate={autoRotate}
                 focusTarget={focusTarget}
                 onSelect={setSelected}
@@ -297,8 +258,70 @@ export function SeismicGlobe3D() {
           </aside>
         </div>
 
-        <p className="globe-help">Arrastra para girar · usa la rueda o gesto de pinza para acercar · toca una columna o una proyección del listado.</p>
+        <p className="globe-help">Arrastra para girar · usa la rueda o gesto de pinza para acercar · toca una columna o una proyección del listado. Capas: GEM GAF-DB, PB2002 y Natural Earth.</p>
       </section>
+
+      <section className="panel globe-time-controls globe-time-controls-after-map" aria-label="Fecha y país de análisis">
+        <label>
+          <span>País de estudio</span>
+          <select value={countryCode} onChange={(event) => setCountryCode(event.target.value)}>
+            {(data?.countries ?? []).map((country) => (
+              <option key={country.code} value={country.code}>{country.name}</option>
+            ))}
+            {!data && <option value="DO">República Dominicana</option>}
+          </select>
+        </label>
+        <label>
+          <span>Estado del modelo en</span>
+          <input type="date" value={dateDraft} max={today} onChange={(event) => setDateDraft(event.target.value)} />
+        </label>
+        <label>
+          <span>Comparar con</span>
+          <input type="date" value={comparisonDraft} max={today} disabled={!compareEnabled} onChange={(event) => setComparisonDraft(event.target.value)} />
+        </label>
+        <label className="globe-compare-check">
+          <input type="checkbox" checked={compareEnabled} onChange={(event) => setCompareEnabled(event.target.checked)} />
+          <span>Activar comparación histórica</span>
+        </label>
+        <button type="button" onClick={applyDates}>Aplicar</button>
+      </section>
+
+      <section className="globe-summary-grid">
+        <article className="metric-card">
+          <span>Eventos observados</span>
+          <strong className="viz-stat-value">{data?.observedEvents.length.toLocaleString() ?? "—"}</strong>
+          <small>{data?.provider ?? "Multifuente"} · M{data?.observedMinimumMagnitude ?? 4.2}+</small>
+        </article>
+        <article className="metric-card">
+          <span>Mayor magnitud observada</span>
+          <strong className="viz-stat-value">{strongestObserved ? `M${strongestObserved.magnitude.toFixed(1)}` : "—"}</strong>
+          <small>{strongestObserved?.place ?? "Sin datos"}</small>
+        </article>
+        <article className="metric-card">
+          <span>Proyecciones de {data?.viewDate ?? viewDate}</span>
+          <strong className="viz-stat-value">{data?.projections.length.toLocaleString() ?? "—"}</strong>
+          <small>{data?.databaseConnected ? "Supabase + cálculo regional" : "Cálculo regional sin memoria"}</small>
+        </article>
+        <article className="metric-card">
+          <span>Mayor recurrencia proyectada</span>
+          <strong className="viz-stat-value">{strongestProjection ? `${strongestProjection.probabilityPct}%` : "—"}</strong>
+          <small>{strongestProjection?.countryName ?? "Sin proyección activa"}</small>
+        </article>
+      </section>
+
+      {error && <div className="warning-banner globe-error">{error}</div>}
+      {(data?.warnings.length ?? 0) > 0 && (
+        <details className="globe-warnings">
+          <summary>{data?.warnings.length} avisos de datos</summary>
+          <ul>{data?.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+        </details>
+      )}
+      {(data?.providerStatus.length ?? 0) > 0 && (
+        <details className="globe-provider-status">
+          <summary>Fuentes sísmicas consultadas: {data?.provider}</summary>
+          <ul>{data?.providerStatus.map((status) => <li key={status}>{status}</li>)}</ul>
+        </details>
+      )}
 
       <section className="panel globe-detail" aria-live="polite">
         {!selected ? (
@@ -340,7 +363,7 @@ export function SeismicGlobe3D() {
         )}
       </section>
 
-      <footer>Las proyecciones son estimaciones probabilísticas y reconstrucciones históricas del modelo. No son predicciones deterministas ni sustituyen alertas oficiales.</footer>
+      <footer>Las proyecciones son estimaciones probabilísticas y reconstrucciones históricas del modelo. Las capas tectónicas son cartográficas y no sustituyen mapas oficiales de amenaza.</footer>
     </main>
   );
 }

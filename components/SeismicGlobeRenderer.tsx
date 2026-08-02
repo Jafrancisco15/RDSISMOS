@@ -4,6 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { GlobeProjection } from "@/lib/globeTypes";
+import type {
+  GlobeMapLayersResponse,
+  GlobeMapPath,
+  GlobeMapPoint,
+} from "@/lib/globeLayers";
 
 const EARTH_TEXTURE = "https://cdn.jsdelivr.net/npm/three-globe@2.45.2/example/img/earth-night.jpg";
 
@@ -44,6 +49,14 @@ interface FocusTarget {
   key: string;
   latitude: number;
   longitude: number;
+}
+
+interface RenderPath extends Omit<GlobeMapPath, "points"> {
+  points: Array<GlobeMapPoint & { altitude: number }>;
+  color: string;
+  stroke: number;
+  dashLength: number;
+  dashGap: number;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -92,6 +105,29 @@ function pointLabel(point: SeismicGlobePoint) {
   return `<div class="globe-tooltip"><strong>${point.comparison ? "Comparación" : "Proyección"} · ${escapeHtml(projection.countryName)}</strong><span>${projection.probabilityPct}% · M${projection.magnitudeMin.toFixed(1)}–M${projection.magnitudeMax.toFixed(1)}</span><small>${formatDate(projection.surveillanceStart)}–${formatDate(projection.surveillanceEnd)} · ${model}</small></div>`;
 }
 
+function pathLabel(path: RenderPath) {
+  const category = path.kind === "active-fault"
+    ? "Falla activa"
+    : path.kind === "plate-boundary"
+      ? "Límite de placa tectónica"
+      : "Frontera de país";
+  return `<div class="globe-tooltip"><strong>${category}</strong><span>${escapeHtml(path.name)}</span></div>`;
+}
+
+function decoratePaths(
+  paths: GlobeMapPath[],
+  style: { color: string; stroke: number; dashLength: number; dashGap: number; altitude: number },
+): RenderPath[] {
+  return paths.map((path) => ({
+    ...path,
+    color: style.color,
+    stroke: style.stroke,
+    dashLength: style.dashLength,
+    dashGap: style.dashGap,
+    points: path.points.map((point) => ({ ...point, altitude: style.altitude })),
+  }));
+}
+
 export function SeismicGlobeRenderer({
   observedEvents,
   projections,
@@ -99,6 +135,9 @@ export function SeismicGlobeRenderer({
   showObserved,
   showProjected,
   showComparison,
+  showFaults,
+  showPlateBoundaries,
+  showCountryBorders,
   autoRotate,
   focusTarget,
   onSelect,
@@ -109,6 +148,9 @@ export function SeismicGlobeRenderer({
   showObserved: boolean;
   showProjected: boolean;
   showComparison: boolean;
+  showFaults: boolean;
+  showPlateBoundaries: boolean;
+  showCountryBorders: boolean;
   autoRotate: boolean;
   focusTarget: FocusTarget | null;
   onSelect: (point: SeismicGlobePoint) => void;
@@ -116,6 +158,9 @@ export function SeismicGlobeRenderer({
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 920, height: 680 });
+  const [mapLayers, setMapLayers] = useState<GlobeMapLayersResponse | null>(null);
+  const [mapLayersLoading, setMapLayersLoading] = useState(true);
+  const [mapLayersError, setMapLayersError] = useState<string | null>(null);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -128,6 +173,35 @@ export function SeismicGlobeRenderer({
     const observer = new ResizeObserver(update);
     observer.observe(element);
     return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    async function loadMapLayers() {
+      try {
+        const response = await fetch("/api/globe/layers", {
+          cache: "force-cache",
+          signal: controller.signal,
+        });
+        const payload = await response.json() as GlobeMapLayersResponse & { error?: string };
+        if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+        if (!disposed) {
+          setMapLayers(payload);
+          setMapLayersError(null);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (!disposed) setMapLayersError(error instanceof Error ? error.message : "Capas geológicas no disponibles.");
+      } finally {
+        if (!disposed) setMapLayersLoading(false);
+      }
+    }
+    void loadMapLayers();
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
   }, []);
 
   useEffect(() => {
@@ -229,6 +303,37 @@ export function SeismicGlobeRenderer({
     return [...primary, ...comparison];
   }, [comparisonProjections, projections, showComparison, showProjected]);
 
+  const geographicPaths = useMemo<RenderPath[]>(() => {
+    const countryBorders = showCountryBorders
+      ? decoratePaths(mapLayers?.countryBorders ?? [], {
+          color: "rgba(226,232,240,.48)",
+          stroke: 0.32,
+          dashLength: 1,
+          dashGap: 0,
+          altitude: 0.006,
+        })
+      : [];
+    const plateBoundaries = showPlateBoundaries
+      ? decoratePaths(mapLayers?.plateBoundaries ?? [], {
+          color: "#38bdf8",
+          stroke: 0.54,
+          dashLength: 0.035,
+          dashGap: 0.025,
+          altitude: 0.011,
+        })
+      : [];
+    const faults = showFaults
+      ? decoratePaths(mapLayers?.activeFaults ?? [], {
+          color: "#fb7185",
+          stroke: 0.45,
+          dashLength: 0.022,
+          dashGap: 0.018,
+          altitude: 0.014,
+        })
+      : [];
+    return [...countryBorders, ...plateBoundaries, ...faults];
+  }, [mapLayers, showCountryBorders, showFaults, showPlateBoundaries]);
+
   return (
     <div className="seismic-globe-canvas" ref={containerRef}>
       <Globe
@@ -240,6 +345,18 @@ export function SeismicGlobeRenderer({
         atmosphereColor="#69c7ff"
         atmosphereAltitude={0.18}
         showGraticules
+        pathsData={geographicPaths}
+        pathPoints="points"
+        pathPointLat="lat"
+        pathPointLng="lng"
+        pathPointAlt="altitude"
+        pathColor="color"
+        pathStroke="stroke"
+        pathDashLength="dashLength"
+        pathDashGap="dashGap"
+        pathDashAnimateTime={0}
+        pathLabel={(path) => pathLabel(path as RenderPath)}
+        pathTransitionDuration={0}
         pointsData={points}
         pointLat="lat"
         pointLng="lng"
@@ -270,6 +387,11 @@ export function SeismicGlobeRenderer({
         ringRepeatPeriod={1_450}
         enablePointerInteraction
       />
+      {mapLayersLoading && <div className="globe-layer-status">Cargando fallas, placas y fronteras…</div>}
+      {!mapLayersLoading && mapLayersError && <div className="globe-layer-status error">Capas cartográficas: {mapLayersError}</div>}
+      {!mapLayersLoading && !mapLayersError && (mapLayers?.warnings.length ?? 0) > 0 && (
+        <div className="globe-layer-status warning">{mapLayers?.warnings.join(" · ")}</div>
+      )}
     </div>
   );
 }
