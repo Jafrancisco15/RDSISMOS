@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { COUNTRIES, countryByCode } from "@/lib/countries";
 import { calculateMigrationAnalysis } from "@/lib/migration";
 import { generateMigrationProjections } from "@/lib/projections";
-import { fetchSeismicCatalog } from "@/lib/providers/raspberryShake";
+import { fetchExpandedSeismicCatalog } from "@/lib/providers/multisource";
 import { WATCHED_REGIONS } from "@/lib/regions";
 import type { EventsApiResponse } from "@/lib/types";
 
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
   const target = countryByCode(request.nextUrl.searchParams.get("country"));
 
   try {
-    const catalog = await fetchSeismicCatalog(start, generatedAt, target);
+    const catalog = await fetchExpandedSeismicCatalog(start, generatedAt, target, 4.2);
     const projections = generateMigrationProjections(
       catalog.events,
       target,
