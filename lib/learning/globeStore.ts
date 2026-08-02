@@ -11,7 +11,11 @@ function iso(value: unknown) {
   return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
 }
 
-export async function loadActiveGlobeProjections(limit = 240): Promise<{
+function utcDayStart(value: Date) {
+  return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
+}
+
+export async function loadGlobeProjectionsAt(asOf: Date, limit = 240): Promise<{
   databaseConfigured: boolean;
   databaseConnected: boolean;
   projections: GlobeProjection[];
@@ -26,6 +30,9 @@ export async function loadActiveGlobeProjections(limit = 240): Promise<{
       warning: "DATABASE_URL no está configurada.",
     };
   }
+
+  const dayStart = utcDayStart(asOf);
+  const dayEnd = asOf;
 
   try {
     const rows = await sql`
@@ -54,6 +61,7 @@ export async function loadActiveGlobeProjections(limit = 240): Promise<{
           c.source_longitude,
           c.source_place,
           c.confidence_pct,
+          c.generated_at,
           ROW_NUMBER() OVER (
             PARTITION BY p.country_code
             ORDER BY
@@ -63,8 +71,10 @@ export async function loadActiveGlobeProjections(limit = 240): Promise<{
           ) AS position
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
-        WHERE p.surveillance_end > NOW()
-          AND c.status IN ('active', 'due')
+        WHERE c.generated_at <= ${dayEnd.toISOString()}
+          AND p.surveillance_start <= ${dayEnd.toISOString()}
+          AND p.surveillance_end >= ${dayStart.toISOString()}
+          AND p.magnitude_max >= 4.2
           AND p.probability_pct > 0
       )
       SELECT *
@@ -79,6 +89,9 @@ export async function loadActiveGlobeProjections(limit = 240): Promise<{
       databaseConnected: true,
       projections: rows.map((row) => ({
         id: String(row.id),
+        projectionKind: "historical-country" as const,
+        snapshotDate: dayStart.toISOString(),
+        generatedAt: iso(row.generated_at),
         countryCode: String(row.country_code),
         countryName: String(row.country_name),
         latitude: number(row.latitude),
@@ -89,7 +102,7 @@ export async function loadActiveGlobeProjections(limit = 240): Promise<{
         liftPct: number(row.excess_probability_pct),
         surveillanceStart: iso(row.surveillance_start),
         surveillanceEnd: iso(row.surveillance_end),
-        magnitudeMin: number(row.magnitude_min),
+        magnitudeMin: Math.max(4.2, number(row.magnitude_min)),
         magnitudeMax: number(row.magnitude_max),
         analogHits: number(row.analog_hits),
         controlHits: number(row.control_hits),
@@ -110,7 +123,11 @@ export async function loadActiveGlobeProjections(limit = 240): Promise<{
       databaseConfigured: true,
       databaseConnected: false,
       projections: [],
-      warning: error instanceof Error ? error.message : "No fue posible cargar las proyecciones activas.",
+      warning: error instanceof Error ? error.message : "No fue posible cargar las proyecciones históricas.",
     };
   }
+}
+
+export function loadActiveGlobeProjections(limit = 240) {
+  return loadGlobeProjectionsAt(new Date(), limit);
 }
