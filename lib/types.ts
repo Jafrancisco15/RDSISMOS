@@ -1,12 +1,17 @@
 export type EventSource =
   | "Raspberry Shake QuakeLink"
   | "USGS ComCat"
-  | "USGS real-time";
+  | "USGS real-time"
+  | "EMSC SeismicPortal";
 
 export type CatalogProvider =
+  | "Raspberry Shake + USGS + EMSC"
   | "Raspberry Shake + USGS"
+  | "Raspberry Shake + EMSC"
+  | "USGS + EMSC"
   | "Raspberry Shake"
-  | "USGS";
+  | "USGS"
+  | "EMSC";
 
 export interface CountryTarget {
   code: string;
