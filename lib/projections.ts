@@ -256,7 +256,7 @@ export function generateMigrationProjections(
   generatedAt = new Date(),
 ): MigrationProjection[] {
   const magnitudeCompleteness = estimateMagnitudeCompleteness(events, target);
-  const minimumParentMagnitude = Math.max(4.5, magnitudeCompleteness + 0.9);
+  const minimumParentMagnitude = Math.max(4.2, magnitudeCompleteness + 0.7);
 
   const parentEvents = events
     .filter((event) => {

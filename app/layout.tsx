@@ -5,6 +5,7 @@ import "./historical.css";
 import "./historical-country.css";
 import "./outlook-overrides.css";
 import "./globe.css";
+import "./globe-history.css";
 
 export const metadata: Metadata = {
   title: "RDSISMOS | Observatorio experimental",

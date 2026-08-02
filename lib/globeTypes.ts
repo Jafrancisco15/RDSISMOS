@@ -1,7 +1,13 @@
 import type { EarthquakeEvent } from "./earthquakes/types";
+import type { CatalogProvider, CountryTarget } from "./types";
+
+export type GlobeProjectionKind = "historical-country" | "regional-etas";
 
 export interface GlobeProjection {
   id: string;
+  projectionKind: GlobeProjectionKind;
+  snapshotDate: string;
+  generatedAt: string;
   countryCode: string;
   countryName: string;
   latitude: number;
@@ -30,12 +36,19 @@ export interface GlobeProjection {
 
 export interface SeismicGlobeResponse {
   generatedAt: string;
+  viewDate: string;
+  comparisonDate: string | null;
   observedWindowDays: number;
   observedMinimumMagnitude: number;
   observedTotal: number;
   observedEvents: EarthquakeEvent[];
+  provider: CatalogProvider;
+  providerStatus: string[];
   projectionsTotal: number;
   projections: GlobeProjection[];
+  comparisonProjections: GlobeProjection[];
+  target: CountryTarget;
+  countries: CountryTarget[];
   databaseConfigured: boolean;
   databaseConnected: boolean;
   warnings: string[];
