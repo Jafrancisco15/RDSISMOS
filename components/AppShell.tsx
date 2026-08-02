@@ -7,26 +7,36 @@ import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashb
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 
-type AppTab = "historical" | "globe" | "forecast" | "events";
+type AppTab = "globe" | "projection" | "events";
 
 export function AppShell() {
-  const [tab, setTab] = useState<AppTab>("historical");
+  const [tab, setTab] = useState<AppTab>("globe");
   return (
     <>
       <nav className="main-tabs" aria-label="Navegación principal">
-        <button className={tab === "historical" ? "active" : ""} onClick={() => setTab("historical")}>Proyección por país</button>
         <button className={tab === "globe" ? "active" : ""} onClick={() => setTab("globe")}>Mapa 3D</button>
-        <button className={tab === "forecast" ? "active" : ""} onClick={() => setTab("forecast")}>Pronóstico regional</button>
+        <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>Proyección</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
       </nav>
-      {tab === "historical" && (
+      {tab === "globe" && <SeismicGlobe3D />}
+      {tab === "projection" && (
         <>
           <div className="learning-panel-wrap"><LearningStatusPanel /></div>
+          <div className="unified-projection-intro">
+            <div className="quality-warning">
+              La vista principal combina la proyección histórica por país con el contexto regional. El análisis regional detallado queda disponible como sección complementaria para evitar duplicar controles y cifras.
+            </div>
+          </div>
           <AutomaticCountryOutlookDashboard />
+          <details className="unified-regional-details">
+            <summary>
+              Abrir análisis regional complementario
+              <span>ETAS espacio-tiempo, actividad local y evidencia técnica detallada.</span>
+            </summary>
+            <SeismicDashboard />
+          </details>
         </>
       )}
-      {tab === "globe" && <SeismicGlobe3D />}
-      {tab === "forecast" && <SeismicDashboard />}
       {tab === "events" && <EarthquakeEventsDashboard />}
     </>
   );
