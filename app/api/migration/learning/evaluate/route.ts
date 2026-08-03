@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { evaluateLearningCycle } from "@/lib/learning/evaluate";
+import {
+  cronSecretMatches,
+  extractBearerSecret,
+  normalizeCronSecret,
+} from "@/lib/auth/cron";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,10 +14,16 @@ function authorized(request: NextRequest) {
   const tokens = [
     process.env.CRON_SECRET,
     process.env.EARTHQUAKE_ADMIN_TOKEN,
-  ].filter((value): value is string => Boolean(value));
+  ].map(normalizeCronSecret).filter((value): value is string => Boolean(value));
+
   if (!tokens.length) return true;
-  const authorization = request.headers.get("authorization");
-  return tokens.some((token) => authorization === `Bearer ${token}`);
+
+  const candidates = [
+    extractBearerSecret(request.headers.get("authorization")),
+    normalizeCronSecret(request.headers.get("x-cron-secret")),
+  ];
+
+  return candidates.some((candidate) => cronSecretMatches(candidate, tokens));
 }
 
 function limit(value: unknown, fallback = 8) {
@@ -25,7 +36,16 @@ async function runEvaluation(
   values: { activeLimit?: unknown; dueLimit?: unknown },
 ) {
   if (!authorized(request)) {
-    return NextResponse.json({ error: "No autorizado." }, { status: 401 });
+    return NextResponse.json(
+      { error: "No autorizado." },
+      {
+        status: 401,
+        headers: {
+          "Cache-Control": "no-store",
+          "WWW-Authenticate": "Bearer",
+        },
+      },
+    );
   }
 
   try {
