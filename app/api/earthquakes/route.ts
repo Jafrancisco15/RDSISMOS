@@ -1,18 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
+import { queryEarthquakeCatalog } from "@/lib/earthquakes/catalog";
 import { parseEarthquakeFilters } from "@/lib/earthquakes/query";
-import { queryEarthquakes } from "@/lib/earthquakes/usgs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 export async function GET(request: NextRequest) {
   try {
     const filters = parseEarthquakeFilters(request.nextUrl.searchParams);
-    const controller = new AbortController();
-    request.signal.addEventListener("abort", () => controller.abort(), { once: true });
-    const page = await queryEarthquakes(filters, controller.signal);
-    return NextResponse.json(page, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
+    const page = await queryEarthquakeCatalog(filters, request.signal);
+    return NextResponse.json(page, {
+      headers: { "Cache-Control": "private, no-store, max-age=0" },
+    });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Error desconocido" }, { status: 400 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Error desconocido" },
+      { status: 400, headers: { "Cache-Control": "no-store" } },
+    );
   }
 }

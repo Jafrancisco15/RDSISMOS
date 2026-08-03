@@ -8,6 +8,7 @@ export interface EarthquakeFilters {
   latitude?: number;
   longitude?: number;
   maxRadiusKm?: number;
+  countryCode?: string;
   magnitudeType?: string;
   eventType?: string;
   source?: string;
@@ -54,6 +55,10 @@ export interface EarthquakePage {
   offset: number;
   hasMore: boolean;
   generatedAt: string;
+  provider?: string;
+  providerStatus?: string[];
+  warnings?: string[];
+  catalogMode?: "multisource" | "historical-usgs";
 }
 
 export interface EarthquakeStats {
