@@ -29,6 +29,7 @@ export function parseEarthquakeFilters(params: URLSearchParams): EarthquakeFilte
     latitude,
     longitude,
     maxRadiusKm,
+    countryCode: cleanCode(params.get("country")),
     magnitudeType: cleanText(params.get("magnitudetype"), 12),
     eventType: cleanText(params.get("eventtype"), 40),
     source: cleanText(params.get("source"), 40),
@@ -56,7 +57,8 @@ export function toUsgsParams(filters: EarthquakeFilters, format = "geojson") {
   assign(params, "latitude", filters.latitude);
   assign(params, "longitude", filters.longitude);
   assign(params, "maxradiuskm", filters.maxRadiusKm);
-  if (filters.eventType) params.set("eventtype", filters.eventType);
+  if (filters.eventType && filters.eventType !== "all") params.set("eventtype", filters.eventType);
+  if (filters.reviewedOnly) params.set("reviewstatus", "reviewed");
   return params;
 }
 
@@ -91,6 +93,11 @@ function integer(value: string | null, min: number, max: number, fallback: numbe
 function cleanText(value: string | null, max: number) {
   if (!value) return undefined;
   return value.replace(/[<>]/g, "").trim().slice(0, max) || undefined;
+}
+function cleanCode(value: string | null) {
+  if (!value) return undefined;
+  const code = value.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(code) ? code : undefined;
 }
 function parseOrder(value: string | null): EarthquakeFilters["orderBy"] {
   return ["time", "time-asc", "magnitude", "magnitude-asc"].includes(value ?? "")
