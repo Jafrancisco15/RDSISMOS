@@ -7,8 +7,8 @@ export function parseEarthquakeFilters(params: URLSearchParams): EarthquakeFilte
   const now = new Date();
   const defaultStart = new Date(now);
   defaultStart.setUTCDate(defaultStart.getUTCDate() - 30);
-  const startTime = parseDate(params.get("starttime"), defaultStart);
-  const endTime = parseDate(params.get("endtime"), now);
+  const startTime = parseDate(params.get("starttime"), defaultStart, false);
+  const endTime = parseDate(params.get("endtime"), now, true);
   if (startTime > endTime) throw new Error("La fecha inicial no puede superar la fecha final.");
   if ((endTime.getTime() - startTime.getTime()) / 86_400_000 > MAX_RANGE_DAYS) {
     throw new Error("El rango máximo permitido es de 50 años.");
@@ -71,9 +71,11 @@ export function splitInterval(start: Date, end: Date): [[Date, Date], [Date, Dat
 function assign(params: URLSearchParams, key: string, value?: number) {
   if (value !== undefined) params.set(key, String(value));
 }
-function parseDate(value: string | null, fallback: Date) {
+function parseDate(value: string | null, fallback: Date, endOfDay: boolean) {
   if (!value) return fallback;
-  const date = new Date(value);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? new Date(`${value}${endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"}`)
+    : new Date(value);
   if (Number.isNaN(date.getTime())) throw new Error(`Fecha inválida: ${value}`);
   return date;
 }
