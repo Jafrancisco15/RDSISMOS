@@ -43,7 +43,7 @@ function toEarthquakeEvent(event: SeismicEvent): EarthquakeEvent {
     place: event.place,
     countryOrRegion: event.place.split(",").at(-1)?.trim() ?? event.place,
     eventType: "earthquake",
-    status: event.source.startsWith("USGS") ? "reported" : "reported",
+    status: "reported",
     network: event.agency,
     locationSource: event.source,
     magnitudeSource: event.agency,
@@ -137,9 +137,16 @@ async function loadAllUsgs(filters: EarthquakeFilters, maximum: number, signal?:
   return sortEvents(events.filter((event) => eventMatches(event, spatialFilters)), filters.orderBy);
 }
 
+function validateSourceAndReview(filters: EarthquakeFilters, source?: string) {
+  if (filters.reviewedOnly && (source === "emsc" || source === "raspberry")) {
+    throw new Error("El estado revisado solo está disponible para eventos USGS.");
+  }
+}
+
 export async function queryEarthquakeCatalog(filters: EarthquakeFilters, signal?: AbortSignal): Promise<EarthquakePage> {
   const source = filters.source?.toLowerCase();
-  const useMultisource = recentEnough(filters) && source !== "usgs";
+  validateSourceAndReview(filters, source);
+  const useMultisource = recentEnough(filters) && source !== "usgs" && !filters.reviewedOnly;
 
   if (useMultisource) {
     const result = await loadRecentMultisource(filters);
@@ -186,7 +193,7 @@ export async function queryEarthquakeCatalog(filters: EarthquakeFilters, signal?
   return {
     ...page,
     provider: "USGS ComCat",
-    providerStatus: ["USGS ComCat histórico"],
+    providerStatus: [filters.reviewedOnly ? "USGS ComCat · solo revisados" : "USGS ComCat histórico"],
     warnings: [],
     catalogMode: "historical-usgs",
   };
@@ -198,7 +205,8 @@ export async function queryEarthquakeCatalogAll(
   signal?: AbortSignal,
 ) {
   const source = filters.source?.toLowerCase();
-  if (recentEnough(filters) && source !== "usgs") {
+  validateSourceAndReview(filters, source);
+  if (recentEnough(filters) && source !== "usgs" && !filters.reviewedOnly) {
     const result = await loadRecentMultisource(filters);
     if (result.events.length > maximum) {
       throw new Error(`La consulta supera ${maximum.toLocaleString()} eventos. Reduzca el rango o aumente la magnitud mínima.`);
