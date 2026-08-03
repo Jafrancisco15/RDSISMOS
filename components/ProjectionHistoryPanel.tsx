@@ -24,38 +24,29 @@ function formatDate(value: string, withTime = false) {
 }
 
 function signed(value: number) {
-  return `${value > 0 ? "+" : ""}${value.toFixed(0)} pp`;
+  return `${value > 0 ? "+" : ""}${value.toFixed(0)}`;
 }
 
-function outcomeText(item: ProjectionHistoryItem) {
+function observedEvent(item: ProjectionHistoryItem) {
   if (item.status === "fulfilled" && item.outcome?.firstEvent) {
     return {
-      title: `M${item.outcome.firstEvent.magnitude.toFixed(1)} · ${item.outcome.firstEvent.place}`,
-      detail: `${formatDate(item.outcome.firstEvent.time, true)} · ${item.outcome.daysToFirstEvent?.toFixed(1) ?? "—"} días`,
+      magnitude: item.outcome.firstEvent.magnitude,
+      place: item.outcome.firstEvent.place,
+      time: item.outcome.firstEvent.time,
+      days: item.outcome.daysToFirstEvent,
+      note: "Dentro del rango",
     };
   }
   if (item.status === "fulfilled_outside_range" && item.outcome?.firstOutsideRangeEvent) {
     return {
-      title: `M${item.outcome.firstOutsideRangeEvent.magnitude.toFixed(1)} · ${item.outcome.firstOutsideRangeEvent.place}`,
-      detail: "Coincidió en lugar y ventana, pero fuera de la escala proyectada.",
+      magnitude: item.outcome.firstOutsideRangeEvent.magnitude,
+      place: item.outcome.firstOutsideRangeEvent.place,
+      time: item.outcome.firstOutsideRangeEvent.timeUtc,
+      days: null,
+      note: "Fuera de la escala proyectada",
     };
   }
-  if (item.status === "active") {
-    return {
-      title: `Vigilancia hasta ${formatDate(item.surveillanceEnd)}`,
-      detail: "El resultado todavía no se conoce.",
-    };
-  }
-  if (item.status === "pending_evaluation") {
-    return {
-      title: "Ventana finalizada",
-      detail: "El evaluador aún no ha cerrado esta proyección.",
-    };
-  }
-  return {
-    title: "Sin evento compatible",
-    detail: item.outcome ? `Evaluada ${formatDate(item.outcome.evaluatedAt, true)}` : "Sin resultado registrado.",
-  };
+  return null;
 }
 
 export function ProjectionHistoryPanel() {
@@ -84,13 +75,7 @@ export function ProjectionHistoryPanel() {
       setLoading(true);
       try {
         const params = new URLSearchParams({
-          page: String(page),
-          status,
-          country,
-          search,
-          from,
-          to,
-          _: String(Date.now()),
+          page: String(page), status, country, search, from, to, _: String(Date.now()),
         });
         const response = await fetch(`/api/migration/projections?${params}`, {
           cache: "no-store",
@@ -137,9 +122,9 @@ export function ProjectionHistoryPanel() {
     <main className="projection-history-page">
       <header className="projection-history-head">
         <div>
-          <span className="eyebrow">Memoria y verificación</span>
+          <span className="eyebrow">Registro y resultados</span>
           <h1>Historial de proyecciones</h1>
-          <p>Consulta qué proyectó el modelo, qué ocurrió después y cómo se clasificó cada resultado. La primera página muestra las 30 proyecciones más recientes.</p>
+          <p>Tabla completa de proyecciones, ventanas de vigilancia, eventos precedentes y resultados observados. La primera página muestra los 30 registros más recientes.</p>
         </div>
         <div className="projection-history-total">
           <span>Resultados filtrados</span>
@@ -161,29 +146,20 @@ export function ProjectionHistoryPanel() {
       <section className="panel projection-history-filters" aria-label="Filtros de proyecciones">
         <label className="projection-search-field">
           <span>Buscar</span>
-          <input
-            type="search"
-            value={searchDraft}
-            onChange={(event) => setSearchDraft(event.target.value)}
-            placeholder="País, zona, lugar o ID del evento"
-          />
+          <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="País, zona, lugar o ID" />
         </label>
         <label>
           <span>Estado</span>
           <select value={status} onChange={(event) => selectStatus(event.target.value as ProjectionHistoryStatus | "all")}>
             <option value="all">Todos</option>
-            {(Object.keys(STATUS_LABELS) as ProjectionHistoryStatus[]).map((key) => (
-              <option key={key} value={key}>{STATUS_LABELS[key]}</option>
-            ))}
+            {(Object.keys(STATUS_LABELS) as ProjectionHistoryStatus[]).map((key) => <option key={key} value={key}>{STATUS_LABELS[key]}</option>)}
           </select>
         </label>
         <label>
           <span>País</span>
           <select value={country} onChange={(event) => { setPage(1); setCountry(event.target.value); }}>
             <option value="">Todos los países</option>
-            {(data?.countries ?? []).map((item) => (
-              <option key={item.code} value={item.code}>{item.name}</option>
-            ))}
+            {(data?.countries ?? []).map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
           </select>
         </label>
         <label>
@@ -201,68 +177,54 @@ export function ProjectionHistoryPanel() {
 
       <section className="panel projection-history-list">
         <div className="projection-history-list-head">
-          <div>
-            <span className="eyebrow">Listado</span>
-            <h2>Proyecciones registradas</h2>
-          </div>
+          <div><span className="eyebrow">Tabla</span><h2>Proyecciones registradas</h2></div>
           <span>{loading ? "Actualizando…" : showing}</span>
         </div>
 
         <div className="projection-table-wrap">
-          <table className="projection-history-table">
+          <table className="projection-history-table projection-history-table-expanded">
             <thead>
               <tr>
-                <th>Estado</th>
-                <th>Lugar proyectado</th>
-                <th>Probabilidad</th>
-                <th>Escala y ventana</th>
-                <th>Evento precedente</th>
-                <th>Resultado observado</th>
+                <th>Estado</th><th>Generada</th><th>País</th><th>Zona</th>
+                <th>Prob.</th><th>Base</th><th>Dif.</th><th>Conf.</th>
+                <th>Escala</th><th>Ventana</th><th>Evento precedente</th>
+                <th>M origen</th><th>Fecha origen</th><th>Prof. origen</th>
+                <th>Evidencia</th><th>Resultado</th><th>Evento observado</th>
               </tr>
             </thead>
             <tbody>
               {(data?.items ?? []).map((item) => {
-                const result = outcomeText(item);
+                const observed = observedEvent(item);
                 return (
                   <tr key={item.id}>
-                    <td data-label="Estado">
-                      <span className={`projection-status-badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
-                      <small>{formatDate(item.generatedAt)}</small>
+                    <td><span className={`projection-status-badge ${item.status}`}>{STATUS_LABELS[item.status]}</span></td>
+                    <td><strong>{formatDate(item.generatedAt, true)}</strong><small>{item.id}</small></td>
+                    <td><strong>{item.countryName}</strong><small>{item.countryCode}</small></td>
+                    <td><span>{item.zoneName}</span></td>
+                    <td><strong className="projection-probability">{item.probabilityPct.toFixed(0)}%</strong></td>
+                    <td><strong>{item.baselinePct.toFixed(0)}%</strong></td>
+                    <td><strong>{signed(item.liftPct)} pp</strong></td>
+                    <td><strong>{item.confidencePct.toFixed(0)}%</strong></td>
+                    <td><strong>M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong></td>
+                    <td><strong>{formatDate(item.surveillanceStart)}</strong><span>hasta {formatDate(item.surveillanceEnd)}</span></td>
+                    <td><strong>{item.sourceEvent.place}</strong><small>{item.sourceEvent.id}</small></td>
+                    <td><strong>M{item.sourceEvent.magnitude.toFixed(1)}</strong></td>
+                    <td><strong>{formatDate(item.sourceEvent.time, true)}</strong></td>
+                    <td><strong>{item.sourceEvent.depthKm.toFixed(1)} km</strong></td>
+                    <td><strong>{item.analogHits} análogos</strong><span>{item.controlHits} controles</span><small>Mediana {item.medianLeadDays?.toFixed(1) ?? "—"} días</small></td>
+                    <td>
+                      <strong>{STATUS_LABELS[item.status]}</strong>
+                      {item.outcome && <span>{item.outcome.eventCount} dentro del rango</span>}
+                      {item.outcome?.outsideRangeEventCount ? <small>{item.outcome.outsideRangeEventCount} fuera del rango</small> : null}
                     </td>
-                    <td data-label="Lugar proyectado">
-                      <strong>{item.countryName}</strong>
-                      <span>{item.zoneName}</span>
-                      <small>{item.modelVersionId}</small>
-                    </td>
-                    <td data-label="Probabilidad">
-                      <strong className="projection-probability">{item.probabilityPct.toFixed(0)}%</strong>
-                      <span>Base {item.baselinePct.toFixed(0)}%</span>
-                      <small>{signed(item.liftPct)} · confianza {item.confidencePct.toFixed(0)}%</small>
-                    </td>
-                    <td data-label="Escala y ventana">
-                      <strong>M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong>
-                      <span>{formatDate(item.surveillanceStart)}–{formatDate(item.surveillanceEnd)}</span>
-                      <small>{item.analogHits} análogos · control {item.controlHits}</small>
-                    </td>
-                    <td data-label="Evento precedente">
-                      <strong>M{item.sourceEvent.magnitude.toFixed(1)} · {item.sourceEvent.place}</strong>
-                      <span>{formatDate(item.sourceEvent.time, true)}</span>
-                      <small>{item.sourceEvent.depthKm.toFixed(1)} km de profundidad</small>
-                    </td>
-                    <td data-label="Resultado observado">
-                      <strong>{result.title}</strong>
-                      <span>{result.detail}</span>
-                      {item.outcome && <small>{item.outcome.eventCount} eventos dentro del rango</small>}
+                    <td>
+                      {observed ? <><strong>M{observed.magnitude.toFixed(1)} · {observed.place}</strong><span>{formatDate(observed.time, true)}</span><small>{observed.note}{observed.days !== null && observed.days !== undefined ? ` · ${observed.days.toFixed(1)} días` : ""}</small></> : <span>Sin evento registrado</span>}
                     </td>
                   </tr>
                 );
               })}
-              {!loading && !data?.items.length && (
-                <tr><td colSpan={6} className="projection-history-empty">No hay proyecciones que coincidan con los filtros.</td></tr>
-              )}
-              {loading && !data?.items.length && (
-                <tr><td colSpan={6} className="projection-history-empty">Cargando las últimas proyecciones…</td></tr>
-              )}
+              {!loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">No hay proyecciones que coincidan con los filtros.</td></tr>}
+              {loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">Cargando las últimas proyecciones…</td></tr>}
             </tbody>
           </table>
         </div>
@@ -275,7 +237,7 @@ export function ProjectionHistoryPanel() {
       </section>
 
       <footer className="projection-history-note">
-        “Cumplida fuera de rango” significa que hubo actividad compatible en el lugar y dentro de la ventana temporal, pero su magnitud quedó fuera de la escala proyectada. Las proyecciones no son predicciones deterministas.
+        “Cumplida fuera de rango” indica que hubo actividad en el área y dentro de la ventana temporal, pero su magnitud quedó fuera de la escala proyectada.
       </footer>
     </main>
   );
