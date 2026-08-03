@@ -1,0 +1,94 @@
+.projection-history-table-expanded {
+  min-width: 2380px;
+  table-layout: auto;
+}
+
+.projection-history-table-expanded th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  white-space: nowrap;
+  background: #09111f;
+}
+
+.projection-history-table-expanded td {
+  min-width: 105px;
+  max-width: 260px;
+}
+
+.projection-history-table-expanded th:first-child,
+.projection-history-table-expanded td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #09111f;
+}
+
+.projection-history-table-expanded tbody tr:hover td:first-child {
+  background: #0c1727;
+}
+
+.earthquake-select-filters {
+  align-items: end;
+}
+
+.earthquake-select-filters select,
+.earthquake-select-filters input {
+  width: 100%;
+}
+
+.earthquake-advanced-location {
+  grid-column: 1 / -1;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 10px 12px;
+  background: rgba(0,0,0,.12);
+}
+
+.earthquake-advanced-location summary {
+  cursor: pointer;
+  color: #cbd5e1;
+  font-size: .72rem;
+  font-weight: 750;
+}
+
+.earthquake-advanced-location > div {
+  display: grid;
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 10px;
+  margin-top: 11px;
+}
+
+.earthquake-provider-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0;
+  border: 1px solid rgba(56,189,248,.3);
+  border-radius: 13px;
+  padding: 10px 13px;
+  background: rgba(56,189,248,.06);
+}
+
+.earthquake-provider-strip strong { color: #e0f2fe; }
+.earthquake-provider-strip span { color: #7dd3fc; font-size: .72rem; }
+.earthquake-provider-strip small { color: var(--muted); font-size: .64rem; }
+
+@media (max-width: 760px) {
+  .projection-table-wrap { overflow-x: auto !important; }
+  .projection-history-table-expanded,
+  .projection-history-table-expanded tbody,
+  .projection-history-table-expanded tr,
+  .projection-history-table-expanded td {
+    display: table-cell;
+    width: auto;
+  }
+  .projection-history-table-expanded { display: table; min-width: 2380px; }
+  .projection-history-table-expanded tbody { display: table-row-group; }
+  .projection-history-table-expanded tr { display: table-row; padding: 0; }
+  .projection-history-table-expanded td { padding: 12px; border-top: 1px solid rgba(148,163,184,.14); }
+  .projection-history-table-expanded td::before { content: none; }
+  .projection-history-table-expanded td > * { grid-column: auto; }
+  .earthquake-advanced-location > div { grid-template-columns: 1fr; }
+}
