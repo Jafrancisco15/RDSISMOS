@@ -6,6 +6,8 @@ import type {
 } from "./types";
 
 const DAY_MS = 86_400_000;
+export const MINIMUM_HISTORICAL_SOURCE_MAGNITUDE = 4.5;
+export const DEFAULT_AUTOMATIC_SOURCE_MAGNITUDE = 4.5;
 
 export interface CountryOutlookContribution {
   capsuleId: string;
@@ -74,12 +76,19 @@ export function rankOutlookSourceEvents(
   target: CountryTarget,
   generatedAt = new Date(),
   limit = 3,
+  minimumMagnitude = DEFAULT_AUTOMATIC_SOURCE_MAGNITUDE,
 ) {
   const now = generatedAt.getTime();
+  const effectiveMinimum = clamp(
+    minimumMagnitude,
+    MINIMUM_HISTORICAL_SOURCE_MAGNITUDE,
+    8.5,
+  );
+  const magnitudeSpan = Math.max(1.5, 8 - effectiveMinimum);
   const ranked = events
     .filter((event) => {
       const ageDays = (now - new Date(event.time).getTime()) / DAY_MS;
-      return event.magnitude >= 5.5 && ageDays >= 0 && ageDays <= 90;
+      return event.magnitude >= effectiveMinimum && ageDays >= 0 && ageDays <= 90;
     })
     .map((event) => {
       const ageDays = Math.max(0, (now - new Date(event.time).getTime()) / DAY_MS);
@@ -89,7 +98,11 @@ export function rankOutlookSourceEvents(
         target.latitude,
         target.longitude,
       );
-      const magnitudeScore = clamp((event.magnitude - 5.5) / 2.5, 0, 1);
+      const magnitudeScore = clamp(
+        (event.magnitude - effectiveMinimum) / magnitudeSpan,
+        0,
+        1,
+      );
       const recencyScore = Math.exp(-ageDays / 24);
       const regionalScore = Math.exp(-distanceKm / Math.max(2_200, target.radiusKm + 1_500));
       const score = magnitudeScore * 0.55 + recencyScore * 0.2 + regionalScore * 0.25;
@@ -222,7 +235,7 @@ export function buildCountryOutlook(
     activeContributors: contributions.length,
     contributors: contributions,
     methodology: [
-      "Selecciona automáticamente hasta tres eventos recientes, fuertes y separados de una misma secuencia.",
+      "Selecciona automáticamente hasta tres eventos recientes que superan el umbral configurado y separa los pertenecientes a una misma secuencia.",
       "Cada evento se compara con 50 años de análogos y con una ventana histórica de control.",
       "La proyección nacional combina las recurrencias activas mediante un promedio ponderado por semejanza, evidencia, confianza y antigüedad.",
       "La franja de mayor concentración utiliza la mediana temporal observada en los análogos de cada evento precedente.",
