@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildCountryOutlook,
+  DEFAULT_AUTOMATIC_SOURCE_MAGNITUDE,
   rankOutlookSourceEvents,
   type CountryOutlook,
 } from "@/lib/countryOutlook";
@@ -28,6 +29,8 @@ interface StoredOutlookResponse {
   databaseConnected: boolean;
   warning?: string;
 }
+
+const MAGNITUDE_OPTIONS = [4.5, 5, 5.5, 6, 6.5] as const;
 
 function formatUtc(value: string) {
   return new Intl.DateTimeFormat("es-DO", {
@@ -64,6 +67,9 @@ function dedupeCapsules(capsules: HistoricalMigrationCapsule[]) {
 
 export function AutomaticCountryOutlookDashboard() {
   const [countryCode, setCountryCode] = useState("DO");
+  const [minimumSourceMagnitude, setMinimumSourceMagnitude] = useState(
+    DEFAULT_AUTOMATIC_SOURCE_MAGNITUDE,
+  );
   const [catalog, setCatalog] = useState<EventsApiResponse | null>(null);
   const [storedTarget, setStoredTarget] = useState<CountryTarget | null>(null);
   const [capsules, setCapsules] = useState<HistoricalMigrationCapsule[]>([]);
@@ -137,7 +143,7 @@ export function AutomaticCountryOutlookDashboard() {
       analysisControllerRef.current?.abort();
       window.clearInterval(interval);
     };
-  }, [countryCode]);
+  }, [countryCode, minimumSourceMagnitude]);
 
   const target = catalog?.target ?? storedTarget;
   const rankedSources = useMemo(() => {
@@ -147,10 +153,11 @@ export function AutomaticCountryOutlookDashboard() {
       target,
       new Date(catalog.generatedAt),
       3,
+      minimumSourceMagnitude,
     );
-  }, [catalog, target]);
+  }, [catalog, target, minimumSourceMagnitude]);
   const candidateEvents = useMemo(() => rankedSources.map((item) => item.event), [rankedSources]);
-  const candidateKey = candidateEvents.map((event) => event.id).join("|");
+  const candidateKey = `${minimumSourceMagnitude}:${candidateEvents.map((event) => event.id).join("|")}`;
 
   useEffect(() => {
     if (!target || !candidateEvents.length) return;
@@ -205,9 +212,13 @@ export function AutomaticCountryOutlookDashboard() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidateKey, countryCode, target]);
 
+  const eligibleCapsules = useMemo(
+    () => capsules.filter((capsule) => capsule.sourceEvent.magnitude >= minimumSourceMagnitude),
+    [capsules, minimumSourceMagnitude],
+  );
   const outlook = useMemo(
-    () => target ? buildCountryOutlook(capsules, target.code, new Date()) : null,
-    [capsules, target],
+    () => target ? buildCountryOutlook(eligibleCapsules, target.code, new Date()) : null,
+    [eligibleCapsules, target],
   );
   const analyzing = analysisTotal > 0 && analysisCompleted < analysisTotal;
   const contributorByEvent = useMemo(
@@ -227,24 +238,38 @@ export function AutomaticCountryOutlookDashboard() {
         <div>
           <div className="brand-line"><span className="pulse-dot" /> RDSISMOS</div>
           <h1>Proyección sísmica automática por país</h1>
-          <p>Selecciona un país. La aplicación identifica los fenómenos precedentes relevantes, construye las cápsulas y presenta de inmediato la franja temporal, magnitud orientativa y recurrencia histórica.</p>
+          <p>Selecciona un país y el umbral mínimo. La aplicación identifica los fenómenos precedentes relevantes, construye el análisis histórico y presenta la franja temporal, magnitud orientativa y recurrencia observada.</p>
         </div>
-        <label className="country-control historical-country-control">
-          País de estudio
-          <select
-            value={countryCode}
-            disabled={loadingCatalog}
-            onChange={(event) => setCountryCode(event.target.value)}
-          >
-            {(catalog?.countries ?? (storedTarget ? [storedTarget] : [])).map((country) => (
-              <option key={country.code} value={country.code}>{country.name}</option>
-            ))}
-          </select>
-        </label>
+        <div className="outlook-head-controls">
+          <label className="country-control historical-country-control">
+            País de estudio
+            <select
+              value={countryCode}
+              disabled={loadingCatalog}
+              onChange={(event) => setCountryCode(event.target.value)}
+            >
+              {(catalog?.countries ?? (storedTarget ? [storedTarget] : [])).map((country) => (
+                <option key={country.code} value={country.code}>{country.name}</option>
+              ))}
+            </select>
+          </label>
+          <label className="country-control historical-country-control">
+            Magnitud mínima del precedente
+            <select
+              value={minimumSourceMagnitude}
+              disabled={loadingCatalog}
+              onChange={(event) => setMinimumSourceMagnitude(Number(event.target.value))}
+            >
+              {MAGNITUDE_OPTIONS.map((magnitude) => (
+                <option key={magnitude} value={magnitude}>M{magnitude.toFixed(1)} o superior</option>
+              ))}
+            </select>
+          </label>
+        </div>
       </header>
 
       <div className="quality-warning">
-        Esta es una proyección probabilística basada en recurrencia histórica, no una predicción determinista. El modelo guarda la proyección antes del resultado y aprende al comparar posteriormente lo proyectado con lo ocurrido.
+        Esta es una proyección probabilística basada en recurrencia histórica, no una predicción determinista. El umbral actual es M{minimumSourceMagnitude.toFixed(1)}; reducirlo incorpora más eventos y también más ruido estadístico.
       </div>
 
       <section className="panel outlook-hero">
@@ -257,7 +282,7 @@ export function AutomaticCountryOutlookDashboard() {
           <>
             <div className="outlook-hero-header">
               <div>
-                <span className="eyebrow">Proyección activa para {target.name}</span>
+                <span className="eyebrow">Proyección activa para {target.name} · precedentes M{minimumSourceMagnitude.toFixed(1)}+</span>
                 <h2>{outlook.probabilityPct}% de recurrencia empírica combinada</h2>
                 <p>{outlook.activeContributors} fenómenos precedentes continúan dentro de su periodo de vigilancia.</p>
               </div>
@@ -277,9 +302,9 @@ export function AutomaticCountryOutlookDashboard() {
           </>
         ) : (
           <div className="outlook-loading-state">
-            <span className="eyebrow">Proyección automática</span>
+            <span className="eyebrow">Proyección automática M{minimumSourceMagnitude.toFixed(1)}+</span>
             <h2>{analyzing ? `Analizando eventos ${analysisCompleted}/${analysisTotal}…` : "Sin evidencia activa suficiente"}</h2>
-            <p>{analyzing ? "Los primeros resultados aparecerán progresivamente sin que tengas que seleccionar cada evento." : "El catálogo reciente no produjo todavía una cápsula activa utilizable para este país."}</p>
+            <p>{analyzing ? "Los primeros resultados aparecerán progresivamente sin que tengas que seleccionar cada evento." : "El catálogo reciente no produjo todavía evidencia activa utilizable para este país y umbral."}</p>
           </div>
         )}
       </section>
@@ -338,7 +363,7 @@ export function AutomaticCountryOutlookDashboard() {
       <details className="panel outlook-explorer">
         <summary>
           <div><span className="eyebrow">Control opcional</span><strong>Explorar los eventos recientes seleccionados por el sistema</strong></div>
-          <span>{candidateEvents.length} eventos</span>
+          <span>{candidateEvents.length} eventos M{minimumSourceMagnitude.toFixed(1)}+</span>
         </summary>
         <div className="outlook-candidate-list">
           {rankedSources.map(({ event, score, distanceKm }) => {
@@ -360,7 +385,7 @@ export function AutomaticCountryOutlookDashboard() {
         <ul>{outlook?.limitations.map((item) => <li key={item}>{item}</li>)}</ul>
       </details>
 
-      <footer>Datos: USGS ComCat y Raspberry Shake cuando está disponible. RDSISMOS no sustituye avisos oficiales de protección civil ni de organismos sismológicos.</footer>
+      <footer>Datos: USGS ComCat, EMSC y Raspberry Shake cuando están disponibles. RDSISMOS no sustituye avisos oficiales de protección civil ni de organismos sismológicos.</footer>
     </main>
   );
 }
