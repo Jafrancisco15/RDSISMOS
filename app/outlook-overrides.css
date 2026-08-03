@@ -1,3 +1,14 @@
+.outlook-head-controls {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(210px, 1fr);
+  gap: 10px;
+  min-width: min(520px, 48vw);
+}
+
+.outlook-head-controls .country-control {
+  min-width: 0;
+}
+
 .outlook-candidate-list article {
   grid-template-columns: 1fr auto;
 }
@@ -6,7 +17,18 @@
   display: none;
 }
 
+@media (max-width: 900px) {
+  .outlook-head-controls {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
 @media (max-width: 760px) {
+  .outlook-head-controls {
+    grid-template-columns: 1fr;
+  }
+
   .outlook-candidate-list article {
     grid-template-columns: 1fr;
   }

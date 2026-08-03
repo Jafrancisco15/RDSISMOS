@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildCountryOutlook, rankOutlookSourceEvents } from "./countryOutlook";
+import {
+  buildCountryOutlook,
+  DEFAULT_AUTOMATIC_SOURCE_MAGNITUDE,
+  MINIMUM_HISTORICAL_SOURCE_MAGNITUDE,
+  rankOutlookSourceEvents,
+} from "./countryOutlook";
 import type { CountryTarget, HistoricalMigrationCapsule, SeismicEvent } from "./types";
 
 const target: CountryTarget = {
@@ -79,11 +84,36 @@ test("ranks diverse recent source events", () => {
     event("near", 6.0, "2026-07-28T12:00:00.000Z", 19, -69),
     event("same-sequence", 5.9, "2026-07-28T18:00:00.000Z", 19.2, -69.1),
     event("strong", 7.2, "2026-07-20T12:00:00.000Z", -15, 167),
-    event("old-small", 5.4, "2026-06-01T12:00:00.000Z", 0, 0),
+    event("below-minimum", 4.4, "2026-07-29T08:00:00.000Z", 0, 0),
   ], target, now, 3);
   assert.equal(selected.length, 2);
   assert.ok(selected.some((item) => item.event.id === "near"));
   assert.ok(selected.some((item) => item.event.id === "strong"));
+});
+
+test("uses M4.5 by default and respects a higher configured threshold", () => {
+  const now = new Date("2026-07-29T12:00:00.000Z");
+  assert.equal(DEFAULT_AUTOMATIC_SOURCE_MAGNITUDE, 4.5);
+  assert.equal(MINIMUM_HISTORICAL_SOURCE_MAGNITUDE, 4.5);
+
+  const events = [
+    event("m4-4", 4.4, "2026-07-29T11:00:00.000Z", 20, -70),
+    event("m4-5", 4.5, "2026-07-29T10:00:00.000Z", 10, -80),
+    event("m5-4", 5.4, "2026-07-28T10:00:00.000Z", -10, -100),
+    event("m5-6", 5.6, "2026-07-27T10:00:00.000Z", -20, 130),
+  ];
+
+  const broad = rankOutlookSourceEvents(events, target, now, 10);
+  assert.equal(broad.some((item) => item.event.id === "m4-4"), false);
+  assert.equal(broad.some((item) => item.event.id === "m4-5"), true);
+  assert.equal(broad.some((item) => item.event.id === "m5-4"), true);
+
+  const restricted = rankOutlookSourceEvents(events, target, now, 10, 5.5);
+  assert.deepEqual(restricted.map((item) => item.event.id), ["m5-6"]);
+
+  const clamped = rankOutlookSourceEvents(events, target, now, 10, 4.0);
+  assert.equal(clamped.some((item) => item.event.id === "m4-4"), false);
+  assert.equal(clamped.some((item) => item.event.id === "m4-5"), true);
 });
 
 test("combines active capsule evidence into a country outlook", () => {
