@@ -12,8 +12,19 @@ import {
 } from "./store";
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+const LIVE_CHECK_OVERLAP_HOURS = 48;
 const EVALUATION_MINIMUM_MAGNITUDE = 4.2;
 const EVALUATION_MAXIMUM_MAGNITUDE = 9.5;
+
+interface ActivePrediction extends DuePrediction {
+  lastCheckedAt: string | null;
+}
+
+interface ActivePredictionBatch {
+  predictions: ActivePrediction[];
+  incrementalColumnAvailable: boolean;
+}
 
 export interface EvaluationSummary {
   capsulesProcessed: number;
@@ -23,6 +34,7 @@ export interface EvaluationSummary {
   activeCapsulesScanned: number;
   activePredictionsChecked: number;
   liveFulfillments: number;
+  incrementalEvaluation: boolean;
   errors: string[];
   metrics: Awaited<ReturnType<typeof refreshClosedModelMetrics>>;
 }
@@ -32,8 +44,8 @@ function number(value: unknown) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function groupByCapsule(predictions: DuePrediction[]) {
-  const groups = new Map<string, DuePrediction[]>();
+function groupByCapsule<T extends DuePrediction>(predictions: T[]) {
+  const groups = new Map<string, T[]>();
   for (const prediction of predictions) {
     groups.set(prediction.capsuleId, [...(groups.get(prediction.capsuleId) ?? []), prediction]);
   }
@@ -68,6 +80,21 @@ export function eventFallsWithinPredictionWindow(
     && time <= new Date(prediction.surveillanceEnd).getTime();
 }
 
+export function incrementalEvaluationStart(
+  prediction: Pick<DuePrediction, "surveillanceStart"> & { lastCheckedAt?: string | null },
+  overlapHours = LIVE_CHECK_OVERLAP_HOURS,
+) {
+  const surveillanceStart = new Date(prediction.surveillanceStart).getTime();
+  const lastCheckedAt = prediction.lastCheckedAt
+    ? new Date(prediction.lastCheckedAt).getTime()
+    : Number.NaN;
+  if (!Number.isFinite(lastCheckedAt)) return new Date(surveillanceStart).toISOString();
+  return new Date(Math.max(
+    surveillanceStart,
+    lastCheckedAt - Math.max(0, overlapHours) * HOUR_MS,
+  )).toISOString();
+}
+
 function compactEvent(event: EarthquakeEvent | null) {
   if (!event) return null;
   return {
@@ -81,7 +108,7 @@ function compactEvent(event: EarthquakeEvent | null) {
   };
 }
 
-function mapPredictionRow(row: Record<string, unknown>): DuePrediction {
+function mapActivePredictionRow(row: Record<string, unknown>): ActivePrediction {
   return {
     predictionId: String(row.prediction_id),
     capsuleId: String(row.capsule_id),
@@ -96,58 +123,135 @@ function mapPredictionRow(row: Record<string, unknown>): DuePrediction {
     surveillanceEnd: new Date(String(row.surveillance_end)).toISOString(),
     magnitudeMin: number(row.magnitude_min),
     magnitudeMax: number(row.magnitude_max),
+    lastCheckedAt: row.last_checked_at
+      ? new Date(String(row.last_checked_at)).toISOString()
+      : null,
   };
 }
 
-async function loadActivePredictions(limitCapsules = 8): Promise<DuePrediction[]> {
+async function hasIncrementalEvaluationColumn() {
   const sql = getDb();
   if (!sql) throw new Error("DATABASE_URL no está configurada.");
-
-  const rows = await sql`
-    WITH active_capsules AS (
-      SELECT c.id, c.updated_at
-      FROM migration_capsules c
-      JOIN migration_country_predictions p ON p.capsule_id = c.id
-      LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-      WHERE c.status = 'active'
-        AND p.surveillance_start <= NOW()
-        AND p.surveillance_end > NOW()
-        AND o.prediction_id IS NULL
-      GROUP BY c.id, c.updated_at
-      ORDER BY c.updated_at ASC
-      LIMIT ${limitCapsules}
-    )
-    SELECT
-      p.id AS prediction_id,
-      p.capsule_id,
-      c.model_version_id,
-      p.country_code,
-      p.country_name,
-      p.latitude,
-      p.longitude,
-      p.radius_km,
-      p.probability_pct,
-      p.surveillance_start,
-      p.surveillance_end,
-      p.magnitude_min,
-      p.magnitude_max
-    FROM migration_country_predictions p
-    JOIN active_capsules a ON a.id = p.capsule_id
-    JOIN migration_capsules c ON c.id = p.capsule_id
-    LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-    WHERE o.prediction_id IS NULL
-      AND p.surveillance_start <= NOW()
-      AND p.surveillance_end > NOW()
-    ORDER BY p.capsule_id, p.country_code
+  const [row] = await sql`
+    SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'migration_country_predictions'
+        AND column_name = 'last_checked_at'
+    ) AS available
   `;
-
-  return rows.map((row) => mapPredictionRow(row as Record<string, unknown>));
+  return Boolean(row?.available);
 }
 
-async function touchScannedCapsules(capsuleIds: string[]) {
-  if (!capsuleIds.length) return;
+async function loadActivePredictions(limitCapsules = 8): Promise<ActivePredictionBatch> {
   const sql = getDb();
   if (!sql) throw new Error("DATABASE_URL no está configurada.");
+
+  const incrementalColumnAvailable = await hasIncrementalEvaluationColumn();
+  const rows = incrementalColumnAvailable
+    ? await sql`
+        WITH active_capsules AS (
+          SELECT c.id, MIN(COALESCE(p.last_checked_at, p.surveillance_start)) AS next_check
+          FROM migration_capsules c
+          JOIN migration_country_predictions p ON p.capsule_id = c.id
+          LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+          WHERE c.status = 'active'
+            AND p.surveillance_start <= NOW()
+            AND p.surveillance_end > NOW()
+            AND o.prediction_id IS NULL
+          GROUP BY c.id
+          ORDER BY next_check ASC
+          LIMIT ${limitCapsules}
+        )
+        SELECT
+          p.id AS prediction_id,
+          p.capsule_id,
+          c.model_version_id,
+          p.country_code,
+          p.country_name,
+          p.latitude,
+          p.longitude,
+          p.radius_km,
+          p.probability_pct,
+          p.surveillance_start,
+          p.surveillance_end,
+          p.magnitude_min,
+          p.magnitude_max,
+          p.last_checked_at
+        FROM migration_country_predictions p
+        JOIN active_capsules a ON a.id = p.capsule_id
+        JOIN migration_capsules c ON c.id = p.capsule_id
+        LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE o.prediction_id IS NULL
+          AND p.surveillance_start <= NOW()
+          AND p.surveillance_end > NOW()
+        ORDER BY p.capsule_id, p.country_code
+      `
+    : await sql`
+        WITH active_capsules AS (
+          SELECT c.id, c.updated_at
+          FROM migration_capsules c
+          JOIN migration_country_predictions p ON p.capsule_id = c.id
+          LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+          WHERE c.status = 'active'
+            AND p.surveillance_start <= NOW()
+            AND p.surveillance_end > NOW()
+            AND o.prediction_id IS NULL
+          GROUP BY c.id, c.updated_at
+          ORDER BY c.updated_at ASC
+          LIMIT ${limitCapsules}
+        )
+        SELECT
+          p.id AS prediction_id,
+          p.capsule_id,
+          c.model_version_id,
+          p.country_code,
+          p.country_name,
+          p.latitude,
+          p.longitude,
+          p.radius_km,
+          p.probability_pct,
+          p.surveillance_start,
+          p.surveillance_end,
+          p.magnitude_min,
+          p.magnitude_max,
+          NULL::timestamptz AS last_checked_at
+        FROM migration_country_predictions p
+        JOIN active_capsules a ON a.id = p.capsule_id
+        JOIN migration_capsules c ON c.id = p.capsule_id
+        LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE o.prediction_id IS NULL
+          AND p.surveillance_start <= NOW()
+          AND p.surveillance_end > NOW()
+        ORDER BY p.capsule_id, p.country_code
+      `;
+
+  return {
+    predictions: rows.map((row) => mapActivePredictionRow(row as Record<string, unknown>)),
+    incrementalColumnAvailable,
+  };
+}
+
+async function recordActiveCheck(
+  predictions: ActivePrediction[],
+  checkedAt: string,
+  incrementalColumnAvailable: boolean,
+) {
+  if (!predictions.length) return;
+  const sql = getDb();
+  if (!sql) throw new Error("DATABASE_URL no está configurada.");
+  const predictionIds = predictions.map((prediction) => prediction.predictionId);
+  const capsuleIds = [...new Set(predictions.map((prediction) => prediction.capsuleId))];
+
+  if (incrementalColumnAvailable) {
+    await sql`
+      UPDATE migration_country_predictions
+      SET last_checked_at = ${checkedAt}, updated_at = NOW()
+      WHERE id = ANY(${predictionIds})
+    `;
+  }
+
   await sql`
     UPDATE migration_capsules
     SET updated_at = NOW()
@@ -159,8 +263,13 @@ async function evaluateCapsule(
   predictions: DuePrediction[],
   finalize: boolean,
   signal?: AbortSignal,
+  incrementalColumnAvailable = false,
 ) {
-  const startTime = predictions.map((item) => item.surveillanceStart).sort()[0];
+  const startTime = finalize
+    ? predictions.map((item) => item.surveillanceStart).sort()[0]
+    : predictions
+        .map((item) => incrementalEvaluationStart(item as ActivePrediction))
+        .sort()[0];
   const latestPredictionEnd = predictions.map((item) => item.surveillanceEnd).sort().at(-1);
   if (!startTime || !latestPredictionEnd) throw new Error("La proyección no tiene una ventana de vigilancia válida.");
 
@@ -186,8 +295,13 @@ async function evaluateCapsule(
 
   for (const prediction of predictions) {
     predictionsChecked += 1;
+    const liveStart = finalize
+      ? prediction.surveillanceStart
+      : incrementalEvaluationStart(prediction as ActivePrediction);
+    const liveStartMs = new Date(liveStart).getTime();
     const spatialMatches = [...(assigned.get(prediction.predictionId) ?? [])]
       .filter((event) => eventFallsWithinPredictionWindow(event, prediction))
+      .filter((event) => finalize || new Date(event.timeUtc).getTime() >= liveStartMs)
       .sort((a, b) => new Date(a.timeUtc).getTime() - new Date(b.timeUtc).getTime());
     const matches = spatialMatches.filter(
       (event) => event.magnitude >= prediction.magnitudeMin && event.magnitude <= prediction.magnitudeMax,
@@ -229,8 +343,10 @@ async function evaluateCapsule(
       payload: {
         evaluationMode: finalize ? "final" : "live_fulfillment",
         evaluatedWindow: {
-          startTime: prediction.surveillanceStart,
+          startTime: finalize ? prediction.surveillanceStart : liveStart,
+          originalStartTime: prediction.surveillanceStart,
           endTime: finalize ? prediction.surveillanceEnd : evaluationEnd,
+          overlapHours: finalize ? 0 : LIVE_CHECK_OVERLAP_HOURS,
         },
         evaluatedMagnitudeRange: {
           minimum: prediction.magnitudeMin,
@@ -246,6 +362,14 @@ async function evaluateCapsule(
         queryEventCount: events.length,
       },
     });
+  }
+
+  if (!finalize) {
+    await recordActiveCheck(
+      predictions as ActivePrediction[],
+      evaluationEnd,
+      incrementalColumnAvailable,
+    );
   }
 
   return {
@@ -298,29 +422,32 @@ async function refreshClosedModelMetrics(modelVersionId = CURRENT_MODEL_VERSION)
 }
 
 export async function evaluateActiveCapsules(limitCapsules = 8, signal?: AbortSignal) {
-  const predictions = await loadActivePredictions(limitCapsules);
-  const groups = groupByCapsule(predictions);
+  const batch = await loadActivePredictions(limitCapsules);
+  const groups = groupByCapsule(batch.predictions);
   let predictionsChecked = 0;
   let liveFulfillments = 0;
   const errors: string[] = [];
-  const scannedCapsules: string[] = [];
 
   for (const [capsuleId, capsulePredictions] of groups) {
     try {
-      const result = await evaluateCapsule(capsulePredictions, false, signal);
+      const result = await evaluateCapsule(
+        capsulePredictions,
+        false,
+        signal,
+        batch.incrementalColumnAvailable,
+      );
       predictionsChecked += result.predictionsChecked;
       liveFulfillments += result.positiveOutcomes;
-      scannedCapsules.push(capsuleId);
     } catch (error) {
       errors.push(`${capsuleId}: ${error instanceof Error ? error.message : "Error desconocido"}`);
     }
   }
 
-  await touchScannedCapsules(scannedCapsules);
   return {
     capsulesScanned: groups.size,
     predictionsChecked,
     liveFulfillments,
+    incrementalEvaluation: batch.incrementalColumnAvailable,
     errors,
   };
 }
@@ -371,6 +498,7 @@ export async function evaluateLearningCycle(
     activeCapsulesScanned: active.capsulesScanned,
     activePredictionsChecked: active.predictionsChecked,
     liveFulfillments: active.liveFulfillments,
+    incrementalEvaluation: active.incrementalEvaluation,
     errors: [...active.errors, ...due.errors],
     metrics: due.metrics,
   };
