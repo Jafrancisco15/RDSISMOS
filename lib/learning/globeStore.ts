@@ -15,7 +15,18 @@ function utcDayStart(value: Date) {
   return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
 }
 
-export async function loadGlobeProjectionsAt(asOf: Date, limit = 240): Promise<{
+/**
+ * Loads every unresolved projection that was active at the requested instant.
+ *
+ * A projection is visible on the active globe only while:
+ * - it had already been generated;
+ * - its individual surveillance window had started and had not ended; and
+ * - no outcome had been recorded by that instant.
+ *
+ * We intentionally do not rank one "winner" per country. Multiple independent
+ * precedents for the same country remain visible until each one is resolved.
+ */
+export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
   databaseConfigured: boolean;
   databaseConnected: boolean;
   projections: GlobeProjection[];
@@ -31,57 +42,55 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 240): Promise<{
     };
   }
 
-  const dayStart = utcDayStart(asOf);
-  const dayEnd = asOf;
+  const snapshotDate = utcDayStart(asOf);
+  const snapshotInstant = asOf.toISOString();
 
   try {
     const rows = await sql`
-      WITH ranked AS (
-        SELECT
-          p.id,
-          p.country_code,
-          p.country_name,
-          p.latitude,
-          p.longitude,
-          p.radius_km,
-          p.probability_pct,
-          p.baseline_probability_pct,
-          p.excess_probability_pct,
-          p.surveillance_start,
-          p.surveillance_end,
-          p.magnitude_min,
-          p.magnitude_max,
-          p.analog_hits,
-          p.control_hits,
-          p.median_lead_days,
-          c.source_event_external_id,
-          c.source_time,
-          c.source_magnitude,
-          c.source_latitude,
-          c.source_longitude,
-          c.source_place,
-          c.confidence_pct,
-          c.generated_at,
-          ROW_NUMBER() OVER (
-            PARTITION BY p.country_code
-            ORDER BY
-              GREATEST(p.excess_probability_pct, 0) DESC,
-              p.probability_pct DESC,
-              c.generated_at DESC
-          ) AS position
-        FROM migration_country_predictions p
-        JOIN migration_capsules c ON c.id = p.capsule_id
-        WHERE c.generated_at <= ${dayEnd.toISOString()}
-          AND p.surveillance_start <= ${dayEnd.toISOString()}
-          AND p.surveillance_end >= ${dayStart.toISOString()}
-          AND p.magnitude_max >= 4.2
-          AND p.probability_pct > 0
-      )
-      SELECT *
-      FROM ranked
-      WHERE position = 1
-      ORDER BY excess_probability_pct DESC, probability_pct DESC
-      LIMIT ${Math.min(500, Math.max(1, limit))}
+      SELECT
+        p.id,
+        p.country_code,
+        p.country_name,
+        p.latitude,
+        p.longitude,
+        p.radius_km,
+        p.probability_pct,
+        p.baseline_probability_pct,
+        p.excess_probability_pct,
+        p.surveillance_start,
+        p.surveillance_end,
+        p.magnitude_min,
+        p.magnitude_max,
+        p.analog_hits,
+        p.control_hits,
+        p.median_lead_days,
+        c.source_event_external_id,
+        c.source_time,
+        c.source_magnitude,
+        c.source_latitude,
+        c.source_longitude,
+        c.source_place,
+        c.confidence_pct,
+        c.generated_at
+      FROM migration_country_predictions p
+      JOIN migration_capsules c ON c.id = p.capsule_id
+      WHERE c.generated_at <= ${snapshotInstant}
+        AND p.surveillance_start <= ${snapshotInstant}
+        AND p.surveillance_end >= ${snapshotInstant}
+        AND p.magnitude_max >= 4.2
+        AND p.probability_pct > 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM migration_outcomes o
+          WHERE o.prediction_id = p.id
+            AND o.evaluated_at <= ${snapshotInstant}
+        )
+      ORDER BY
+        GREATEST(p.excess_probability_pct, 0) DESC,
+        p.probability_pct DESC,
+        c.generated_at DESC,
+        p.country_code ASC
+      LIMIT ${Math.min(1_000, Math.max(1, limit))}
     `;
 
     return {
@@ -90,7 +99,7 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 240): Promise<{
       projections: rows.map((row) => ({
         id: String(row.id),
         projectionKind: "historical-country" as const,
-        snapshotDate: dayStart.toISOString(),
+        snapshotDate: snapshotDate.toISOString(),
         generatedAt: iso(row.generated_at),
         countryCode: String(row.country_code),
         countryName: String(row.country_name),
@@ -128,6 +137,6 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 240): Promise<{
   }
 }
 
-export function loadActiveGlobeProjections(limit = 240) {
+export function loadActiveGlobeProjections(limit = 500) {
   return loadGlobeProjectionsAt(new Date(), limit);
 }
