@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  loadProjectionHistory,
-  type ProjectionHistoryModel,
-  type ProjectionHistoryStatus,
+import { loadOperationalProjectionHistory } from "@/lib/learning/operationalProjectionHistory";
+import type {
+  ProjectionHistoryModel,
+  ProjectionHistoryStatus,
 } from "@/lib/learning/projectionHistory";
 
 export const runtime = "nodejs";
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     ? rawModel as ProjectionHistoryModel | "all"
     : "all";
 
-  const result = await loadProjectionHistory({
+  const result = await loadOperationalProjectionHistory({
     page: Math.max(1, integer(request.nextUrl.searchParams.get("page"), 1)),
     pageSize: 30,
     status,
