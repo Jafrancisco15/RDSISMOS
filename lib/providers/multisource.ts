@@ -1,48 +1,10 @@
-import { haversineKm } from "../regions";
 import type { CatalogProvider, CountryTarget, SeismicEvent } from "../types";
+import { deduplicateProviderEvents } from "./eventDedupe";
 import { fetchEmscEvents } from "./emsc";
 import { fetchSeismicCatalog } from "./raspberryShake";
 
-const SOURCE_PRIORITY: Record<string, number> = {
-  "Raspberry Shake QuakeLink": 4,
-  "EMSC SeismicPortal": 3,
-  "USGS real-time": 2,
-  "USGS ComCat": 1,
-};
-
-function priority(event: SeismicEvent) {
-  return SOURCE_PRIORITY[event.source] ?? 0;
-}
-
-function sameEvent(a: SeismicEvent, b: SeismicEvent) {
-  const seconds = Math.abs(new Date(a.time).getTime() - new Date(b.time).getTime()) / 1_000;
-  if (seconds > 120) return false;
-  if (Math.abs(a.magnitude - b.magnitude) > 0.35) return false;
-  return haversineKm(a.latitude, a.longitude, b.latitude, b.longitude) <= 85;
-}
-
 export function mergeProviderEvents(events: SeismicEvent[]) {
-  const chronological = [...events].sort(
-    (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
-  );
-  const result: SeismicEvent[] = [];
-
-  for (const event of chronological) {
-    const duplicateIndex = result.findIndex((existing) => sameEvent(existing, event));
-    if (duplicateIndex < 0) {
-      result.push(event);
-      continue;
-    }
-
-    const existing = result[duplicateIndex];
-    if (priority(event) > priority(existing)) {
-      result[duplicateIndex] = event;
-    }
-  }
-
-  return result.sort(
-    (a, b) => new Date(b.time).getTime() - new Date(a.time).getTime(),
-  );
+  return deduplicateProviderEvents(events);
 }
 
 function providerName(baseProvider: CatalogProvider, emscAvailable: boolean): CatalogProvider {
@@ -78,7 +40,8 @@ export async function fetchExpandedSeismicCatalog(
     ? baseResult.value
     : null;
   const emscEvents = emscResult.status === "fulfilled" ? emscResult.value : [];
-  const events = mergeProviderEvents([...(base?.events ?? []), ...emscEvents]);
+  const rawEvents = [...(base?.events ?? []), ...emscEvents];
+  const events = mergeProviderEvents(rawEvents);
   if (!events.length) {
     const details = [
       baseResult.status === "rejected" && (baseResult.reason instanceof Error ? baseResult.reason.message : "catálogo base falló"),
@@ -87,13 +50,15 @@ export async function fetchExpandedSeismicCatalog(
     throw new Error(details || "Ningún proveedor devolvió eventos utilizables.");
   }
 
+  const duplicateReports = events.reduce((sum, event) => sum + (event.duplicateReports ?? 0), 0);
   const providerStatus = [
     ...(base?.providerStatus ?? [
       `Raspberry Shake + USGS: no disponible (${baseResult.status === "rejected" && baseResult.reason instanceof Error ? baseResult.reason.message : "error"})`,
     ]),
     emscResult.status === "fulfilled"
-      ? `EMSC SeismicPortal global: ${emscEvents.length} eventos M${minimumEmscMagnitude.toFixed(1)}+`
+      ? `EMSC SeismicPortal global: ${emscEvents.length} reportes M${minimumEmscMagnitude.toFixed(1)}+`
       : `EMSC SeismicPortal: no disponible (${emscResult.reason instanceof Error ? emscResult.reason.message : "error"})`,
+    `Consolidación multifuente: ${events.length} eventos únicos; ${duplicateReports} reportes duplicados absorbidos`,
   ];
   const warnings = [
     base?.warning,
