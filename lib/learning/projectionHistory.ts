@@ -1,12 +1,11 @@
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
 import { regionalEtasRegistryAvailable } from "./etasStore";
+import {
+  canonicalProjectionStatus,
+  type CanonicalProjectionStatus,
+} from "./projectionLifecycle";
 
-export type ProjectionHistoryStatus =
-  | "active"
-  | "fulfilled"
-  | "not_fulfilled"
-  | "pending_evaluation";
-
+export type ProjectionHistoryStatus = CanonicalProjectionStatus;
 export type ProjectionHistoryModel = "statistical_migration" | "regional_etas";
 
 export interface ProjectionHistoryItem {
@@ -77,6 +76,7 @@ export interface ProjectionHistoryFilters {
 export interface ProjectionHistoryResponse {
   databaseConfigured: boolean;
   databaseConnected: boolean;
+  asOf: string;
   page: number;
   pageSize: number;
   total: number;
@@ -89,6 +89,7 @@ export interface ProjectionHistoryResponse {
 }
 
 const EMPTY_COUNTS: Record<ProjectionHistoryStatus, number> = {
+  scheduled: 0,
   active: 0,
   fulfilled: 0,
   not_fulfilled: 0,
@@ -133,15 +134,23 @@ function dateBoundary(value: string | undefined, endOfDay: boolean) {
   return Number.isNaN(date.getTime()) ? null : date.getTime();
 }
 
-function historicalStatus(row: Record<string, unknown>): ProjectionHistoryStatus {
-  if (row.occurred === true) return "fulfilled";
-  if (row.outcome_prediction_id) return "not_fulfilled";
-  return Date.parse(iso(row.surveillance_end)) >= Date.now()
-    ? "active"
-    : "pending_evaluation";
+function historicalStatus(
+  row: Record<string, unknown>,
+  asOf: Date,
+): ProjectionHistoryStatus {
+  return canonicalProjectionStatus({
+    issuedAt: iso(row.generated_at),
+    surveillanceStart: iso(row.surveillance_start),
+    surveillanceEnd: iso(row.surveillance_end),
+    hasOutcome: Boolean(row.outcome_prediction_id),
+    occurred: row.occurred === true,
+  }, asOf);
 }
 
-function historicalItem(row: Record<string, unknown>): ProjectionHistoryItem {
+function historicalItem(
+  row: Record<string, unknown>,
+  asOf: Date,
+): ProjectionHistoryItem {
   const payload = parseObject(row.evaluation_payload);
   const outcomeExists = Boolean(row.outcome_prediction_id);
   const classification = String(payload.classification ?? (row.occurred ? "migration_compatible" : "none"));
@@ -151,7 +160,7 @@ function historicalItem(row: Record<string, unknown>): ProjectionHistoryItem {
     modelVersionId: String(row.model_version_id),
     modelType: "statistical_migration",
     modelLabel: "Migración estadística histórica",
-    status: historicalStatus(row),
+    status: historicalStatus(row, asOf),
     associationClass: classification,
     migrationCompatibilityPct: nullableNumber(
       payload.firstEventMigrationCompatibilityPct ?? payload.migrationCompatibilityPct,
@@ -202,15 +211,24 @@ function historicalItem(row: Record<string, unknown>): ProjectionHistoryItem {
   };
 }
 
-function etasStatus(row: Record<string, unknown>): ProjectionHistoryStatus {
-  if (String(row.status) === "fulfilled") return "fulfilled";
-  if (String(row.status) === "not_fulfilled") return "not_fulfilled";
-  return Date.parse(iso(row.surveillance_end)) >= Date.now()
-    ? "active"
-    : "pending_evaluation";
+function etasStatus(
+  row: Record<string, unknown>,
+  asOf: Date,
+): ProjectionHistoryStatus {
+  return canonicalProjectionStatus({
+    issuedAt: iso(row.issued_at),
+    surveillanceStart: iso(row.surveillance_start),
+    surveillanceEnd: iso(row.surveillance_end),
+    storedStatus: String(row.status ?? "active"),
+    resolvedAt: row.resolved_at ? iso(row.resolved_at) : null,
+    occurred: String(row.status) === "fulfilled",
+  }, asOf);
 }
 
-function etasItem(row: Record<string, unknown>): ProjectionHistoryItem {
+function etasItem(
+  row: Record<string, unknown>,
+  asOf: Date,
+): ProjectionHistoryItem {
   const payload = parseObject(row.evaluation_payload);
   const resolved = Boolean(row.resolved_at);
   const issuedAt = iso(row.issued_at);
@@ -221,7 +239,7 @@ function etasItem(row: Record<string, unknown>): ProjectionHistoryItem {
     modelVersionId: "regional-etas-v2",
     modelType: "regional_etas",
     modelLabel: "ETAS regional persistente",
-    status: etasStatus(row),
+    status: etasStatus(row, asOf),
     associationClass: String(row.association_class ?? "none"),
     migrationCompatibilityPct: nullableNumber(row.migration_compatibility_pct),
     zoneName: String(row.zone_name),
@@ -304,12 +322,14 @@ function matchesCommonFilters(
 export async function loadProjectionHistory(
   filters: ProjectionHistoryFilters = {},
 ): Promise<ProjectionHistoryResponse> {
+  const asOf = new Date();
   const pageSize = Math.min(100, Math.max(1, Math.trunc(filters.pageSize ?? 30)));
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
   const offset = (page - 1) * pageSize;
   const base: ProjectionHistoryResponse = {
     databaseConfigured: hasDatabaseConfiguration(),
     databaseConnected: false,
+    asOf: asOf.toISOString(),
     page,
     pageSize,
     total: 0,
@@ -353,8 +373,8 @@ export async function loadProjectionHistory(
     }
 
     const allItems = [
-      ...historicalRows.map((row) => historicalItem(row as Record<string, unknown>)),
-      ...etasRows.map((row) => etasItem(row)),
+      ...historicalRows.map((row) => historicalItem(row as Record<string, unknown>, asOf)),
+      ...etasRows.map((row) => etasItem(row, asOf)),
     ];
     const from = dateBoundary(filters.from, false);
     const to = dateBoundary(filters.to, true);

@@ -9,6 +9,7 @@ import type {
 } from "@/lib/learning/projectionHistory";
 
 const STATUS_LABELS: Record<ProjectionHistoryStatus, string> = {
+  scheduled: "Programada",
   active: "Activa",
   fulfilled: "Cumplida",
   not_fulfilled: "Sin migración compatible",
@@ -135,7 +136,7 @@ export function ProjectionHistoryPanel() {
           <p>Una sola trazabilidad para migración estadística y ETAS regional: emisión, ventana, estado, señal sobre la línea base y resultado observado.</p>
         </div>
         <div className="projection-history-total">
-          <span>Resultados filtrados</span>
+          <span>Proyecciones registradas</span>
           <strong>{data?.total.toLocaleString() ?? "—"}</strong>
         </div>
       </header>
@@ -150,6 +151,11 @@ export function ProjectionHistoryPanel() {
           </button>
         ))}
       </section>
+
+      <div className="quality-warning">
+        <strong>Integridad entre pestañas:</strong> “Activa” significa que la ventana ya comenzó, todavía no terminó y no existe resultado. Esa cifra debe coincidir con “Proyecciones activas” del Mapa 3D al consultar el mismo momento. “Programada” identifica proyecciones emitidas cuya ventana empezará más adelante; permanecen en el historial, pero todavía no aparecen en el mapa.
+        {data?.asOf ? ` Corte: ${formatDate(data.asOf, true)} UTC.` : ""}
+      </div>
 
       <section className="panel projection-history-filters" aria-label="Filtros de proyecciones">
         <label className="projection-search-field">

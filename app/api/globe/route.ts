@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { COUNTRIES, countryByCode } from "@/lib/countries";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
-import type { GlobeProjection, SeismicGlobeResponse } from "@/lib/globeTypes";
+import type { SeismicGlobeResponse } from "@/lib/globeTypes";
 import {
   loadGlobeProjectionsAt,
   loadRegionalEtasGlobeProjectionsAt,
@@ -18,6 +18,7 @@ export const maxDuration = 60;
 const WINDOW_DAYS = 90;
 const MINIMUM_MAGNITUDE = 4.2;
 const DAY_MS = 86_400_000;
+const PROJECTION_RENDER_LIMIT = 1_000;
 
 function dateKey(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -53,44 +54,6 @@ function toEarthquakeEvent(event: SeismicEvent): EarthquakeEvent {
   };
 }
 
-function regionalProjectionToGlobe(
-  projection: ReturnType<typeof generateMigrationProjections>[number],
-  snapshotDate: string,
-  generatedAt: Date,
-): GlobeProjection {
-  return {
-    id: `regional:${projection.id}`,
-    projectionKind: "regional-etas",
-    snapshotDate,
-    generatedAt: projection.startTime ?? generatedAt.toISOString(),
-    countryCode: projection.targetCountry.code,
-    countryName: projection.targetCountry.name,
-    latitude: projection.projectedZone.latitude,
-    longitude: projection.projectedZone.longitude,
-    radiusKm: projection.projectedZone.radiusKm,
-    probabilityPct: projection.probabilityPct,
-    baselinePct: projection.backgroundProbabilityPct,
-    liftPct: projection.excessProbabilityPct,
-    surveillanceStart: projection.startTime,
-    surveillanceEnd: projection.expiresAt,
-    magnitudeMin: Math.max(MINIMUM_MAGNITUDE, projection.magnitudeMin),
-    magnitudeMax: projection.magnitudeMax,
-    analogHits: 0,
-    controlHits: 0,
-    medianLeadDays: null,
-    sourceEvent: {
-      id: projection.sourceEvent.id,
-      time: projection.sourceEvent.time,
-      magnitude: projection.sourceEvent.magnitude,
-      latitude: projection.sourceEvent.latitude,
-      longitude: projection.sourceEvent.longitude,
-      place: projection.sourceEvent.place,
-    },
-    confidencePct: projection.migrationCompatibilityPct
-      ?? Math.min(90, Math.max(10, projection.excessProbabilityPct)),
-  };
-}
-
 export async function GET(request: Request) {
   const now = new Date();
   const url = new URL(request.url);
@@ -104,8 +67,10 @@ export async function GET(request: Request) {
 
   const [catalogResult, primaryStoredResult, comparisonStoredResult] = await Promise.allSettled([
     fetchExpandedSeismicCatalog(startTime, viewEnd, target, MINIMUM_MAGNITUDE),
-    loadGlobeProjectionsAt(viewEnd, 600),
-    comparisonEnd ? loadGlobeProjectionsAt(comparisonEnd, 600) : Promise.resolve(null),
+    loadGlobeProjectionsAt(viewEnd, PROJECTION_RENDER_LIMIT),
+    comparisonEnd
+      ? loadGlobeProjectionsAt(comparisonEnd, PROJECTION_RENDER_LIMIT)
+      : Promise.resolve(null),
   ]);
 
   const catalog = catalogResult.status === "fulfilled" ? catalogResult.value : null;
@@ -139,32 +104,40 @@ export async function GET(request: Request) {
     .filter((event) => event.magnitude >= MINIMUM_MAGNITUDE)
     .map(toEarthquakeEvent);
 
-  let generatedRegional: ReturnType<typeof generateMigrationProjections> = [];
-  let registryAvailable = false;
   if (catalog && liveView) {
-    generatedRegional = generateMigrationProjections(catalog.events, target, now, 60);
+    const generatedRegional = generateMigrationProjections(catalog.events, target, now, 60);
     const registry = await persistRegionalEtasProjections(generatedRegional);
-    registryAvailable = registry.registryAvailable;
     if (registry.warning) warnings.push(`Registro ETAS: ${registry.warning}`);
   }
 
   const [storedRegional, comparisonRegional] = await Promise.all([
-    loadRegionalEtasGlobeProjectionsAt(viewEnd, 600),
-    comparisonEnd ? loadRegionalEtasGlobeProjectionsAt(comparisonEnd, 600) : Promise.resolve([]),
+    loadRegionalEtasGlobeProjectionsAt(viewEnd, PROJECTION_RENDER_LIMIT),
+    comparisonEnd
+      ? loadRegionalEtasGlobeProjectionsAt(comparisonEnd, PROJECTION_RENDER_LIMIT)
+      : Promise.resolve({ registryAvailable: true, totalActive: 0, projections: [] }),
   ]);
-  const regionalProjections = storedRegional.length || registryAvailable
-    ? storedRegional
-    : generatedRegional
-        .filter((projection) => projection.status === "active" && projection.magnitudeMax >= MINIMUM_MAGNITUDE)
-        .map((projection) => regionalProjectionToGlobe(projection, dateKey(viewEnd), viewEnd));
+
+  if (!storedRegional.registryAvailable) {
+    warnings.push(
+      "Las ETAS temporales no se muestran como proyecciones activas hasta que exista su registro persistente; así ninguna proyección puede aparecer en el mapa sin existir también en Historial.",
+    );
+  }
+
   const projections = [
     ...(primaryStored?.projections ?? []),
-    ...regionalProjections,
+    ...storedRegional.projections,
   ].sort((a, b) => b.probabilityPct - a.probabilityPct || b.liftPct - a.liftPct);
   const comparisonProjections = [
     ...(comparisonStored?.projections ?? []),
-    ...comparisonRegional,
+    ...comparisonRegional.projections,
   ].sort((a, b) => b.probabilityPct - a.probabilityPct || b.liftPct - a.liftPct);
+  const projectionsTotal = (primaryStored?.totalActive ?? 0) + storedRegional.totalActive;
+
+  if (projections.length < projectionsTotal) {
+    warnings.push(
+      `Hay ${projectionsTotal.toLocaleString()} proyecciones activas; se renderizan las ${projections.length.toLocaleString()} de mayor señal por el límite técnico del globo.`,
+    );
+  }
 
   const payload: SeismicGlobeResponse = {
     generatedAt: now.toISOString(),
@@ -176,7 +149,7 @@ export async function GET(request: Request) {
     observedEvents,
     provider: catalog?.provider ?? "EMSC",
     providerStatus: catalog?.providerStatus ?? [],
-    projectionsTotal: projections.length,
+    projectionsTotal,
     projections,
     comparisonProjections,
     target,

@@ -10,6 +10,7 @@ export const dynamic = "force-dynamic";
 
 const VALID_STATUSES = new Set<ProjectionHistoryStatus | "all">([
   "all",
+  "scheduled",
   "active",
   "fulfilled",
   "not_fulfilled",
