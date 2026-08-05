@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COUNTRIES, countryByCode } from "@/lib/countries";
+import {
+  loadRegionalEtasProjections,
+  persistRegionalEtasProjections,
+} from "@/lib/learning/etasStore";
 import { calculateMigrationAnalysis } from "@/lib/migration";
 import { generateMigrationProjections } from "@/lib/projections";
 import { fetchExpandedSeismicCatalog } from "@/lib/providers/multisource";
@@ -19,17 +23,31 @@ export async function GET(request: NextRequest) {
 
   try {
     const catalog = await fetchExpandedSeismicCatalog(start, generatedAt, target, 4.2);
-    const projections = generateMigrationProjections(
+    // Persist more candidates than the UI renders so a forecast cannot vanish
+    // merely because a newer candidate displaced it from a top-N calculation.
+    const generatedProjections = generateMigrationProjections(
       catalog.events,
       target,
       generatedAt,
+      60,
     );
+    const registry = await persistRegionalEtasProjections(generatedProjections);
+    const storedProjections = registry.registryAvailable
+      ? await loadRegionalEtasProjections(target.code, {
+          includeResolved: true,
+          limit: 60,
+          asOf: generatedAt,
+        })
+      : generatedProjections;
+    const projections = storedProjections.slice(0, 30);
     const analysis = calculateMigrationAnalysis(
       catalog.events,
       target,
       projections,
       generatedAt,
     );
+    const warnings = [catalog.warning, registry.warning]
+      .filter((value): value is string => Boolean(value));
     const payload: EventsApiResponse = {
       generatedAt: generatedAt.toISOString(),
       windowDays: WINDOW_DAYS,
@@ -42,7 +60,7 @@ export async function GET(request: NextRequest) {
       watchedRegions: WATCHED_REGIONS,
       target,
       countries: COUNTRIES,
-      warning: catalog.warning,
+      warning: warnings.length ? warnings.join(" · ") : undefined,
     };
 
     return NextResponse.json(payload, {
