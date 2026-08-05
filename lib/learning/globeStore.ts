@@ -1,6 +1,6 @@
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
 import type { GlobeProjection } from "@/lib/globeTypes";
-import { loadActiveRegionalEtasRowsAt } from "./etasStore";
+import { regionalEtasRegistryAvailable } from "./etasStore";
 
 function number(value: unknown) {
   const parsed = Number(value);
@@ -19,10 +19,12 @@ function utcDayStart(value: Date) {
 /**
  * Loads every unresolved historical-country projection active at the requested
  * instant. Multiple independent precedents for the same country remain visible.
+ * The exact total is returned separately from the render limit.
  */
 export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
   databaseConfigured: boolean;
   databaseConnected: boolean;
+  totalActive: number;
   projections: GlobeProjection[];
   warning?: string;
 }> {
@@ -31,6 +33,7 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
     return {
       databaseConfigured: hasDatabaseConfiguration(),
       databaseConnected: false,
+      totalActive: 0,
       projections: [],
       warning: "DATABASE_URL no está configurada.",
     };
@@ -65,7 +68,8 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
         c.source_longitude,
         c.source_place,
         c.confidence_pct,
-        c.generated_at
+        c.generated_at,
+        COUNT(*) OVER()::bigint AS active_total
       FROM migration_country_predictions p
       JOIN migration_capsules c ON c.id = p.capsule_id
       WHERE c.generated_at <= ${snapshotInstant}
@@ -90,6 +94,7 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
     return {
       databaseConfigured: true,
       databaseConnected: true,
+      totalActive: number(rows[0]?.active_total),
       projections: rows.map((row) => ({
         id: String(row.id),
         projectionKind: "historical-country" as const,
@@ -125,17 +130,41 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
     return {
       databaseConfigured: true,
       databaseConnected: false,
+      totalActive: 0,
       projections: [],
       warning: error instanceof Error ? error.message : "No fue posible cargar las proyecciones históricas.",
     };
   }
 }
 
-export async function loadRegionalEtasGlobeProjectionsAt(asOf: Date, limit = 500) {
+export async function loadRegionalEtasGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
+  registryAvailable: boolean;
+  totalActive: number;
+  projections: GlobeProjection[];
+}> {
+  const sql = getDb();
+  if (!sql || !await regionalEtasRegistryAvailable()) {
+    return { registryAvailable: false, totalActive: 0, projections: [] };
+  }
+
   const snapshotDate = utcDayStart(asOf).toISOString();
-  try {
-    const rows = await loadActiveRegionalEtasRowsAt(asOf, limit);
-    return rows.map((row) => ({
+  const instant = asOf.toISOString();
+  const rows = await sql`
+    SELECT *, COUNT(*) OVER()::bigint AS active_total
+    FROM regional_etas_projections
+    WHERE status = 'active'
+      AND issued_at <= ${instant}
+      AND surveillance_start <= ${instant}
+      AND surveillance_end >= ${instant}
+      AND resolved_at IS NULL
+    ORDER BY excess_probability_pct DESC, probability_pct DESC, issued_at DESC
+    LIMIT ${Math.min(1_000, Math.max(1, limit))}
+  `;
+
+  return {
+    registryAvailable: true,
+    totalActive: number(rows[0]?.active_total),
+    projections: rows.map((row) => ({
       id: String(row.id),
       projectionKind: "regional-etas" as const,
       snapshotDate,
@@ -165,10 +194,8 @@ export async function loadRegionalEtasGlobeProjectionsAt(asOf: Date, limit = 500
       },
       confidencePct: number(row.migration_compatibility_pct)
         || Math.min(90, Math.max(10, number(row.excess_probability_pct))),
-    } satisfies GlobeProjection));
-  } catch {
-    return [];
-  }
+    } satisfies GlobeProjection)),
+  };
 }
 
 export function loadActiveGlobeProjections(limit = 500) {
