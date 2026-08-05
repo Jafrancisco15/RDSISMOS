@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  evaluateRegionalEtasCycle,
+  type RegionalEtasEvaluationSummary,
+} from "@/lib/learning/etasStore";
 import { evaluateLearningCycle } from "@/lib/learning/evaluate";
 import {
   cronSecretMatches,
@@ -26,14 +30,14 @@ function authorized(request: NextRequest) {
   return candidates.some((candidate) => cronSecretMatches(candidate, tokens));
 }
 
-function limit(value: unknown, fallback = 8) {
+function limit(value: unknown, fallback = 8, maximum = 20) {
   const parsed = Number(value ?? fallback);
-  return Number.isInteger(parsed) ? Math.min(20, Math.max(1, parsed)) : fallback;
+  return Number.isInteger(parsed) ? Math.min(maximum, Math.max(1, parsed)) : fallback;
 }
 
 async function runEvaluation(
   request: NextRequest,
-  values: { activeLimit?: unknown; dueLimit?: unknown },
+  values: { activeLimit?: unknown; dueLimit?: unknown; etasLimit?: unknown },
 ) {
   if (!authorized(request)) {
     return NextResponse.json(
@@ -49,12 +53,32 @@ async function runEvaluation(
   }
 
   try {
-    const result = await evaluateLearningCycle(
-      limit(values.activeLimit),
-      limit(values.dueLimit),
-      request.signal,
-    );
-    return NextResponse.json(result, {
+    const [historicalResult, etasResult] = await Promise.allSettled([
+      evaluateLearningCycle(
+        limit(values.activeLimit),
+        limit(values.dueLimit),
+        request.signal,
+      ),
+      evaluateRegionalEtasCycle(limit(values.etasLimit, 200, 500), request.signal),
+    ]);
+    if (historicalResult.status === "rejected") throw historicalResult.reason;
+
+    const regionalEtas: RegionalEtasEvaluationSummary = etasResult.status === "fulfilled"
+      ? etasResult.value
+      : {
+          registryAvailable: false,
+          projectionsChecked: 0,
+          fulfilled: 0,
+          possibleAssociations: 0,
+          backgroundCandidates: 0,
+          closedWithoutCompatibleMigration: 0,
+          errors: [etasResult.reason instanceof Error ? etasResult.reason.message : "No fue posible evaluar ETAS."],
+        };
+
+    return NextResponse.json({
+      ...historicalResult.value,
+      regionalEtas,
+    }, {
       headers: { "Cache-Control": "no-store, max-age=0" },
     });
   } catch (error) {
@@ -69,6 +93,7 @@ export async function GET(request: NextRequest) {
   return runEvaluation(request, {
     activeLimit: request.nextUrl.searchParams.get("activeLimit"),
     dueLimit: request.nextUrl.searchParams.get("dueLimit"),
+    etasLimit: request.nextUrl.searchParams.get("etasLimit"),
   });
 }
 
@@ -76,10 +101,12 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({})) as {
     activeLimit?: unknown;
     dueLimit?: unknown;
+    etasLimit?: unknown;
     limitCapsules?: unknown;
   };
   return runEvaluation(request, {
     activeLimit: body.activeLimit ?? body.limitCapsules,
     dueLimit: body.dueLimit ?? body.limitCapsules,
+    etasLimit: body.etasLimit,
   });
 }

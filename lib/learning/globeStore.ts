@@ -1,5 +1,6 @@
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
 import type { GlobeProjection } from "@/lib/globeTypes";
+import { loadActiveRegionalEtasRowsAt } from "./etasStore";
 
 function number(value: unknown) {
   const parsed = Number(value);
@@ -16,15 +17,8 @@ function utcDayStart(value: Date) {
 }
 
 /**
- * Loads every unresolved projection that was active at the requested instant.
- *
- * A projection is visible on the active globe only while:
- * - it had already been generated;
- * - its individual surveillance window had started and had not ended; and
- * - no outcome had been recorded by that instant.
- *
- * We intentionally do not rank one "winner" per country. Multiple independent
- * precedents for the same country remain visible until each one is resolved.
+ * Loads every unresolved historical-country projection active at the requested
+ * instant. Multiple independent precedents for the same country remain visible.
  */
 export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
   databaseConfigured: boolean;
@@ -134,6 +128,46 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
       projections: [],
       warning: error instanceof Error ? error.message : "No fue posible cargar las proyecciones históricas.",
     };
+  }
+}
+
+export async function loadRegionalEtasGlobeProjectionsAt(asOf: Date, limit = 500) {
+  const snapshotDate = utcDayStart(asOf).toISOString();
+  try {
+    const rows = await loadActiveRegionalEtasRowsAt(asOf, limit);
+    return rows.map((row) => ({
+      id: String(row.id),
+      projectionKind: "regional-etas" as const,
+      snapshotDate,
+      generatedAt: iso(row.issued_at),
+      countryCode: String(row.target_country_code),
+      countryName: String(row.target_country_name),
+      latitude: number(row.latitude),
+      longitude: number(row.longitude),
+      radiusKm: number(row.radius_km),
+      probabilityPct: number(row.probability_pct),
+      baselinePct: number(row.baseline_probability_pct),
+      liftPct: number(row.excess_probability_pct),
+      surveillanceStart: iso(row.surveillance_start),
+      surveillanceEnd: iso(row.surveillance_end),
+      magnitudeMin: Math.max(4.2, number(row.magnitude_min)),
+      magnitudeMax: number(row.magnitude_max),
+      analogHits: 0,
+      controlHits: 0,
+      medianLeadDays: null,
+      sourceEvent: {
+        id: String(row.source_event_external_id),
+        time: iso(row.source_time),
+        magnitude: number(row.source_magnitude),
+        latitude: number(row.source_latitude),
+        longitude: number(row.source_longitude),
+        place: String(row.source_place),
+      },
+      confidencePct: number(row.migration_compatibility_pct)
+        || Math.min(90, Math.max(10, number(row.excess_probability_pct))),
+    } satisfies GlobeProjection));
+  } catch {
+    return [];
   }
 }
 

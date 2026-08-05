@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   eventFallsWithinPredictionWindow,
   eventFulfillsPrediction,
+  eventMigrationCompatibility,
   incrementalEvaluationStart,
   predictionObservationStart,
 } from "./evaluate";
@@ -16,7 +17,10 @@ const prediction = {
   latitude: 18.8,
   longitude: -70.2,
   radiusKm: 340,
-  probabilityPct: 35,
+  probabilityPct: 45,
+  baselinePct: 20,
+  liftPct: 25,
+  medianLeadDays: 2,
   surveillanceStart: "2026-08-01T00:00:00.000Z",
   surveillanceEnd: "2026-08-10T23:59:59.999Z",
   generatedAt: "2026-08-03T12:00:00.000Z",
@@ -52,8 +56,23 @@ test("rejects the preceding source event even when timestamps overlap", () => {
   }, prediction), false);
 });
 
-test("accepts a complete match immediately inside time, magnitude and location", () => {
+test("accepts a complete structural match inside time, magnitude and location", () => {
   assert.equal(eventFulfillsPrediction(matchingEvent, prediction), true);
+});
+
+test("assigns high migration compatibility when lift, place, scale and timing agree", () => {
+  assert.ok(eventMigrationCompatibility(matchingEvent, prediction) >= 55);
+});
+
+test("does not convert ordinary baseline activity into a migration success", () => {
+  const backgroundDominated = {
+    ...prediction,
+    probabilityPct: 45,
+    baselinePct: 45,
+    liftPct: 0,
+  };
+  assert.equal(eventFulfillsPrediction(matchingEvent, backgroundDominated), true);
+  assert.ok(eventMigrationCompatibility(matchingEvent, backgroundDominated) < 55);
 });
 
 test("rejects an event outside the projected magnitude range", () => {
