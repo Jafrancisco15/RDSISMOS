@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { COUNTRIES, countryByCode } from "@/lib/countries";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
-import type { SeismicGlobeResponse } from "@/lib/globeTypes";
+import type { GlobeProjection, SeismicGlobeResponse } from "@/lib/globeTypes";
 import {
   loadGlobeProjectionsAt,
   loadRegionalEtasGlobeProjectionsAt,
 } from "@/lib/learning/globeStore";
 import { persistRegionalEtasProjections } from "@/lib/learning/etasStore";
+import {
+  OPERATIONAL_MINIMUM_MAGNITUDE,
+  projectionIsOperational,
+} from "@/lib/learning/operationalProjection";
 import { generateMigrationProjections } from "@/lib/projections";
 import { fetchExpandedSeismicCatalog } from "@/lib/providers/multisource";
 import type { SeismicEvent } from "@/lib/types";
@@ -16,7 +20,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const WINDOW_DAYS = 90;
-const MINIMUM_MAGNITUDE = 4.2;
+const MINIMUM_MAGNITUDE = OPERATIONAL_MINIMUM_MAGNITUDE;
 const DAY_MS = 86_400_000;
 const PROJECTION_RENDER_LIMIT = 1_000;
 
@@ -52,6 +56,14 @@ function toEarthquakeEvent(event: SeismicEvent): EarthquakeEvent {
     magnitudeSource: event.agency,
     sourceUrl: event.detailUrl,
   };
+}
+
+function operational(projection: GlobeProjection) {
+  return projectionIsOperational({
+    probabilityPct: projection.probabilityPct,
+    liftPct: projection.liftPct,
+    magnitudeMax: projection.magnitudeMax,
+  });
 }
 
 export async function GET(request: Request) {
@@ -119,23 +131,37 @@ export async function GET(request: Request) {
 
   if (!storedRegional.registryAvailable) {
     warnings.push(
-      "Las ETAS temporales no se muestran como proyecciones activas hasta que exista su registro persistente; así ninguna proyección puede aparecer en el mapa sin existir también en Historial.",
+      "Registro ETAS no disponible: las proyecciones regionales calculadas para el país seleccionado no se publican ni se cuentan hasta quedar almacenadas en Supabase.",
     );
   }
 
+  const historicalOperational = (primaryStored?.projections ?? []).filter(operational);
+  const regionalOperational = storedRegional.projections.filter(operational);
+  const comparisonHistorical = (comparisonStored?.projections ?? []).filter(operational);
+  const comparisonEtas = comparisonRegional.projections.filter(operational);
   const projections = [
-    ...(primaryStored?.projections ?? []),
-    ...storedRegional.projections,
-  ].sort((a, b) => b.probabilityPct - a.probabilityPct || b.liftPct - a.liftPct);
+    ...historicalOperational,
+    ...regionalOperational,
+  ].sort((a, b) => b.liftPct - a.liftPct || b.probabilityPct - a.probabilityPct);
   const comparisonProjections = [
-    ...(comparisonStored?.projections ?? []),
-    ...comparisonRegional.projections,
-  ].sort((a, b) => b.probabilityPct - a.probabilityPct || b.liftPct - a.liftPct);
-  const projectionsTotal = (primaryStored?.totalActive ?? 0) + storedRegional.totalActive;
+    ...comparisonHistorical,
+    ...comparisonEtas,
+  ].sort((a, b) => b.liftPct - a.liftPct || b.probabilityPct - a.probabilityPct);
+  const projectionsTotal = projections.length;
+  const targetProjections = projections.filter((projection) => projection.countryCode === target.code);
+  const targetHistorical = targetProjections.filter(
+    (projection) => projection.projectionKind === "historical-country",
+  ).length;
+  const targetEtas = targetProjections.filter(
+    (projection) => projection.projectionKind === "regional-etas",
+  ).length;
 
-  if (projections.length < projectionsTotal) {
+  warnings.push(
+    `Integridad operacional: ${historicalOperational.length} históricas + ${regionalOperational.length} ETAS activas con señal positiva sobre la línea base. ${target.name}: ${targetProjections.length} (${targetHistorical} históricas y ${targetEtas} ETAS).`,
+  );
+  if (!targetProjections.length) {
     warnings.push(
-      `Hay ${projectionsTotal.toLocaleString()} proyecciones activas; se renderizan las ${projections.length.toLocaleString()} de mayor señal por el límite técnico del globo.`,
+      `${target.name} no tiene ahora una proyección operacional activa. Una fila con probabilidad igual o inferior a la línea base es un control estadístico, no un pronóstico de migración.`,
     );
   }
 
