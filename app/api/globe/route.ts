@@ -18,6 +18,7 @@ export const maxDuration = 60;
 const WINDOW_DAYS = 90;
 const MINIMUM_MAGNITUDE = 4.2;
 const DAY_MS = 86_400_000;
+const PROJECTION_RENDER_LIMIT = 1_000;
 
 function dateKey(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -66,8 +67,10 @@ export async function GET(request: Request) {
 
   const [catalogResult, primaryStoredResult, comparisonStoredResult] = await Promise.allSettled([
     fetchExpandedSeismicCatalog(startTime, viewEnd, target, MINIMUM_MAGNITUDE),
-    loadGlobeProjectionsAt(viewEnd, 600),
-    comparisonEnd ? loadGlobeProjectionsAt(comparisonEnd, 600) : Promise.resolve(null),
+    loadGlobeProjectionsAt(viewEnd, PROJECTION_RENDER_LIMIT),
+    comparisonEnd
+      ? loadGlobeProjectionsAt(comparisonEnd, PROJECTION_RENDER_LIMIT)
+      : Promise.resolve(null),
   ]);
 
   const catalog = catalogResult.status === "fulfilled" ? catalogResult.value : null;
@@ -108,9 +111,9 @@ export async function GET(request: Request) {
   }
 
   const [storedRegional, comparisonRegional] = await Promise.all([
-    loadRegionalEtasGlobeProjectionsAt(viewEnd, 600),
+    loadRegionalEtasGlobeProjectionsAt(viewEnd, PROJECTION_RENDER_LIMIT),
     comparisonEnd
-      ? loadRegionalEtasGlobeProjectionsAt(comparisonEnd, 600)
+      ? loadRegionalEtasGlobeProjectionsAt(comparisonEnd, PROJECTION_RENDER_LIMIT)
       : Promise.resolve({ registryAvailable: true, totalActive: 0, projections: [] }),
   ]);
 
@@ -129,6 +132,12 @@ export async function GET(request: Request) {
     ...comparisonRegional.projections,
   ].sort((a, b) => b.probabilityPct - a.probabilityPct || b.liftPct - a.liftPct);
   const projectionsTotal = (primaryStored?.totalActive ?? 0) + storedRegional.totalActive;
+
+  if (projections.length < projectionsTotal) {
+    warnings.push(
+      `Hay ${projectionsTotal.toLocaleString()} proyecciones activas; se renderizan las ${projections.length.toLocaleString()} de mayor señal por el límite técnico del globo.`,
+    );
+  }
 
   const payload: SeismicGlobeResponse = {
     generatedAt: now.toISOString(),
