@@ -15,9 +15,14 @@ const HOUR_MS = 3_600_000;
 const LIVE_CHECK_OVERLAP_HOURS = 48;
 const EVALUATION_MINIMUM_MAGNITUDE = 4.2;
 const EVALUATION_MAXIMUM_MAGNITUDE = 9.5;
-const FULFILLMENT_CRITERIA_VERSION = 2;
+const FULFILLMENT_CRITERIA_VERSION = 3;
+const MIGRATION_COMPATIBLE_THRESHOLD = 55;
+const POSSIBLE_ASSOCIATION_THRESHOLD = 30;
 
 interface EvaluationPrediction extends DuePrediction {
+  baselinePct: number;
+  liftPct: number;
+  medianLeadDays: number | null;
   generatedAt: string;
   sourceEventExternalId: string;
 }
@@ -41,6 +46,7 @@ export interface EvaluationSummary {
   capsulesProcessed: number;
   predictionsEvaluated: number;
   positiveOutcomes: number;
+  /** Kept for API compatibility; outside events are now neutral and this remains zero. */
   outsideRangeOutcomes: number;
   activeCapsulesScanned: number;
   activePredictionsChecked: number;
@@ -56,6 +62,16 @@ export interface EvaluationSummary {
 function number(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function nullableNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
 }
 
 function groupByCapsule<T extends DuePrediction>(predictions: T[]) {
@@ -92,6 +108,7 @@ export function eventDistanceFromPrediction(
   return haversineKm(event.latitude, event.longitude, prediction.latitude, prediction.longitude);
 }
 
+/** Structural match only: time, location and magnitude. */
 export function eventFulfillsPrediction(
   event: Pick<EarthquakeEvent, "id" | "timeUtc" | "latitude" | "longitude" | "magnitude">,
   prediction: Pick<
@@ -110,6 +127,75 @@ export function eventFulfillsPrediction(
   if (!eventFallsWithinPredictionWindow(event, prediction)) return false;
   if (event.magnitude < prediction.magnitudeMin || event.magnitude > prediction.magnitudeMax) return false;
   return eventDistanceFromPrediction(event, prediction) <= prediction.radiusKm;
+}
+
+/**
+ * Statistical compatibility with the migration signal above the local baseline.
+ * This score does not claim physical causation; it prevents ordinary background
+ * seismicity from automatically being counted as a successful migration forecast.
+ */
+export function eventMigrationCompatibility(
+  event: Pick<EarthquakeEvent, "id" | "timeUtc" | "latitude" | "longitude" | "magnitude">,
+  prediction: Pick<
+    EvaluationPrediction,
+    | "surveillanceStart"
+    | "surveillanceEnd"
+    | "generatedAt"
+    | "sourceEventExternalId"
+    | "latitude"
+    | "longitude"
+    | "radiusKm"
+    | "magnitudeMin"
+    | "magnitudeMax"
+    | "probabilityPct"
+    | "baselinePct"
+    | "liftPct"
+    | "medianLeadDays"
+  >,
+) {
+  if (!eventFulfillsPrediction(event, prediction)) return 0;
+
+  const signalShare = clamp(
+    Math.max(0, prediction.liftPct) / Math.max(1, prediction.probabilityPct),
+    0,
+    1,
+  );
+  const distanceRatio = clamp(
+    eventDistanceFromPrediction(event, prediction) / Math.max(1, prediction.radiusKm),
+    0,
+    1,
+  );
+  const spatialFit = 1 - distanceRatio;
+  const magnitudeMidpoint = (prediction.magnitudeMin + prediction.magnitudeMax) / 2;
+  const magnitudeHalfSpan = Math.max(0.1, (prediction.magnitudeMax - prediction.magnitudeMin) / 2);
+  const magnitudeFit = 1 - clamp(
+    Math.abs(event.magnitude - magnitudeMidpoint) / magnitudeHalfSpan,
+    0,
+    1,
+  );
+  const observationStart = Date.parse(predictionObservationStart(prediction));
+  const leadDays = Math.max(0, (Date.parse(event.timeUtc) - observationStart) / DAY_MS);
+  const windowDays = Math.max(
+    1,
+    (Date.parse(prediction.surveillanceEnd) - observationStart) / DAY_MS,
+  );
+  const temporalFit = prediction.medianLeadDays === null
+    ? 0.7
+    : Math.exp(
+        -Math.abs(leadDays - prediction.medianLeadDays)
+        / Math.max(4, windowDays * 0.3),
+      );
+
+  return Math.round(clamp(
+    (
+      signalShare * 0.5
+      + spatialFit * 0.2
+      + magnitudeFit * 0.15
+      + temporalFit * 0.15
+    ) * 100,
+    0,
+    100,
+  ));
 }
 
 export function incrementalEvaluationStart(
@@ -152,6 +238,9 @@ function mapEvaluationPredictionRow(row: Record<string, unknown>): EvaluationPre
     longitude: number(row.longitude),
     radiusKm: number(row.radius_km),
     probabilityPct: number(row.probability_pct),
+    baselinePct: number(row.baseline_probability_pct),
+    liftPct: number(row.excess_probability_pct),
+    medianLeadDays: nullableNumber(row.median_lead_days),
     surveillanceStart: new Date(String(row.surveillance_start)).toISOString(),
     surveillanceEnd: new Date(String(row.surveillance_end)).toISOString(),
     magnitudeMin: number(row.magnitude_min),
@@ -219,6 +308,9 @@ async function loadActivePredictions(limitCapsules = 8): Promise<ActivePredictio
           p.longitude,
           p.radius_km,
           p.probability_pct,
+          p.baseline_probability_pct,
+          p.excess_probability_pct,
+          p.median_lead_days,
           p.surveillance_start,
           p.surveillance_end,
           p.magnitude_min,
@@ -259,6 +351,9 @@ async function loadActivePredictions(limitCapsules = 8): Promise<ActivePredictio
           p.longitude,
           p.radius_km,
           p.probability_pct,
+          p.baseline_probability_pct,
+          p.excess_probability_pct,
+          p.median_lead_days,
           p.surveillance_start,
           p.surveillance_end,
           p.magnitude_min,
@@ -313,6 +408,9 @@ async function loadDuePredictionsStrict(limitCapsules = 8): Promise<EvaluationPr
       p.longitude,
       p.radius_km,
       p.probability_pct,
+      p.baseline_probability_pct,
+      p.excess_probability_pct,
+      p.median_lead_days,
       p.surveillance_start,
       p.surveillance_end,
       p.magnitude_min,
@@ -376,6 +474,9 @@ async function auditLegacyOutcomes(limit = 500): Promise<OutcomeAuditSummary> {
       p.longitude,
       p.radius_km,
       p.probability_pct,
+      p.baseline_probability_pct,
+      p.excess_probability_pct,
+      p.median_lead_days,
       p.surveillance_start,
       p.surveillance_end,
       p.magnitude_min,
@@ -403,7 +504,28 @@ async function auditLegacyOutcomes(limit = 500): Promise<OutcomeAuditSummary> {
       latitude: number(row.first_event_latitude),
       longitude: number(row.first_event_longitude),
     } : null;
-    const valid = Boolean(row.occurred) && event && eventFulfillsPrediction(event, prediction);
+
+    if (!Boolean(row.occurred)) {
+      await sql`
+        UPDATE migration_outcomes
+        SET evaluation_payload = COALESCE(evaluation_payload, '{}'::jsonb) || ${sql.json({
+          criteriaVersion: FULFILLMENT_CRITERIA_VERSION,
+          legacyOutcomeAudited: true,
+          classification: "no_compatible_migration",
+          outsideProjectionEventsIgnored: true,
+          backgroundSeismicityIsNeutral: true,
+        })},
+        evaluated_at = NOW()
+        WHERE prediction_id = ${prediction.predictionId}
+      `;
+      confirmed += 1;
+      continue;
+    }
+
+    const compatibility = event ? eventMigrationCompatibility(event, prediction) : 0;
+    const valid = Boolean(event)
+      && eventFulfillsPrediction(event!, prediction)
+      && compatibility >= MIGRATION_COMPATIBLE_THRESHOLD;
 
     if (valid && event) {
       const distanceKm = eventDistanceFromPrediction(event, prediction);
@@ -412,9 +534,13 @@ async function auditLegacyOutcomes(limit = 500): Promise<OutcomeAuditSummary> {
         SET evaluation_payload = COALESCE(evaluation_payload, '{}'::jsonb) || ${sql.json({
           criteriaVersion: FULFILLMENT_CRITERIA_VERSION,
           legacyOutcomeAudited: true,
+          classification: "migration_compatible",
+          migrationCompatibilityPct: compatibility,
           effectiveObservationStart: predictionObservationStart(prediction),
           locationRadiusKm: prediction.radiusKm,
           firstEventDistanceKm: Number(distanceKm.toFixed(1)),
+          outsideProjectionEventsIgnored: true,
+          backgroundSeismicityIsNeutral: true,
         })},
         evaluated_at = NOW()
         WHERE prediction_id = ${prediction.predictionId}
@@ -476,7 +602,6 @@ async function evaluateCapsule(
   let predictionsChecked = 0;
   let predictionsEvaluated = 0;
   let positiveOutcomes = 0;
-  let outsideRangeOutcomes = 0;
 
   for (const prediction of predictions) {
     predictionsChecked += 1;
@@ -489,38 +614,53 @@ async function evaluateCapsule(
       .filter((event) => finalize || new Date(event.timeUtc).getTime() >= liveStartMs)
       .filter((event) => eventDistanceFromPrediction(event, prediction) <= prediction.radiusKm)
       .sort((a, b) => new Date(a.timeUtc).getTime() - new Date(b.timeUtc).getTime());
-    const matches = spatialMatches.filter(
+    const inRangeCandidates = spatialMatches.filter(
       (event) => event.magnitude >= prediction.magnitudeMin && event.magnitude <= prediction.magnitudeMax,
     );
-    const outsideRangeMatches = spatialMatches.filter(
+    const scoredCandidates = inRangeCandidates.map((event) => ({
+      event,
+      migrationCompatibilityPct: eventMigrationCompatibility(event, prediction),
+    }));
+    const matches = scoredCandidates
+      .filter((item) => item.migrationCompatibilityPct >= MIGRATION_COMPATIBLE_THRESHOLD)
+      .sort((a, b) => Date.parse(a.event.timeUtc) - Date.parse(b.event.timeUtc));
+    const possibleAssociations = scoredCandidates
+      .filter((item) => item.migrationCompatibilityPct >= POSSIBLE_ASSOCIATION_THRESHOLD
+        && item.migrationCompatibilityPct < MIGRATION_COMPATIBLE_THRESHOLD)
+      .sort((a, b) => b.migrationCompatibilityPct - a.migrationCompatibilityPct);
+    const backgroundCandidates = scoredCandidates
+      .filter((item) => item.migrationCompatibilityPct < POSSIBLE_ASSOCIATION_THRESHOLD)
+      .sort((a, b) => b.migrationCompatibilityPct - a.migrationCompatibilityPct);
+    const outOfScaleEvents = spatialMatches.filter(
       (event) => event.magnitude < prediction.magnitudeMin || event.magnitude > prediction.magnitudeMax,
     );
 
-    const firstEvent = matches[0] ?? null;
+    const firstMatch = matches[0] ?? null;
+    const firstEvent = firstMatch?.event ?? null;
     const strongestEvent = matches.reduce<EarthquakeEvent | null>(
-      (strongest, event) => !strongest || event.magnitude > strongest.magnitude ? event : strongest,
-      null,
-    );
-    const firstOutsideRangeEvent = outsideRangeMatches[0] ?? null;
-    const strongestOutsideRangeEvent = outsideRangeMatches.reduce<EarthquakeEvent | null>(
-      (strongest, event) => !strongest || event.magnitude > strongest.magnitude ? event : strongest,
+      (strongest, item) => !strongest || item.event.magnitude > strongest.magnitude ? item.event : strongest,
       null,
     );
     const occurred = matches.length > 0;
 
-    // Una coincidencia completa se confirma de inmediato. Los fallos y los
-    // eventos fuera de rango solo se cierran al terminar la vigilancia, porque
-    // todavía podría ocurrir posteriormente un evento totalmente compatible.
+    // Only a statistically migration-compatible event closes an active forecast.
+    // Background, possible or out-of-scale events remain neutral until expiry.
     if (!finalize && !occurred) continue;
 
     if (occurred) positiveOutcomes += 1;
-    else if (outsideRangeMatches.length > 0) outsideRangeOutcomes += 1;
     predictionsEvaluated += 1;
 
     const effectiveStart = predictionObservationStart(prediction);
     const firstEventDistanceKm = firstEvent
       ? eventDistanceFromPrediction(firstEvent, prediction)
       : null;
+    const bestPossible = possibleAssociations[0] ?? null;
+    const bestBackground = backgroundCandidates[0] ?? null;
+    const classification = occurred
+      ? "migration_compatible"
+      : bestPossible
+        ? "possible_association"
+        : "no_compatible_migration";
 
     await savePredictionOutcome({
       predictionId: prediction.predictionId,
@@ -534,6 +674,7 @@ async function evaluateCapsule(
       payload: {
         criteriaVersion: FULFILLMENT_CRITERIA_VERSION,
         evaluationMode: finalize ? "final" : "live_fulfillment",
+        classification,
         issuedAt: prediction.generatedAt,
         effectiveObservationStart: effectiveStart,
         evaluatedWindow: {
@@ -541,6 +682,13 @@ async function evaluateCapsule(
           originalSurveillanceStart: prediction.surveillanceStart,
           endTime: finalize ? prediction.surveillanceEnd : evaluationEnd,
           overlapHours: finalize ? 0 : LIVE_CHECK_OVERLAP_HOURS,
+        },
+        migrationSignal: {
+          probabilityPct: prediction.probabilityPct,
+          backgroundProbabilityPct: prediction.baselinePct,
+          excessProbabilityPct: prediction.liftPct,
+          compatibleThresholdPct: MIGRATION_COMPATIBLE_THRESHOLD,
+          possibleThresholdPct: POSSIBLE_ASSOCIATION_THRESHOLD,
         },
         fulfillmentCriteria: {
           eventAfterProjectionIssued: true,
@@ -553,19 +701,34 @@ async function evaluateCapsule(
           magnitudeMinimum: prediction.magnitudeMin,
           magnitudeMaximum: prediction.magnitudeMax,
           surveillanceEnd: prediction.surveillanceEnd,
+          backgroundSeismicityIsNeutral: true,
         },
         country: { code: prediction.countryCode, name: prediction.countryName },
-        matchedEventIds: matches.map((event) => event.id),
-        matchedEventDistancesKm: matches.map((event) => Number(
-          eventDistanceFromPrediction(event, prediction).toFixed(1),
+        matchedEventIds: matches.map((item) => item.event.id),
+        matchedEventCompatibilityPct: matches.map((item) => item.migrationCompatibilityPct),
+        matchedEventDistancesKm: matches.map((item) => Number(
+          eventDistanceFromPrediction(item.event, prediction).toFixed(1),
         )),
         firstEventDistanceKm: firstEventDistanceKm === null
           ? null
           : Number(firstEventDistanceKm.toFixed(1)),
-        outsideRangeEventCount: finalize ? outsideRangeMatches.length : 0,
-        outsideRangeEventIds: finalize ? outsideRangeMatches.map((event) => event.id) : [],
-        firstOutsideRangeEvent: finalize ? compactEvent(firstOutsideRangeEvent) : null,
-        strongestOutsideRangeEvent: finalize ? compactEvent(strongestOutsideRangeEvent) : null,
+        firstEventMigrationCompatibilityPct: firstMatch?.migrationCompatibilityPct ?? null,
+        possibleAssociationCount: possibleAssociations.length,
+        possibleAssociationEventIds: possibleAssociations.map((item) => item.event.id),
+        bestPossibleAssociation: bestPossible ? {
+          event: compactEvent(bestPossible.event),
+          migrationCompatibilityPct: bestPossible.migrationCompatibilityPct,
+        } : null,
+        backgroundCandidateCount: backgroundCandidates.length,
+        backgroundCandidateEventIds: backgroundCandidates.map((item) => item.event.id),
+        bestBackgroundCandidate: bestBackground ? {
+          event: compactEvent(bestBackground.event),
+          migrationCompatibilityPct: bestBackground.migrationCompatibilityPct,
+        } : null,
+        outOfScaleEventCount: outOfScaleEvents.length,
+        outsideProjectionEventsIgnored: true,
+        outsideRangeEventCount: 0,
+        outsideRangeEventIds: [],
         spatialMatchCount: spatialMatches.length,
         queryEventCount: events.length,
       },
@@ -584,7 +747,7 @@ async function evaluateCapsule(
     predictionsChecked,
     predictionsEvaluated,
     positiveOutcomes,
-    outsideRangeOutcomes,
+    outsideRangeOutcomes: 0,
   };
 }
 
@@ -668,7 +831,6 @@ export async function evaluateDueCapsules(limitCapsules = 8, signal?: AbortSigna
   const groups = groupByCapsule(predictions);
   let predictionsEvaluated = 0;
   let positiveOutcomes = 0;
-  let outsideRangeOutcomes = 0;
   const errors: string[] = [];
 
   for (const [capsuleId, capsulePredictions] of groups) {
@@ -676,7 +838,6 @@ export async function evaluateDueCapsules(limitCapsules = 8, signal?: AbortSigna
       const result = await evaluateCapsule(capsulePredictions, true, signal);
       predictionsEvaluated += result.predictionsEvaluated;
       positiveOutcomes += result.positiveOutcomes;
-      outsideRangeOutcomes += result.outsideRangeOutcomes;
     } catch (error) {
       errors.push(`${capsuleId}: ${error instanceof Error ? error.message : "Error desconocido"}`);
     }
@@ -688,7 +849,7 @@ export async function evaluateDueCapsules(limitCapsules = 8, signal?: AbortSigna
     capsulesProcessed: groups.size,
     predictionsEvaluated,
     positiveOutcomes,
-    outsideRangeOutcomes,
+    outsideRangeOutcomes: 0,
     errors,
     metrics,
   };
@@ -713,7 +874,7 @@ export async function evaluateLearningCycle(
     capsulesProcessed: due.capsulesProcessed,
     predictionsEvaluated: due.predictionsEvaluated,
     positiveOutcomes: due.positiveOutcomes,
-    outsideRangeOutcomes: due.outsideRangeOutcomes,
+    outsideRangeOutcomes: 0,
     activeCapsulesScanned: active.capsulesScanned,
     activePredictionsChecked: active.predictionsChecked,
     liveFulfillments: active.liveFulfillments,
