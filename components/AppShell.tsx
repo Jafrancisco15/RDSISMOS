@@ -4,6 +4,7 @@ import { useState } from "react";
 import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
+import { HistoricalBacktestPanel } from "./HistoricalBacktestPanel";
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
@@ -39,7 +40,12 @@ export function AppShell() {
           </details>
         </>
       )}
-      {tab === "history" && <ProjectionHistoryPanel />}
+      {tab === "history" && (
+        <>
+          <div className="learning-panel-wrap"><HistoricalBacktestPanel /></div>
+          <ProjectionHistoryPanel />
+        </>
+      )}
       {tab === "events" && <EarthquakeEventsDashboard />}
     </>
   );
