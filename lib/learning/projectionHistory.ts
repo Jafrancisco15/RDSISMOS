@@ -1,17 +1,23 @@
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
+import { regionalEtasRegistryAvailable } from "./etasStore";
 
 export type ProjectionHistoryStatus =
   | "active"
   | "fulfilled"
-  | "fulfilled_outside_range"
   | "not_fulfilled"
   | "pending_evaluation";
+
+export type ProjectionHistoryModel = "statistical_migration" | "regional_etas";
 
 export interface ProjectionHistoryItem {
   id: string;
   capsuleId: string;
   modelVersionId: string;
+  modelType: ProjectionHistoryModel;
+  modelLabel: string;
   status: ProjectionHistoryStatus;
+  associationClass: string;
+  migrationCompatibilityPct: number | null;
   zoneName: string;
   countryCode: string;
   countryName: string;
@@ -51,16 +57,9 @@ export interface ProjectionHistoryItem {
     strongestMagnitude: number | null;
     daysToFirstEvent: number | null;
     evaluatedAt: string;
-    outsideRangeEventCount: number;
-    firstOutsideRangeEvent: {
-      id: string;
-      timeUtc: string;
-      magnitude: number;
-      depthKm: number;
-      place: string;
-      latitude: number;
-      longitude: number;
-    } | null;
+    possibleAssociationCount: number;
+    backgroundCandidateCount: number;
+    outOfScaleEventCount: number;
   } | null;
 }
 
@@ -68,6 +67,7 @@ export interface ProjectionHistoryFilters {
   page?: number;
   pageSize?: number;
   status?: ProjectionHistoryStatus | "all";
+  model?: ProjectionHistoryModel | "all";
   countryCode?: string;
   search?: string;
   from?: string;
@@ -84,15 +84,20 @@ export interface ProjectionHistoryResponse {
   items: ProjectionHistoryItem[];
   countries: Array<{ code: string; name: string }>;
   statusCounts: Record<ProjectionHistoryStatus, number>;
+  modelCounts: Record<ProjectionHistoryModel, number>;
   message?: string;
 }
 
 const EMPTY_COUNTS: Record<ProjectionHistoryStatus, number> = {
   active: 0,
   fulfilled: 0,
-  fulfilled_outside_range: 0,
   not_fulfilled: 0,
   pending_evaluation: 0,
+};
+
+const EMPTY_MODEL_COUNTS: Record<ProjectionHistoryModel, number> = {
+  statistical_migration: 0,
+  regional_etas: 0,
 };
 
 function number(value: unknown) {
@@ -122,28 +127,178 @@ function parseObject(value: unknown): Record<string, unknown> {
   }
 }
 
-function outsideEvent(value: unknown): ProjectionHistoryItem["outcome"] extends infer Outcome
-  ? Outcome extends { firstOutsideRangeEvent: infer Event }
-    ? Event
-    : never
-  : never {
-  const item = parseObject(value);
-  if (!Object.keys(item).length) return null;
-  return {
-    id: String(item.id ?? ""),
-    timeUtc: iso(item.timeUtc ?? item.time),
-    magnitude: number(item.magnitude),
-    depthKm: number(item.depthKm),
-    place: String(item.place ?? "Ubicación no especificada"),
-    latitude: number(item.latitude),
-    longitude: number(item.longitude),
-  };
-}
-
 function dateBoundary(value: string | undefined, endOfDay: boolean) {
   if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
   const date = new Date(`${value}${endOfDay ? "T23:59:59.999Z" : "T00:00:00.000Z"}`);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+function historicalStatus(row: Record<string, unknown>): ProjectionHistoryStatus {
+  if (row.occurred === true) return "fulfilled";
+  if (row.outcome_prediction_id) return "not_fulfilled";
+  return Date.parse(iso(row.surveillance_end)) >= Date.now()
+    ? "active"
+    : "pending_evaluation";
+}
+
+function historicalItem(row: Record<string, unknown>): ProjectionHistoryItem {
+  const payload = parseObject(row.evaluation_payload);
+  const outcomeExists = Boolean(row.outcome_prediction_id);
+  const classification = String(payload.classification ?? (row.occurred ? "migration_compatible" : "none"));
+  return {
+    id: String(row.id),
+    capsuleId: String(row.capsule_id),
+    modelVersionId: String(row.model_version_id),
+    modelType: "statistical_migration",
+    modelLabel: "Migración estadística histórica",
+    status: historicalStatus(row),
+    associationClass: classification,
+    migrationCompatibilityPct: nullableNumber(
+      payload.firstEventMigrationCompatibilityPct ?? payload.migrationCompatibilityPct,
+    ),
+    zoneName: String(row.zone_name),
+    countryCode: String(row.country_code),
+    countryName: String(row.country_name),
+    probabilityPct: number(row.probability_pct),
+    baselinePct: number(row.baseline_probability_pct),
+    liftPct: number(row.excess_probability_pct),
+    magnitudeMin: number(row.magnitude_min),
+    magnitudeMax: number(row.magnitude_max),
+    surveillanceStart: iso(row.surveillance_start),
+    surveillanceEnd: iso(row.surveillance_end),
+    analogHits: number(row.analog_hits),
+    controlHits: number(row.control_hits),
+    medianLeadDays: nullableNumber(row.median_lead_days),
+    confidencePct: number(row.confidence_pct),
+    generatedAt: iso(row.generated_at),
+    sourceEvent: {
+      id: String(row.source_event_external_id),
+      time: iso(row.source_time),
+      magnitude: number(row.source_magnitude),
+      depthKm: number(row.source_depth_km),
+      place: String(row.source_place),
+      latitude: number(row.source_latitude),
+      longitude: number(row.source_longitude),
+    },
+    outcome: outcomeExists ? {
+      occurred: Boolean(row.occurred),
+      eventCount: number(row.event_count),
+      firstEvent: row.first_event_external_id ? {
+        id: String(row.first_event_external_id),
+        time: iso(row.first_event_time),
+        magnitude: number(row.first_event_magnitude),
+        depthKm: number(row.first_event_depth_km),
+        place: String(row.first_event_place ?? "Ubicación no especificada"),
+        latitude: number(row.first_event_latitude),
+        longitude: number(row.first_event_longitude),
+      } : null,
+      strongestMagnitude: nullableNumber(row.strongest_event_magnitude),
+      daysToFirstEvent: nullableNumber(row.days_to_first_event),
+      evaluatedAt: iso(row.evaluated_at),
+      possibleAssociationCount: number(payload.possibleAssociationCount),
+      backgroundCandidateCount: number(payload.backgroundCandidateCount),
+      outOfScaleEventCount: number(payload.outOfScaleEventCount),
+    } : null,
+  };
+}
+
+function etasStatus(row: Record<string, unknown>): ProjectionHistoryStatus {
+  if (String(row.status) === "fulfilled") return "fulfilled";
+  if (String(row.status) === "not_fulfilled") return "not_fulfilled";
+  return Date.parse(iso(row.surveillance_end)) >= Date.now()
+    ? "active"
+    : "pending_evaluation";
+}
+
+function etasItem(row: Record<string, unknown>): ProjectionHistoryItem {
+  const payload = parseObject(row.evaluation_payload);
+  const resolved = Boolean(row.resolved_at);
+  const issuedAt = iso(row.issued_at);
+  const firstEventTime = row.matched_event_time ? iso(row.matched_event_time) : null;
+  return {
+    id: String(row.id),
+    capsuleId: String(row.id),
+    modelVersionId: "regional-etas-v2",
+    modelType: "regional_etas",
+    modelLabel: "ETAS regional persistente",
+    status: etasStatus(row),
+    associationClass: String(row.association_class ?? "none"),
+    migrationCompatibilityPct: nullableNumber(row.migration_compatibility_pct),
+    zoneName: String(row.zone_name),
+    countryCode: String(row.target_country_code),
+    countryName: String(row.target_country_name),
+    probabilityPct: number(row.probability_pct),
+    baselinePct: number(row.baseline_probability_pct),
+    liftPct: number(row.excess_probability_pct),
+    magnitudeMin: number(row.magnitude_min),
+    magnitudeMax: number(row.magnitude_max),
+    surveillanceStart: iso(row.surveillance_start),
+    surveillanceEnd: iso(row.surveillance_end),
+    analogHits: 0,
+    controlHits: 0,
+    medianLeadDays: null,
+    confidencePct: nullableNumber(row.migration_compatibility_pct)
+      ?? Math.min(90, Math.max(10, number(row.excess_probability_pct))),
+    generatedAt: issuedAt,
+    sourceEvent: {
+      id: String(row.source_event_external_id),
+      time: iso(row.source_time),
+      magnitude: number(row.source_magnitude),
+      depthKm: number(row.source_depth_km),
+      place: String(row.source_place),
+      latitude: number(row.source_latitude),
+      longitude: number(row.source_longitude),
+    },
+    outcome: resolved ? {
+      occurred: String(row.status) === "fulfilled",
+      eventCount: row.matched_event_external_id ? 1 : 0,
+      firstEvent: row.matched_event_external_id && firstEventTime ? {
+        id: String(row.matched_event_external_id),
+        time: firstEventTime,
+        magnitude: number(row.matched_event_magnitude),
+        depthKm: number(row.matched_event_depth_km),
+        place: String(row.matched_event_place ?? "Ubicación no especificada"),
+        latitude: number(row.matched_event_latitude),
+        longitude: number(row.matched_event_longitude),
+      } : null,
+      strongestMagnitude: nullableNumber(row.matched_event_magnitude),
+      daysToFirstEvent: firstEventTime
+        ? Number(((Date.parse(firstEventTime) - Date.parse(issuedAt)) / 86_400_000).toFixed(2))
+        : null,
+      evaluatedAt: iso(row.resolved_at),
+      possibleAssociationCount: String(row.association_class) === "possible_association" ? 1 : 0,
+      backgroundCandidateCount: String(row.association_class) === "background_likely" ? 1 : 0,
+      outOfScaleEventCount: number(payload.outOfScaleEventCount),
+    } : null,
+  };
+}
+
+function matchesCommonFilters(
+  item: ProjectionHistoryItem,
+  filters: ProjectionHistoryFilters,
+  from: number | null,
+  to: number | null,
+) {
+  const countryCode = (filters.countryCode ?? "").trim().toUpperCase();
+  if (countryCode && item.countryCode !== countryCode) return false;
+  const model = filters.model ?? "all";
+  if (model !== "all" && item.modelType !== model) return false;
+  const search = (filters.search ?? "").trim().toLocaleLowerCase();
+  if (search) {
+    const haystack = [
+      item.id,
+      item.countryName,
+      item.zoneName,
+      item.sourceEvent.place,
+      item.sourceEvent.id,
+      item.modelLabel,
+    ].join(" ").toLocaleLowerCase();
+    if (!haystack.includes(search)) return false;
+  }
+  const generated = Date.parse(item.generatedAt);
+  if (from !== null && generated < from) return false;
+  if (to !== null && generated > to) return false;
+  return true;
 }
 
 export async function loadProjectionHistory(
@@ -151,16 +306,7 @@ export async function loadProjectionHistory(
 ): Promise<ProjectionHistoryResponse> {
   const pageSize = Math.min(100, Math.max(1, Math.trunc(filters.pageSize ?? 30)));
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
-  const status = filters.status ?? "all";
-  const countryCode = (filters.countryCode ?? "").trim().toUpperCase();
-  const search = (filters.search ?? "").trim().slice(0, 120);
-  const searchPattern = `%${search}%`;
-  const from = dateBoundary(filters.from, false) ?? "1970-01-01T00:00:00.000Z";
-  const to = dateBoundary(filters.to, true) ?? "9999-12-31T23:59:59.999Z";
-  const hasFrom = Boolean(dateBoundary(filters.from, false));
-  const hasTo = Boolean(dateBoundary(filters.to, true));
   const offset = (page - 1) * pageSize;
-
   const base: ProjectionHistoryResponse = {
     databaseConfigured: hasDatabaseConfiguration(),
     databaseConnected: false,
@@ -171,199 +317,74 @@ export async function loadProjectionHistory(
     items: [],
     countries: [],
     statusCounts: { ...EMPTY_COUNTS },
+    modelCounts: { ...EMPTY_MODEL_COUNTS },
   };
 
   const sql = getDb();
   if (!sql) return { ...base, message: "DATABASE_URL no está configurada." };
 
   try {
-    const rows = await sql`
-      WITH projection_rows AS (
-        SELECT
-          p.id,
-          p.capsule_id,
-          p.zone_name,
-          p.country_code,
-          p.country_name,
-          p.probability_pct,
-          p.baseline_probability_pct,
-          p.excess_probability_pct,
-          p.analog_hits,
-          p.control_hits,
-          p.median_lead_days,
-          p.surveillance_start,
-          p.surveillance_end,
-          p.magnitude_min,
-          p.magnitude_max,
-          p.created_at,
-          c.model_version_id,
-          c.confidence_pct,
-          c.generated_at,
-          c.source_event_external_id,
-          c.source_time,
-          c.source_magnitude,
-          c.source_depth_km,
-          c.source_latitude,
-          c.source_longitude,
-          c.source_place,
-          o.prediction_id AS outcome_prediction_id,
-          o.occurred,
-          o.event_count,
-          o.first_event_external_id,
-          o.first_event_time,
-          o.first_event_magnitude,
-          o.first_event_depth_km,
-          o.first_event_place,
-          o.first_event_latitude,
-          o.first_event_longitude,
-          o.strongest_event_magnitude,
-          o.days_to_first_event,
-          o.evaluation_payload,
-          o.evaluated_at,
-          CASE
-            WHEN o.occurred IS TRUE THEN 'fulfilled'
-            WHEN o.prediction_id IS NOT NULL
-              AND jsonb_array_length(COALESCE(o.evaluation_payload->'outsideRangeEventIds', '[]'::jsonb)) > 0
-              THEN 'fulfilled_outside_range'
-            WHEN o.prediction_id IS NOT NULL THEN 'not_fulfilled'
-            WHEN p.surveillance_end >= NOW() THEN 'active'
-            ELSE 'pending_evaluation'
-          END AS display_status
-        FROM migration_country_predictions p
-        JOIN migration_capsules c ON c.id = p.capsule_id
-        LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-      )
-      SELECT *, COUNT(*) OVER()::bigint AS total_count
-      FROM projection_rows
-      WHERE (${status} = 'all' OR display_status = ${status})
-        AND (${countryCode} = '' OR country_code = ${countryCode})
-        AND (${search} = '' OR
-          country_name ILIKE ${searchPattern} OR
-          zone_name ILIKE ${searchPattern} OR
-          source_place ILIKE ${searchPattern} OR
-          source_event_external_id ILIKE ${searchPattern} OR
-          id ILIKE ${searchPattern})
-        AND (${hasFrom} = FALSE OR generated_at >= ${from})
-        AND (${hasTo} = FALSE OR generated_at <= ${to})
-      ORDER BY created_at DESC, generated_at DESC, probability_pct DESC
-      LIMIT ${pageSize}
-      OFFSET ${offset}
+    const historicalRows = await sql`
+      SELECT
+        p.id, p.capsule_id, p.zone_name, p.country_code, p.country_name,
+        p.probability_pct, p.baseline_probability_pct, p.excess_probability_pct,
+        p.analog_hits, p.control_hits, p.median_lead_days,
+        p.surveillance_start, p.surveillance_end, p.magnitude_min, p.magnitude_max,
+        c.model_version_id, c.confidence_pct, c.generated_at,
+        c.source_event_external_id, c.source_time, c.source_magnitude,
+        c.source_depth_km, c.source_latitude, c.source_longitude, c.source_place,
+        o.prediction_id AS outcome_prediction_id, o.occurred, o.event_count,
+        o.first_event_external_id, o.first_event_time, o.first_event_magnitude,
+        o.first_event_depth_km, o.first_event_place, o.first_event_latitude,
+        o.first_event_longitude, o.strongest_event_magnitude,
+        o.days_to_first_event, o.evaluation_payload, o.evaluated_at
+      FROM migration_country_predictions p
+      JOIN migration_capsules c ON c.id = p.capsule_id
+      LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
     `;
 
-    const countRows = await sql`
-      WITH projection_rows AS (
-        SELECT
-          p.country_code,
-          p.country_name,
-          p.zone_name,
-          p.id,
-          c.source_place,
-          c.source_event_external_id,
-          c.generated_at,
-          CASE
-            WHEN o.occurred IS TRUE THEN 'fulfilled'
-            WHEN o.prediction_id IS NOT NULL
-              AND jsonb_array_length(COALESCE(o.evaluation_payload->'outsideRangeEventIds', '[]'::jsonb)) > 0
-              THEN 'fulfilled_outside_range'
-            WHEN o.prediction_id IS NOT NULL THEN 'not_fulfilled'
-            WHEN p.surveillance_end >= NOW() THEN 'active'
-            ELSE 'pending_evaluation'
-          END AS display_status
-        FROM migration_country_predictions p
-        JOIN migration_capsules c ON c.id = p.capsule_id
-        LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-      )
-      SELECT display_status, COUNT(*)::bigint AS count
-      FROM projection_rows
-      WHERE (${countryCode} = '' OR country_code = ${countryCode})
-        AND (${search} = '' OR
-          country_name ILIKE ${searchPattern} OR
-          zone_name ILIKE ${searchPattern} OR
-          source_place ILIKE ${searchPattern} OR
-          source_event_external_id ILIKE ${searchPattern} OR
-          id ILIKE ${searchPattern})
-        AND (${hasFrom} = FALSE OR generated_at >= ${from})
-        AND (${hasTo} = FALSE OR generated_at <= ${to})
-      GROUP BY display_status
-    `;
-
-    const countryRows = await sql`
-      SELECT DISTINCT country_code, country_name
-      FROM migration_country_predictions
-      ORDER BY country_name ASC
-    `;
-
-    const total = number(rows[0]?.total_count);
-    const statusCounts = { ...EMPTY_COUNTS };
-    for (const row of countRows) {
-      const key = String(row.display_status) as ProjectionHistoryStatus;
-      if (key in statusCounts) statusCounts[key] = number(row.count);
+    let etasRows: typeof historicalRows = [];
+    let registryMessage: string | undefined;
+    if (await regionalEtasRegistryAvailable()) {
+      etasRows = await sql`SELECT * FROM regional_etas_projections` as typeof historicalRows;
+    } else {
+      registryMessage = "El historial ETAS aparecerá después de ejecutar database/regional_etas_registry.sql.";
     }
 
-    const items: ProjectionHistoryItem[] = rows.map((row) => {
-      const payload = parseObject(row.evaluation_payload);
-      const outcomeExists = Boolean(row.outcome_prediction_id);
-      return {
-        id: String(row.id),
-        capsuleId: String(row.capsule_id),
-        modelVersionId: String(row.model_version_id),
-        status: String(row.display_status) as ProjectionHistoryStatus,
-        zoneName: String(row.zone_name),
-        countryCode: String(row.country_code),
-        countryName: String(row.country_name),
-        probabilityPct: number(row.probability_pct),
-        baselinePct: number(row.baseline_probability_pct),
-        liftPct: number(row.excess_probability_pct),
-        magnitudeMin: number(row.magnitude_min),
-        magnitudeMax: number(row.magnitude_max),
-        surveillanceStart: iso(row.surveillance_start),
-        surveillanceEnd: iso(row.surveillance_end),
-        analogHits: number(row.analog_hits),
-        controlHits: number(row.control_hits),
-        medianLeadDays: nullableNumber(row.median_lead_days),
-        confidencePct: number(row.confidence_pct),
-        generatedAt: iso(row.generated_at),
-        sourceEvent: {
-          id: String(row.source_event_external_id),
-          time: iso(row.source_time),
-          magnitude: number(row.source_magnitude),
-          depthKm: number(row.source_depth_km),
-          place: String(row.source_place),
-          latitude: number(row.source_latitude),
-          longitude: number(row.source_longitude),
-        },
-        outcome: outcomeExists ? {
-          occurred: Boolean(row.occurred),
-          eventCount: number(row.event_count),
-          firstEvent: row.first_event_external_id ? {
-            id: String(row.first_event_external_id),
-            time: iso(row.first_event_time),
-            magnitude: number(row.first_event_magnitude),
-            depthKm: number(row.first_event_depth_km),
-            place: String(row.first_event_place ?? "Ubicación no especificada"),
-            latitude: number(row.first_event_latitude),
-            longitude: number(row.first_event_longitude),
-          } : null,
-          strongestMagnitude: nullableNumber(row.strongest_event_magnitude),
-          daysToFirstEvent: nullableNumber(row.days_to_first_event),
-          evaluatedAt: iso(row.evaluated_at),
-          outsideRangeEventCount: number(payload.outsideRangeEventCount),
-          firstOutsideRangeEvent: outsideEvent(payload.firstOutsideRangeEvent),
-        } : null,
-      };
-    });
+    const allItems = [
+      ...historicalRows.map((row) => historicalItem(row as Record<string, unknown>)),
+      ...etasRows.map((row) => etasItem(row as Record<string, unknown>)),
+    ];
+    const from = dateBoundary(filters.from, false);
+    const to = dateBoundary(filters.to, true);
+    const commonFiltered = allItems.filter((item) => matchesCommonFilters(item, filters, from, to));
+    const statusCounts = { ...EMPTY_COUNTS };
+    const modelCounts = { ...EMPTY_MODEL_COUNTS };
+    for (const item of commonFiltered) {
+      statusCounts[item.status] += 1;
+      modelCounts[item.modelType] += 1;
+    }
+    const status = filters.status ?? "all";
+    const filtered = commonFiltered
+      .filter((item) => status === "all" || item.status === status)
+      .sort((a, b) => Date.parse(b.generatedAt) - Date.parse(a.generatedAt)
+        || b.probabilityPct - a.probabilityPct);
+    const total = filtered.length;
+    const countries = [...new Map(allItems.map((item) => [
+      item.countryCode,
+      { code: item.countryCode, name: item.countryName },
+    ])).values()].sort((a, b) => a.name.localeCompare(b.name, "es"));
 
     return {
       ...base,
       databaseConnected: true,
       total,
       totalPages: total ? Math.ceil(total / pageSize) : 0,
-      items,
-      countries: countryRows.map((row) => ({
-        code: String(row.country_code),
-        name: String(row.country_name),
-      })),
+      items: filtered.slice(offset, offset + pageSize),
+      countries,
       statusCounts,
+      modelCounts,
+      message: registryMessage,
     };
   } catch (error) {
     return {
