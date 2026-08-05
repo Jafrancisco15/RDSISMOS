@@ -110,6 +110,10 @@ function round(value: number, digits = 6) {
   return Number(value.toFixed(digits));
 }
 
+function toJsonValue(value: unknown) {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
 function toSeismicEvent(event: EarthquakeEvent): SeismicEvent {
   return {
     id: event.id,
@@ -163,6 +167,7 @@ async function backtestTableAvailable() {
 async function persistBacktest(result: BacktestRunResult) {
   const sql = getDb();
   if (!sql || !await backtestTableAvailable()) return false;
+  const payload = toJsonValue(result);
   await sql`
     INSERT INTO public.migration_backtest_runs (
       id, model_version_id, cohort_start, cohort_end, issued_delay_hours,
@@ -182,7 +187,7 @@ async function persistBacktest(result: BacktestRunResult) {
       ${result.metrics.averageProbability}, ${result.metrics.observedRate},
       ${result.metrics.brierScore}, ${result.metrics.baselineBrierScore},
       ${result.metrics.brierSkillScore}, ${result.metrics.logLoss},
-      ${result.metrics.accuracyAt50}, ${sql.json(result)}, ${result.calculatedAt}
+      ${result.metrics.accuracyAt50}, ${sql.json(payload)}, ${result.calculatedAt}
     )
     ON CONFLICT (id) DO UPDATE SET
       sources_available = EXCLUDED.sources_available,
@@ -269,7 +274,7 @@ export async function runHistoricalBacktest(
         .map((destination) => Date.parse(destination.surveillanceEnd ?? capsule.sourceEvent.time))
         .filter(Number.isFinite)
         .sort((a, b) => b - a)[0];
-      if (!operationalDestinations.length || !Number.isFinite(latestEnd)) {
+      if (!operationalDestinations.length || latestEnd === undefined || !Number.isFinite(latestEnd)) {
         sourcesProcessed += 1;
         continue;
       }
@@ -465,6 +470,6 @@ export async function loadLatestHistoricalBacktest(): Promise<{
   return {
     databaseConfigured: true,
     databaseConnected: true,
-    result: rows[0]?.result_payload as BacktestRunResult | null ?? null,
+    result: (rows[0]?.result_payload as BacktestRunResult | null) ?? null,
   };
 }
