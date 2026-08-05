@@ -55,19 +55,22 @@ export function calculateMigrationAnalysis(
         : 1;
   const active = projections.filter((projection) => projection.status === "active");
   const maxCapsuleProbabilityPct = active.reduce(
-    (maximum, projection) => Math.max(maximum, projection.probabilityPct),
+    (maximum, projection) => Math.max(maximum, projection.excessProbabilityPct),
     0,
   );
+  const highest = [...active].sort(
+    (a, b) => b.excessProbabilityPct - a.excessProbabilityPct,
+  )[0] ?? null;
 
-  const rateScore = clamp((targetActivityRatio - 1) * 14, 0, 35);
-  const probabilityScore = maxCapsuleProbabilityPct * 0.55;
-  const countScore = clamp(active.length * 4, 0, 15);
+  const rateScore = clamp((targetActivityRatio - 1) * 10, 0, 25);
+  const probabilityScore = maxCapsuleProbabilityPct * 0.65;
+  const countScore = clamp(active.filter((projection) => projection.excessProbabilityPct > 0).length * 3, 0, 12);
   const score = Math.round(clamp(rateScore + probabilityScore + countScore, 0, 100));
   const { level, label } = levelForScore(score);
 
-  const summary = active.length
-    ? `${active.length} cápsula${active.length === 1 ? "" : "s"} ETAS activa${active.length === 1 ? "" : "s"} para ${target.name}; la mayor probabilidad condicional mostrada es ${maxCapsuleProbabilityPct}%.`
-    : `No hay cápsulas ETAS activas para ${target.name} con los eventos y umbrales actuales.`;
+  const summary = highest
+    ? `${active.length} cápsula${active.length === 1 ? "" : "s"} ETAS activa${active.length === 1 ? "" : "s"} para ${target.name}; la señal máxima sobre el fondo es ${highest.excessProbabilityPct}% y la probabilidad total asociada es ${highest.probabilityPct}%.`
+    : `No hay cápsulas ETAS activas para ${target.name} con señal superior a la actividad sísmica de fondo.`;
 
   return {
     score,
@@ -83,11 +86,12 @@ export function calculateMigrationAnalysis(
       `Tasa de los últimos 7 días: ${recentRatePerDay.toFixed(2)} eventos/día en el entorno seleccionado.`,
       `Tasa de referencia de los 83 días anteriores: ${baselineRatePerDay.toFixed(2)} eventos/día.`,
       `Relación actividad reciente/referencia: ${targetActivityRatio.toFixed(2)}×.`,
-      `Las cápsulas se calculan exclusivamente desde un evento padre identificado y mediante un núcleo ETAS regional.`,
+      `El nivel ETAS utiliza el exceso sobre la tasa de fondo, no la mera existencia de terremotos en la región.`,
     ],
     limitations: [
-      "ETAS pronostica agrupamiento regional y réplicas; no justifica migraciones causales entre placas separadas por miles de kilómetros.",
+      "La compatibilidad ETAS es estadística y no demuestra causalidad física entre dos sismos.",
       "Los parámetros iniciales son generales y deben calibrarse con el catálogo histórico de cada país antes de interpretar probabilidades como operacionales.",
+      "Los eventos fuera de la zona, escala o ventana de una proyección se consideran actividad independiente y no errores adicionales del modelo.",
       "Las probabilidades son condicionales al catálogo disponible y no equivalen a una predicción determinista ni a una alerta oficial.",
     ],
   };
