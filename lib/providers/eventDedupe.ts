@@ -5,8 +5,8 @@ type SourceFamily = "usgs" | "emsc" | "raspberry" | "other";
 
 const SOURCE_PRIORITY: Array<{ pattern: RegExp; score: number }> = [
   { pattern: /USGS ComCat/i, score: 500 },
-  { pattern: /EMSC/i, score: 450 },
-  { pattern: /Raspberry Shake/i, score: 400 },
+  { pattern: /Raspberry Shake/i, score: 450 },
+  { pattern: /EMSC/i, score: 400 },
   { pattern: /USGS real-time/i, score: 350 },
 ];
 
