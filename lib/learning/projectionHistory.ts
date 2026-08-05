@@ -343,17 +343,18 @@ export async function loadProjectionHistory(
       LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
     `;
 
-    let etasRows: typeof historicalRows = [];
+    let etasRows: Record<string, unknown>[] = [];
     let registryMessage: string | undefined;
     if (await regionalEtasRegistryAvailable()) {
-      etasRows = await sql`SELECT * FROM regional_etas_projections` as typeof historicalRows;
+      const storedEtasRows = await sql`SELECT * FROM regional_etas_projections`;
+      etasRows = storedEtasRows.map((row) => row as Record<string, unknown>);
     } else {
       registryMessage = "El historial ETAS aparecerá después de ejecutar database/regional_etas_registry.sql.";
     }
 
     const allItems = [
       ...historicalRows.map((row) => historicalItem(row as Record<string, unknown>)),
-      ...etasRows.map((row) => etasItem(row as Record<string, unknown>)),
+      ...etasRows.map((row) => etasItem(row)),
     ];
     const from = dateBoundary(filters.from, false);
     const to = dateBoundary(filters.to, true);
