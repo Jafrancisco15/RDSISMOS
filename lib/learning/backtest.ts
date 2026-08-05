@@ -23,6 +23,8 @@ const DEFAULT_SOURCE_MAGNITUDE = 5.5;
 const DEFAULT_SOURCE_LIMIT = 1;
 const MAX_SOURCE_LIMIT = 2;
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 export interface BacktestOptions {
   cohortDays?: number;
   lagDays?: number;
@@ -110,8 +112,8 @@ function round(value: number, digits = 6) {
   return Number(value.toFixed(digits));
 }
 
-function toJsonValue(value: unknown) {
-  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+function toJsonValue(value: unknown): JsonValue {
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
 }
 
 function toSeismicEvent(event: EarthquakeEvent): SeismicEvent {
