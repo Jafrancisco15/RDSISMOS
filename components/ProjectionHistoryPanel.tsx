@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   ProjectionHistoryItem,
+  ProjectionHistoryModel,
   ProjectionHistoryResponse,
   ProjectionHistoryStatus,
 } from "@/lib/learning/projectionHistory";
@@ -10,9 +11,21 @@ import type {
 const STATUS_LABELS: Record<ProjectionHistoryStatus, string> = {
   active: "Activa",
   fulfilled: "Cumplida",
-  fulfilled_outside_range: "Cumplida fuera de rango",
-  not_fulfilled: "No cumplida",
+  not_fulfilled: "Sin migración compatible",
   pending_evaluation: "Pendiente de evaluación",
+};
+
+const MODEL_LABELS: Record<ProjectionHistoryModel, string> = {
+  statistical_migration: "Migración estadística",
+  regional_etas: "ETAS regional",
+};
+
+const ASSOCIATION_LABELS: Record<string, string> = {
+  none: "Sin asociación observada",
+  migration_compatible: "Compatible con migración",
+  possible_association: "Asociación posible",
+  background_likely: "Probablemente actividad de fondo",
+  no_compatible_migration: "Sin migración compatible",
 };
 
 function formatDate(value: string, withTime = false) {
@@ -34,16 +47,9 @@ function observedEvent(item: ProjectionHistoryItem) {
       place: item.outcome.firstEvent.place,
       time: item.outcome.firstEvent.time,
       days: item.outcome.daysToFirstEvent,
-      note: "Dentro del rango",
-    };
-  }
-  if (item.status === "fulfilled_outside_range" && item.outcome?.firstOutsideRangeEvent) {
-    return {
-      magnitude: item.outcome.firstOutsideRangeEvent.magnitude,
-      place: item.outcome.firstOutsideRangeEvent.place,
-      time: item.outcome.firstOutsideRangeEvent.timeUtc,
-      days: null,
-      note: "Fuera de la escala proyectada",
+      note: item.migrationCompatibilityPct === null
+        ? "Dentro de la proyección"
+        : `${item.migrationCompatibilityPct.toFixed(0)}% de compatibilidad estadística`,
     };
   }
   return null;
@@ -53,6 +59,7 @@ export function ProjectionHistoryPanel() {
   const [data, setData] = useState<ProjectionHistoryResponse | null>(null);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<ProjectionHistoryStatus | "all">("all");
+  const [model, setModel] = useState<ProjectionHistoryModel | "all">("all");
   const [country, setCountry] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
@@ -75,7 +82,7 @@ export function ProjectionHistoryPanel() {
       setLoading(true);
       try {
         const params = new URLSearchParams({
-          page: String(page), status, country, search, from, to, _: String(Date.now()),
+          page: String(page), status, model, country, search, from, to, _: String(Date.now()),
         });
         const response = await fetch(`/api/migration/projections?${params}`, {
           cache: "no-store",
@@ -94,7 +101,7 @@ export function ProjectionHistoryPanel() {
     }
     void load();
     return () => controller.abort();
-  }, [country, from, page, search, status, to]);
+  }, [country, from, model, page, search, status, to]);
 
   const showing = useMemo(() => {
     if (!data?.total) return "0 resultados";
@@ -106,6 +113,7 @@ export function ProjectionHistoryPanel() {
   function resetFilters() {
     setPage(1);
     setStatus("all");
+    setModel("all");
     setCountry("");
     setSearchDraft("");
     setSearch("");
@@ -122,9 +130,9 @@ export function ProjectionHistoryPanel() {
     <main className="projection-history-page">
       <header className="projection-history-head">
         <div>
-          <span className="eyebrow">Registro y resultados</span>
+          <span className="eyebrow">Registro canónico y resultados</span>
           <h1>Historial de proyecciones</h1>
-          <p>Tabla completa de proyecciones, ventanas de vigilancia, eventos precedentes y resultados observados. La primera página muestra los 30 registros más recientes.</p>
+          <p>Una sola trazabilidad para migración estadística y ETAS regional: emisión, ventana, estado, señal sobre la línea base y resultado observado.</p>
         </div>
         <div className="projection-history-total">
           <span>Resultados filtrados</span>
@@ -146,13 +154,22 @@ export function ProjectionHistoryPanel() {
       <section className="panel projection-history-filters" aria-label="Filtros de proyecciones">
         <label className="projection-search-field">
           <span>Buscar</span>
-          <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="País, zona, lugar o ID" />
+          <input type="search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="País, zona, lugar, modelo o ID" />
         </label>
         <label>
           <span>Estado</span>
           <select value={status} onChange={(event) => selectStatus(event.target.value as ProjectionHistoryStatus | "all")}>
             <option value="all">Todos</option>
             {(Object.keys(STATUS_LABELS) as ProjectionHistoryStatus[]).map((key) => <option key={key} value={key}>{STATUS_LABELS[key]}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Modelo</span>
+          <select value={model} onChange={(event) => { setPage(1); setModel(event.target.value as ProjectionHistoryModel | "all"); }}>
+            <option value="all">Todos los modelos</option>
+            {(Object.keys(MODEL_LABELS) as ProjectionHistoryModel[]).map((key) => (
+              <option key={key} value={key}>{MODEL_LABELS[key]} ({data?.modelCounts[key] ?? 0})</option>
+            ))}
           </select>
         </label>
         <label>
@@ -174,6 +191,7 @@ export function ProjectionHistoryPanel() {
       </section>
 
       {error && <div className="warning-banner projection-history-error">{error}</div>}
+      {!error && data?.message && <div className="quality-warning">{data.message}</div>}
 
       <section className="panel projection-history-list">
         <div className="projection-history-list-head">
@@ -185,19 +203,20 @@ export function ProjectionHistoryPanel() {
           <table className="projection-history-table projection-history-table-expanded">
             <thead>
               <tr>
-                <th>Estado</th><th>Generada</th><th>País</th><th>Zona</th>
-                <th>Prob.</th><th>Base</th><th>Dif.</th><th>Conf.</th>
+                <th>Estado</th><th>Modelo</th><th>Generada</th><th>País</th><th>Zona</th>
+                <th>Prob.</th><th>Base</th><th>Exceso</th><th>Conf.</th>
                 <th>Escala</th><th>Ventana</th><th>Evento precedente</th>
                 <th>M origen</th><th>Fecha origen</th><th>Prof. origen</th>
-                <th>Evidencia</th><th>Resultado</th><th>Evento observado</th>
+                <th>Evidencia</th><th>Evaluación</th><th>Evento compatible</th>
               </tr>
             </thead>
             <tbody>
               {(data?.items ?? []).map((item) => {
                 const observed = observedEvent(item);
                 return (
-                  <tr key={item.id}>
+                  <tr key={`${item.modelType}:${item.id}`}>
                     <td><span className={`projection-status-badge ${item.status}`}>{STATUS_LABELS[item.status]}</span></td>
+                    <td><strong>{MODEL_LABELS[item.modelType]}</strong><small>{item.modelVersionId}</small></td>
                     <td><strong>{formatDate(item.generatedAt, true)}</strong><small>{item.id}</small></td>
                     <td><strong>{item.countryName}</strong><small>{item.countryCode}</small></td>
                     <td><span>{item.zoneName}</span></td>
@@ -211,20 +230,28 @@ export function ProjectionHistoryPanel() {
                     <td><strong>M{item.sourceEvent.magnitude.toFixed(1)}</strong></td>
                     <td><strong>{formatDate(item.sourceEvent.time, true)}</strong></td>
                     <td><strong>{item.sourceEvent.depthKm.toFixed(1)} km</strong></td>
-                    <td><strong>{item.analogHits} análogos</strong><span>{item.controlHits} controles</span><small>Mediana {item.medianLeadDays?.toFixed(1) ?? "—"} días</small></td>
                     <td>
-                      <strong>{STATUS_LABELS[item.status]}</strong>
-                      {item.outcome && <span>{item.outcome.eventCount} dentro del rango</span>}
-                      {item.outcome?.outsideRangeEventCount ? <small>{item.outcome.outsideRangeEventCount} fuera del rango</small> : null}
+                      {item.modelType === "statistical_migration" ? (
+                        <><strong>{item.analogHits} análogos</strong><span>{item.controlHits} controles</span><small>Mediana {item.medianLeadDays?.toFixed(1) ?? "—"} días</small></>
+                      ) : (
+                        <><strong>Exceso ETAS {signed(item.liftPct)} pp</strong><span>Fondo {item.baselinePct.toFixed(0)}%</span><small>Registro persistente</small></>
+                      )}
                     </td>
                     <td>
-                      {observed ? <><strong>M{observed.magnitude.toFixed(1)} · {observed.place}</strong><span>{formatDate(observed.time, true)}</span><small>{observed.note}{observed.days !== null && observed.days !== undefined ? ` · ${observed.days.toFixed(1)} días` : ""}</small></> : <span>Sin evento registrado</span>}
+                      <strong>{ASSOCIATION_LABELS[item.associationClass] ?? item.associationClass}</strong>
+                      {item.migrationCompatibilityPct !== null && <span>{item.migrationCompatibilityPct.toFixed(0)}% de compatibilidad</span>}
+                      {item.outcome?.possibleAssociationCount ? <small>{item.outcome.possibleAssociationCount} asociación posible</small> : null}
+                      {item.outcome?.backgroundCandidateCount ? <small>{item.outcome.backgroundCandidateCount} candidato de fondo</small> : null}
+                      {item.outcome?.outOfScaleEventCount ? <small>{item.outcome.outOfScaleEventCount} eventos fuera de escala ignorados</small> : null}
+                    </td>
+                    <td>
+                      {observed ? <><strong>M{observed.magnitude.toFixed(1)} · {observed.place}</strong><span>{formatDate(observed.time, true)}</span><small>{observed.note}{observed.days !== null && observed.days !== undefined ? ` · ${observed.days.toFixed(1)} días` : ""}</small></> : <span>Sin evento migratorio confirmado</span>}
                     </td>
                   </tr>
                 );
               })}
-              {!loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">No hay proyecciones que coincidan con los filtros.</td></tr>}
-              {loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">Cargando las últimas proyecciones…</td></tr>}
+              {!loading && !data?.items.length && <tr><td colSpan={18} className="projection-history-empty">No hay proyecciones que coincidan con los filtros.</td></tr>}
+              {loading && !data?.items.length && <tr><td colSpan={18} className="projection-history-empty">Cargando las últimas proyecciones…</td></tr>}
             </tbody>
           </table>
         </div>
@@ -237,7 +264,7 @@ export function ProjectionHistoryPanel() {
       </section>
 
       <footer className="projection-history-note">
-        “Cumplida fuera de rango” indica que hubo actividad en el área y dentro de la ventana temporal, pero su magnitud quedó fuera de la escala proyectada.
+        Los sismos fuera del tiempo, zona o escala proyectados se consideran actividad independiente. No convierten una proyección en acierto ni añaden una penalización especial; el resultado depende de si apareció migración estadísticamente compatible dentro de la ventana.
       </footer>
     </main>
   );
