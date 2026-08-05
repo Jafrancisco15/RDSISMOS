@@ -3,10 +3,13 @@ import type {
   CountryTarget,
   EtasModelParameters,
   MigrationProjection,
+  ProjectionAssociationClass,
   SeismicEvent,
 } from "./types";
 
 const DAY_MS = 86_400_000;
+const ETAS_COMPATIBLE_THRESHOLD = 55;
+const ETAS_POSSIBLE_THRESHOLD = 30;
 
 const BASE_PARAMETERS = {
   productivityK: 0.005,
@@ -53,6 +56,7 @@ function estimateMagnitudeCompleteness(
 }
 
 function integratedOmori(t0: number, t1: number, c: number, p: number) {
+  if (t1 <= t0) return 0;
   if (Math.abs(p - 1) < 0.0001) return Math.log((t1 + c) / (t0 + c));
   return (
     (Math.pow(t1 + c, 1 - p) - Math.pow(t0 + c, 1 - p)) /
@@ -90,39 +94,38 @@ function projectedPoint(source: SeismicEvent, target: CountryTarget) {
   };
 }
 
-function matchesProjection(
-  event: SeismicEvent,
-  projection: {
-    source: SeismicEvent;
-    expiresAt: Date;
-    projectedLatitude: number;
-    projectedLongitude: number;
-    projectedRadiusKm: number;
-    magnitudeMin: number;
-    magnitudeMax: number;
-    target: CountryTarget;
-  },
+function backgroundExpectedCount(
+  events: SeismicEvent[],
+  sourceEvent: SeismicEvent,
+  center: { latitude: number; longitude: number },
+  radiusKm: number,
+  magnitudeMin: number,
+  forecastDays: number,
 ) {
-  const time = new Date(event.time).getTime();
-  return (
-    event.id !== projection.source.id &&
-    time > new Date(projection.source.time).getTime() &&
-    time <= projection.expiresAt.getTime() &&
-    event.magnitude >= projection.magnitudeMin &&
-    event.magnitude <= projection.magnitudeMax &&
-    haversineKm(
-      event.latitude,
-      event.longitude,
-      projection.target.latitude,
-      projection.target.longitude,
-    ) <= projection.target.radiusKm + 350 &&
-    haversineKm(
-      event.latitude,
-      event.longitude,
-      projection.projectedLatitude,
-      projection.projectedLongitude,
-    ) <= projection.projectedRadiusKm + 220
+  const sourceTime = Date.parse(sourceEvent.time);
+  const earliestAvailable = events.reduce(
+    (minimum, event) => Math.min(minimum, Date.parse(event.time)),
+    sourceTime - 90 * DAY_MS,
   );
+  const lookbackStart = Math.max(sourceTime - 90 * DAY_MS, earliestAvailable);
+  const lookbackDays = Math.max(7, (sourceTime - lookbackStart) / DAY_MS);
+  const count = events.filter((event) => {
+    const time = Date.parse(event.time);
+    return event.id !== sourceEvent.id
+      && time >= lookbackStart
+      && time < sourceTime
+      && event.magnitude >= magnitudeMin
+      && haversineKm(event.latitude, event.longitude, center.latitude, center.longitude) <= radiusKm;
+  }).length;
+
+  // Jeffreys-style half-event smoothing prevents an empty short catalogue from
+  // being interpreted as proof that the background rate is exactly zero.
+  const ratePerDay = (count + 0.5) / (lookbackDays + 1);
+  return Math.max(0, ratePerDay * forecastDays);
+}
+
+function probabilityFromExpectedCount(expectedCount: number) {
+  return clamp((1 - Math.exp(-Math.max(0, expectedCount))) * 100, 0, 99);
 }
 
 function buildProjection(
@@ -148,10 +151,10 @@ function buildProjection(
   if (distanceToTarget > target.radiusKm + projectedRadiusKm + 900) return null;
 
   const maxDays = clamp(Math.round(7 + (sourceEvent.magnitude - 5) * 2), 5, 14);
-  const startTime = new Date(sourceEvent.time);
-  const expiresAt = new Date(startTime.getTime() + maxDays * DAY_MS);
+  const sourceTime = new Date(sourceEvent.time);
+  const expiresAt = new Date(sourceTime.getTime() + maxDays * DAY_MS);
   const currentAge = ageDays(sourceEvent, generatedAt);
-  const endAge = currentAge + maxDays;
+  if (generatedAt.getTime() >= expiresAt.getTime() || currentAge >= maxDays) return null;
 
   const magnitudeMin = Number(
     Math.max(magnitudeCompleteness, sourceEvent.magnitude - 1.8).toFixed(1),
@@ -165,7 +168,7 @@ function buildProjection(
     );
   const temporalWeight = integratedOmori(
     currentAge,
-    endAge,
+    maxDays,
     BASE_PARAMETERS.omoriC,
     BASE_PARAMETERS.omoriP,
   );
@@ -179,74 +182,154 @@ function buildProjection(
     -BASE_PARAMETERS.gutenbergRichterB *
       Math.max(0, magnitudeMin - magnitudeCompleteness),
   );
-  const expectedCount = clamp(
+  const triggeredExpectedCount = clamp(
     productivity * temporalWeight * spatialWeight * magnitudeWeight,
     0,
     3,
   );
-  const probabilityPct = Math.round(
-    clamp((1 - Math.exp(-expectedCount)) * 100, 1, 95),
-  );
 
   const center = projectedPoint(sourceEvent, target);
-  const match = events
-    .filter((event) =>
-      matchesProjection(event, {
-        source: sourceEvent,
-        expiresAt,
-        projectedLatitude: center.latitude,
-        projectedLongitude: center.longitude,
-        projectedRadiusKm,
-        magnitudeMin,
-        magnitudeMax,
-        target,
-      }),
-    )
-    .sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime())[0];
-
-  const status = match
-    ? "fulfilled"
-    : generatedAt.getTime() > expiresAt.getTime()
-      ? "expired"
-      : "active";
+  const projectedZoneRadius = Math.min(projectedRadiusKm, target.radiusKm + 250);
+  const expectedBackground = backgroundExpectedCount(
+    events,
+    sourceEvent,
+    center,
+    projectedZoneRadius,
+    magnitudeMin,
+    Math.max(1, (expiresAt.getTime() - generatedAt.getTime()) / DAY_MS),
+  );
+  const totalProbability = probabilityFromExpectedCount(triggeredExpectedCount + expectedBackground);
+  const baselineProbability = probabilityFromExpectedCount(expectedBackground);
+  const excessProbability = Math.max(0, totalProbability - baselineProbability);
 
   const model: EtasModelParameters = {
-    modelName: "ETAS espacio-tiempo simplificado",
+    modelName: "ETAS espacio-tiempo simplificado con tasa de fondo",
     magnitudeCompleteness,
     ...BASE_PARAMETERS,
     calibration:
-      "Parámetros generales iniciales; aún no calibrados específicamente para este país.",
+      "Parámetros generales iniciales; la compatibilidad separa estadísticamente señal ETAS y tasa sísmica de fondo, sin afirmar causalidad física.",
   };
 
   return {
     id: `etas-${target.code}-${sourceEvent.id}`,
     parentEventId: sourceEvent.id,
-    status,
+    status: "active",
+    associationClass: "none",
     sourceEvent,
     sourceRegionName: sourceEvent.place,
     targetCountry: target,
     projectedZone: {
       latitude: center.latitude,
       longitude: center.longitude,
-      radiusKm: Math.min(projectedRadiusKm, target.radiusKm + 250),
+      radiusKm: projectedZoneRadius,
       name: `Zona ETAS asociada a M${sourceEvent.magnitude.toFixed(1)} para ${target.name}`,
     },
-    startTime: startTime.toISOString(),
+    // A forecast starts when it is issued, never retroactively at the parent event.
+    startTime: generatedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
     maxDays,
     magnitudeMin,
     magnitudeMax,
-    probabilityPct,
-    expectedCount: Number(expectedCount.toFixed(3)),
-    matchedEvent: match ?? null,
+    probabilityPct: Math.round(totalProbability),
+    backgroundProbabilityPct: Math.round(baselineProbability),
+    excessProbabilityPct: Math.round(excessProbability),
+    expectedCount: Number(triggeredExpectedCount.toFixed(3)),
+    backgroundExpectedCount: Number(expectedBackground.toFixed(3)),
+    migrationCompatibilityPct: null,
+    matchedEvent: null,
     model,
     rationale: [
       `Evento padre M${sourceEvent.magnitude.toFixed(1)} a ${Math.round(distanceToTarget)} km del centro de análisis.`,
+      `La probabilidad total se separa en tasa de fondo (${Math.round(baselineProbability)}%) y exceso ETAS (${Math.round(excessProbability)} pp).`,
       `Productividad ETAS: K·exp[α(M−Mc)], con Mc=${magnitudeCompleteness.toFixed(1)}.`,
-      `Decaimiento temporal según Omori–Utsu, p=${BASE_PARAMETERS.omoriP.toFixed(1)}, durante ${maxDays} días.`,
-      `Decaimiento espacial q=${BASE_PARAMETERS.spatialQ.toFixed(1)}; no se aceptan rutas mundiales sin solapamiento regional.`,
-      `Rango de magnitud derivado de Gutenberg–Richter, b=${BASE_PARAMETERS.gutenbergRichterB.toFixed(1)}.`,
+      `Decaimiento temporal Omori–Utsu p=${BASE_PARAMETERS.omoriP.toFixed(1)} hasta ${expiresAt.toISOString().slice(0, 10)}.`,
+      `Un sismo externo a la zona o a la escala se trata como actividad independiente y no como error del modelo.`,
     ],
+  };
+}
+
+export interface EtasAssociationResult {
+  geometricallyCompatible: boolean;
+  migrationCompatibilityPct: number;
+  associationClass: ProjectionAssociationClass;
+}
+
+/**
+ * Estimates whether an observed event is statistically more compatible with the
+ * ETAS excess intensity than with the local background rate. This is an
+ * association score, not proof of physical causation.
+ */
+export function classifyEtasAssociation(
+  event: SeismicEvent,
+  projection: MigrationProjection,
+): EtasAssociationResult {
+  const eventTime = Date.parse(event.time);
+  const sourceTime = Date.parse(projection.sourceEvent.time);
+  const geometricallyCompatible = event.id !== projection.sourceEvent.id
+    && eventTime >= Date.parse(projection.startTime)
+    && eventTime <= Date.parse(projection.expiresAt)
+    && event.magnitude >= projection.magnitudeMin
+    && event.magnitude <= projection.magnitudeMax
+    && haversineKm(
+      event.latitude,
+      event.longitude,
+      projection.targetCountry.latitude,
+      projection.targetCountry.longitude,
+    ) <= projection.targetCountry.radiusKm
+    && haversineKm(
+      event.latitude,
+      event.longitude,
+      projection.projectedZone.latitude,
+      projection.projectedZone.longitude,
+    ) <= projection.projectedZone.radiusKm;
+
+  if (!geometricallyCompatible) {
+    return {
+      geometricallyCompatible: false,
+      migrationCompatibilityPct: 0,
+      associationClass: "none",
+    };
+  }
+
+  const age = Math.max(0, (eventTime - sourceTime) / DAY_MS);
+  const distance = haversineKm(
+    event.latitude,
+    event.longitude,
+    projection.projectedZone.latitude,
+    projection.projectedZone.longitude,
+  );
+  const productivity = projection.model.productivityK * Math.exp(
+    projection.model.productivityAlpha
+      * (projection.sourceEvent.magnitude - projection.model.magnitudeCompleteness),
+  );
+  const temporalIntensity = productivity * Math.pow(age + projection.model.omoriC, -projection.model.omoriP);
+  const spatialIntensity = Math.pow(
+    1 + distance / (projection.projectedZone.radiusKm + 80),
+    -projection.model.spatialQ,
+  );
+  const magnitudeIntensity = Math.pow(
+    10,
+    -projection.model.gutenbergRichterB
+      * Math.max(0, event.magnitude - projection.magnitudeMin),
+  );
+  const triggeredIntensity = Math.max(0, temporalIntensity * spatialIntensity * magnitudeIntensity);
+  const remainingDays = Math.max(1, (Date.parse(projection.expiresAt) - Date.parse(projection.startTime)) / DAY_MS);
+  const backgroundIntensity = Math.max(0.001, projection.backgroundExpectedCount / remainingDays);
+  const migrationCompatibilityPct = Math.round(clamp(
+    triggeredIntensity / (triggeredIntensity + backgroundIntensity) * 100,
+    0,
+    100,
+  ));
+  const associationClass: ProjectionAssociationClass = migrationCompatibilityPct >= ETAS_COMPATIBLE_THRESHOLD
+    ? "migration_compatible"
+    : migrationCompatibilityPct >= ETAS_POSSIBLE_THRESHOLD
+      ? "possible_association"
+      : "background_likely";
+
+  return {
+    geometricallyCompatible: true,
+    migrationCompatibilityPct,
+    associationClass,
   };
 }
 
@@ -254,6 +337,7 @@ export function generateMigrationProjections(
   events: SeismicEvent[],
   target: CountryTarget,
   generatedAt = new Date(),
+  limit = 12,
 ): MigrationProjection[] {
   const magnitudeCompleteness = estimateMagnitudeCompleteness(events, target);
   const minimumParentMagnitude = Math.max(4.2, magnitudeCompleteness + 0.7);
@@ -280,7 +364,6 @@ export function generateMigrationProjections(
       return new Date(b.time).getTime() - new Date(a.time).getTime();
     });
 
-  const statusOrder = { active: 0, fulfilled: 1, expired: 2 } as const;
   return parentEvents
     .map((event) =>
       buildProjection(
@@ -293,11 +376,9 @@ export function generateMigrationProjections(
     )
     .filter((projection): projection is MigrationProjection => Boolean(projection))
     .sort((a, b) => {
-      const statusDifference = statusOrder[a.status] - statusOrder[b.status];
-      if (statusDifference !== 0) return statusDifference;
-      const probabilityDifference = b.probabilityPct - a.probabilityPct;
+      const probabilityDifference = b.excessProbabilityPct - a.excessProbabilityPct;
       if (probabilityDifference !== 0) return probabilityDifference;
-      return new Date(b.startTime).getTime() - new Date(a.startTime).getTime();
+      return new Date(b.sourceEvent.time).getTime() - new Date(a.sourceEvent.time).getTime();
     })
-    .slice(0, 12);
+    .slice(0, Math.max(1, limit));
 }
