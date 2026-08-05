@@ -32,6 +32,10 @@ export interface SeismicEvent {
   detailUrl?: string;
   regionId?: string;
   isTargetRegion?: boolean;
+  /** Number of additional provider reports absorbed into this canonical event. */
+  duplicateReports?: number;
+  /** Provider identifiers retained for traceability but never rendered separately. */
+  sourceAliases?: Array<{ source: EventSource; id: string }>;
 }
 
 export interface WatchedRegion {
@@ -45,6 +49,11 @@ export interface WatchedRegion {
 
 export type AlertLevel = "green" | "yellow" | "orange" | "red";
 export type ProjectionStatus = "active" | "fulfilled" | "expired";
+export type ProjectionAssociationClass =
+  | "none"
+  | "migration_compatible"
+  | "possible_association"
+  | "background_likely";
 
 export interface EtasModelParameters {
   modelName: string;
@@ -69,6 +78,7 @@ export interface MigrationProjection {
   id: string;
   parentEventId: string;
   status: ProjectionStatus;
+  associationClass: ProjectionAssociationClass;
   sourceEvent: SeismicEvent;
   sourceRegionName: string;
   targetCountry: CountryTarget;
@@ -79,7 +89,11 @@ export interface MigrationProjection {
   magnitudeMin: number;
   magnitudeMax: number;
   probabilityPct: number;
+  backgroundProbabilityPct: number;
+  excessProbabilityPct: number;
   expectedCount: number;
+  backgroundExpectedCount: number;
+  migrationCompatibilityPct: number | null;
   matchedEvent: SeismicEvent | null;
   model: EtasModelParameters;
   rationale: string[];
