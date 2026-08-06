@@ -59,8 +59,12 @@ function downloadHeaders(filename: string, contentType: string) {
 function toCsv(events: EarthquakeEvent[]) {
   const fields: Array<keyof EarthquakeEvent> = [
     "id", "sourceCatalog", "timeUtc", "updatedUtc", "place", "countryOrRegion",
-    "magnitude", "magnitudeType", "depthKm", "latitude", "longitude", "network",
-    "status", "eventType", "sourceUrl",
+    "magnitude", "magnitudeType", "magnitudeMw", "magnitudeNormalizationMethod",
+    "magnitudeNormalizationUncertainty", "depthKm", "latitude", "longitude",
+    "receiverZoneId", "receiverZoneName", "tectonicRegime", "receiverZoneConfidence",
+    "sequenceClassification", "sequenceAssociationScorePct", "backgroundScorePct",
+    "parentCandidateId", "parentLagDays", "parentDistanceKm", "network", "status",
+    "eventType", "sourceUrl",
   ];
   const quote = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
   return "\uFEFF" + fields.join(",") + "\n"

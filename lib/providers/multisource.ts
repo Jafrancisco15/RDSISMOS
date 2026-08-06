@@ -1,10 +1,11 @@
 import type { CatalogProvider, CountryTarget, SeismicEvent } from "../types";
+import { enrichSeismicEvents } from "../seismology/seismicEventEnrichment";
 import { deduplicateProviderEvents } from "./eventDedupe";
 import { fetchEmscEvents } from "./emsc";
 import { fetchSeismicCatalog } from "./raspberryShake";
 
 export function mergeProviderEvents(events: SeismicEvent[]) {
-  return deduplicateProviderEvents(events);
+  return enrichSeismicEvents(deduplicateProviderEvents(events));
 }
 
 function providerName(baseProvider: CatalogProvider, emscAvailable: boolean): CatalogProvider {
@@ -59,6 +60,7 @@ export async function fetchExpandedSeismicCatalog(
       ? `EMSC SeismicPortal global: ${emscEvents.length} reportes M${minimumEmscMagnitude.toFixed(1)}+`
       : `EMSC SeismicPortal: no disponible (${emscResult.reason instanceof Error ? emscResult.reason.message : "error"})`,
     `Consolidación multifuente: ${events.length} eventos únicos; ${duplicateReports} reportes duplicados absorbidos`,
+    "Base híbrida v1: Mw normalizada cuando es válido, corredor tectónico y puntuación causal experimental",
   ];
   const warnings = [
     base?.warning,

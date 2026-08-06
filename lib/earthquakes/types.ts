@@ -19,6 +19,18 @@ export interface EarthquakeFilters {
   offset: number;
 }
 
+export type TectonicRegime =
+  | "subduction"
+  | "strike_slip"
+  | "rift_normal"
+  | "collision"
+  | "mixed";
+
+export type SequenceClassification =
+  | "sequence_likely"
+  | "ambiguous"
+  | "background_likely";
+
 export interface EarthquakeEvent {
   id: string;
   externalId: string;
@@ -46,6 +58,33 @@ export interface EarthquakeEvent {
   magnitudeError?: number;
   magnitudeStationCount?: number;
   sourceUrl?: string;
+
+  /** Homogenized Mw estimate when a reported Mw or supported conversion exists. */
+  magnitudeMw?: number | null;
+  magnitudeNormalizationMethod?: string;
+  magnitudeNormalizationUncertainty?: number | null;
+  magnitudeNormalizationWithinRange?: boolean;
+
+  /** Coarse tectonic receiver corridor; not yet an individual mapped fault. */
+  receiverZoneId?: string;
+  receiverZoneName?: string;
+  tectonicRegime?: TectonicRegime;
+  receiverZoneDistanceKm?: number;
+  receiverZoneInsideCore?: boolean;
+  receiverZoneConfidence?: "high" | "medium" | "low";
+
+  /** Experimental causal nearest-neighbour sequence features. */
+  parentCandidateId?: string | null;
+  parentCandidateTime?: string | null;
+  parentCandidateMagnitudeMw?: number | null;
+  parentDistanceKm?: number | null;
+  parentLagDays?: number | null;
+  nearestNeighborLogEta?: number | null;
+  sequenceAssociationScorePct?: number;
+  backgroundScorePct?: number;
+  sequenceClassification?: SequenceClassification;
+  sequenceMethod?: "nearest_neighbor_proxy_v1";
+  sequenceScoreCalibrated?: false;
 }
 
 export interface EarthquakePage {

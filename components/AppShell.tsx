@@ -5,6 +5,7 @@ import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
 import { HistoricalBacktestPanel } from "./HistoricalBacktestPanel";
+import { HybridModelFoundationPanel } from "./HybridModelFoundationPanel";
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
@@ -24,6 +25,7 @@ export function AppShell() {
       {tab === "globe" && <SeismicGlobe3D />}
       {tab === "projection" && (
         <>
+          <HybridModelFoundationPanel />
           <div className="learning-panel-wrap"><LearningStatusPanel /></div>
           <div className="unified-projection-intro">
             <div className="quality-warning">
