@@ -2,6 +2,7 @@ import { COUNTRIES } from "@/lib/countries";
 import { haversineKm } from "@/lib/regions";
 import type { SeismicEvent } from "@/lib/types";
 import { fetchExpandedSeismicCatalog } from "@/lib/providers/multisource";
+import { enrichEarthquakeEvents } from "./enrichment";
 import { queryAllPartitioned, queryEarthquakes } from "./usgs";
 import type { EarthquakeEvent, EarthquakeFilters, EarthquakePage } from "./types";
 
@@ -105,15 +106,19 @@ async function loadRecentMultisource(filters: EarthquakeFilters) {
     target,
     providerMin,
   );
-  const events = sortEvents(
-    catalog.events.map(toEarthquakeEvent).filter((event) => eventMatches(event, spatialFilters)),
-    filters.orderBy,
-  );
+  const canonical = catalog.events.map(toEarthquakeEvent).filter((event) => eventMatches(event, spatialFilters));
+  const events = sortEvents(enrichEarthquakeEvents(canonical), filters.orderBy);
   return {
     events,
     provider: catalog.provider,
-    providerStatus: catalog.providerStatus,
-    warnings: catalog.warning ? [catalog.warning] : [],
+    providerStatus: [
+      ...catalog.providerStatus,
+      "Enriquecimiento híbrido v1: Mw transparente, corredor tectónico y asociación causal experimental",
+    ],
+    warnings: [
+      ...(catalog.warning ? [catalog.warning] : []),
+      "Los porcentajes fondo/secuencia son puntuaciones experimentales no calibradas y todavía no intervienen en el pronóstico operacional.",
+    ],
   };
 }
 
@@ -134,7 +139,8 @@ async function loadAllUsgs(filters: EarthquakeFilters, maximum: number, signal?:
     },
     signal,
   );
-  return sortEvents(events.filter((event) => eventMatches(event, spatialFilters)), filters.orderBy);
+  const filtered = events.filter((event) => eventMatches(event, spatialFilters));
+  return sortEvents(enrichEarthquakeEvents(filtered), filters.orderBy);
 }
 
 function validateSourceAndReview(filters: EarthquakeFilters, source?: string) {
@@ -183,18 +189,26 @@ export async function queryEarthquakeCatalog(filters: EarthquakeFilters, signal?
       hasMore: start + pageEvents.length < events.length,
       generatedAt: new Date().toISOString(),
       provider: "USGS ComCat",
-      providerStatus: ["USGS ComCat histórico"],
-      warnings: [],
+      providerStatus: [
+        "USGS ComCat histórico",
+        "Enriquecimiento híbrido v1: Mw transparente, corredor tectónico y asociación causal experimental",
+      ],
+      warnings: ["Los porcentajes fondo/secuencia son puntuaciones experimentales no calibradas y todavía no intervienen en el pronóstico operacional."],
       catalogMode: "historical-usgs",
     };
   }
 
   const page = await queryEarthquakes(spatialFilters, signal);
+  const enriched = enrichEarthquakeEvents(page.events);
   return {
     ...page,
+    events: enriched,
     provider: "USGS ComCat",
-    providerStatus: [filters.reviewedOnly ? "USGS ComCat · solo revisados" : "USGS ComCat histórico"],
-    warnings: [],
+    providerStatus: [
+      filters.reviewedOnly ? "USGS ComCat · solo revisados" : "USGS ComCat histórico",
+      "Enriquecimiento híbrido v1: Mw transparente, corredor tectónico y asociación causal experimental",
+    ],
+    warnings: ["La asociación causal se calcula dentro de la página devuelta cuando no se realiza un escaneo histórico completo."],
     catalogMode: "historical-usgs",
   };
 }
