@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
 import { queryEarthquakeCatalogAll } from "@/lib/earthquakes/catalog";
-import type { EarthquakeFilters } from "@/lib/earthquakes/types";
+import type {
+  EarthquakeEvent,
+  EarthquakeFilters,
+  TectonicRegime,
+} from "@/lib/earthquakes/types";
 import {
   buildSequenceCalibrationSamples,
   calibrateSequenceAssociationByRegime,
@@ -13,13 +17,33 @@ const MODEL_VERSION = "sequence-calibration-lab-v1";
 const DEFAULT_LOOKBACK_DAYS = 365;
 const DEFAULT_MINIMUM_MAGNITUDE = 4.5;
 const DEFAULT_MAX_EVENTS = 8_000;
+const MAX_SCAN_EVENTS = 20_000;
+const MIN_REGIME_SAMPLE = 25;
+const TECTONIC_REGIMES: TectonicRegime[] = [
+  "subduction",
+  "strike_slip",
+  "rift_normal",
+  "collision",
+  "mixed",
+];
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type RegimeCounts = Partial<Record<TectonicRegime, number>>;
 
 export interface SequenceCalibrationLabOptions {
   lookbackDays?: number;
   minimumMagnitude?: number;
   maxEvents?: number;
+}
+
+export interface SequenceCalibrationSampling {
+  applied: boolean;
+  method: "none" | "chronological_regime_stratified_v1";
+  available: number;
+  requested: number;
+  selected: number;
+  regimeCountsAvailable: RegimeCounts;
+  regimeCountsSelected: RegimeCounts;
 }
 
 export interface SequenceCalibrationLabResult {
@@ -37,8 +61,10 @@ export interface SequenceCalibrationLabResult {
     minimumMagnitude: number;
     maxEvents: number;
   };
+  eventsAvailable: number;
   eventsLoaded: number;
   samplesBuilt: number;
+  sampling: SequenceCalibrationSampling;
   calibration: SequenceCalibrationResult;
   interpretation: string[];
 }
@@ -54,6 +80,131 @@ function numeric(value: unknown, fallback: number) {
 
 function toJsonValue(value: unknown): JsonValue {
   return JSON.parse(JSON.stringify(value)) as JsonValue;
+}
+
+function regimeOf(event: EarthquakeEvent): TectonicRegime {
+  return event.tectonicRegime ?? "mixed";
+}
+
+function regimeCounts(events: EarthquakeEvent[]) {
+  const counts: RegimeCounts = {};
+  for (const event of events) {
+    const regime = regimeOf(event);
+    counts[regime] = (counts[regime] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function chronologicalUniformSample(events: EarthquakeEvent[], count: number) {
+  if (count <= 0) return [];
+  const ordered = [...events].sort((a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc));
+  if (count >= ordered.length) return ordered;
+
+  return Array.from({ length: count }, (_, index) => {
+    const position = Math.min(
+      ordered.length - 1,
+      Math.floor(((index + 0.5) * ordered.length) / count),
+    );
+    return ordered[position];
+  });
+}
+
+/**
+ * Selects a deterministic chronological sample while preserving all tectonic
+ * regimes represented in the scan. The sample is used only by the isolated
+ * calibration laboratory and never changes the operational catalog.
+ */
+export function sampleCalibrationEvents(
+  events: EarthquakeEvent[],
+  maximum: number,
+): { events: EarthquakeEvent[]; sampling: SequenceCalibrationSampling } {
+  const ordered = [...events].sort((a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc));
+  const requested = Math.max(1, Math.trunc(maximum));
+  const availableCounts = regimeCounts(ordered);
+
+  if (ordered.length <= requested) {
+    return {
+      events: ordered,
+      sampling: {
+        applied: false,
+        method: "none",
+        available: ordered.length,
+        requested,
+        selected: ordered.length,
+        regimeCountsAvailable: availableCounts,
+        regimeCountsSelected: availableCounts,
+      },
+    };
+  }
+
+  const groups = new Map<TectonicRegime, EarthquakeEvent[]>();
+  for (const regime of TECTONIC_REGIMES) groups.set(regime, []);
+  for (const event of ordered) groups.get(regimeOf(event))!.push(event);
+  const represented = TECTONIC_REGIMES.filter((regime) => groups.get(regime)!.length > 0);
+  const minimumPerRegime = requested >= represented.length * MIN_REGIME_SAMPLE
+    ? MIN_REGIME_SAMPLE
+    : 0;
+  const allocations = new Map<TectonicRegime, number>();
+
+  let allocated = 0;
+  for (const regime of represented) {
+    const base = Math.min(groups.get(regime)!.length, minimumPerRegime);
+    allocations.set(regime, base);
+    allocated += base;
+  }
+
+  let remaining = requested - allocated;
+  const residualTotal = represented.reduce(
+    (sum, regime) => sum + Math.max(0, groups.get(regime)!.length - (allocations.get(regime) ?? 0)),
+    0,
+  );
+  const remainders: Array<{ regime: TectonicRegime; fraction: number }> = [];
+
+  if (remaining > 0 && residualTotal > 0) {
+    for (const regime of represented) {
+      const residual = Math.max(0, groups.get(regime)!.length - (allocations.get(regime) ?? 0));
+      const exact = remaining * residual / residualTotal;
+      const whole = Math.min(residual, Math.floor(exact));
+      allocations.set(regime, (allocations.get(regime) ?? 0) + whole);
+      allocated += whole;
+      remainders.push({ regime, fraction: exact - whole });
+    }
+  }
+
+  remaining = requested - allocated;
+  remainders.sort((a, b) => b.fraction - a.fraction || a.regime.localeCompare(b.regime));
+  while (remaining > 0) {
+    let progressed = false;
+    for (const { regime } of remainders) {
+      const current = allocations.get(regime) ?? 0;
+      if (current >= groups.get(regime)!.length) continue;
+      allocations.set(regime, current + 1);
+      remaining -= 1;
+      progressed = true;
+      if (remaining === 0) break;
+    }
+    if (!progressed) break;
+  }
+
+  const selected = represented
+    .flatMap((regime) => chronologicalUniformSample(
+      groups.get(regime)!,
+      allocations.get(regime) ?? 0,
+    ))
+    .sort((a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc));
+
+  return {
+    events: selected,
+    sampling: {
+      applied: true,
+      method: "chronological_regime_stratified_v1",
+      available: ordered.length,
+      requested,
+      selected: selected.length,
+      regimeCountsAvailable: availableCounts,
+      regimeCountsSelected: regimeCounts(selected),
+    },
+  };
 }
 
 function runId(
@@ -175,7 +326,9 @@ export async function runSequenceCalibrationLab(
     limit: 20_000,
     offset: 1,
   };
-  const events = await queryEarthquakeCatalogAll(filters, maxEvents, signal);
+  const availableEvents = await queryEarthquakeCatalogAll(filters, MAX_SCAN_EVENTS, signal);
+  const sampled = sampleCalibrationEvents(availableEvents, maxEvents);
+  const events = sampled.events;
   const samples = buildSequenceCalibrationSamples(events);
   const calibration = calibrateSequenceAssociationByRegime(samples);
   const result: SequenceCalibrationLabResult = {
@@ -186,12 +339,17 @@ export async function runSequenceCalibrationLab(
     databaseConnected: Boolean(getDb()),
     persisted: false,
     configuration,
+    eventsAvailable: availableEvents.length,
     eventsLoaded: events.length,
     samplesBuilt: samples.length,
+    sampling: sampled.sampling,
     calibration,
     interpretation: [
       "La calibración se ejecuta en un laboratorio separado y no modifica el Mapa 3D, Historial, probabilidades ni estados operacionales.",
       "Cada régimen usa una división cronológica: los eventos iniciales entrenan y los posteriores evalúan, evitando mezclar aleatoriamente pasado y futuro.",
+      sampled.sampling.applied
+        ? `El catálogo contenía ${sampled.sampling.available.toLocaleString()} eventos y se seleccionaron ${sampled.sampling.selected.toLocaleString()} mediante muestreo cronológico estratificado por régimen; no se truncó simplemente el principio o el final del período.`
+        : "La cohorte completa entró dentro del límite solicitado y no necesitó muestreo.",
       "La etiqueta de referencia es un proxy conservador de espacio, tiempo, magnitud y corredor receptor; no demuestra causalidad física.",
       "El Brier skill frente al score crudo indica si la calibración mejora la correspondencia con ese proxy de referencia. Solo resultados repetidos en varias ventanas justificarían promover el modelo.",
       "Los regímenes con pocos ejemplos usan temporalmente el modelo global y quedan marcados como fallback.",
