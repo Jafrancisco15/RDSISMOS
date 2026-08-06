@@ -10,6 +10,7 @@ import "./globe-geology.css";
 import "./projection-history.css";
 import "./catalog-refinement.css";
 import "./hybrid-foundation.css";
+import "./sequence-calibration-lab.css";
 
 export const metadata: Metadata = {
   title: "RDSISMOS | Observatorio experimental",
