@@ -4,6 +4,7 @@ import type { EarthquakeEvent, TectonicRegime } from "@/lib/earthquakes/types";
 import { sampleCalibrationEvents } from "./sequenceCalibrationLab";
 import {
   buildSequenceCalibrationSamples,
+  calculateSequenceCalibrationMetrics,
   calibrateSequenceAssociationByRegime,
   calibratedSequenceProbability,
   fitPlattCalibration,
@@ -59,16 +60,21 @@ function event(
   };
 }
 
-test("chronological split keeps later events exclusively for evaluation", () => {
-  const samples = Array.from({ length: 50 }, (_, index) => sample(
+test("chronological split isolates later events and applies a temporal embargo", () => {
+  const samples = Array.from({ length: 200 }, (_, index) => sample(
     index,
     "subduction",
     index % 2 ? 0.75 : 0.2,
     index % 4 === 0 ? 1 : 0,
   ));
   const split = splitSequenceCalibrationSamples(samples);
-  assert.ok(split.train.length > split.test.length);
-  assert.ok(Date.parse(split.train.at(-1)!.timeUtc) < Date.parse(split.test[0].timeUtc));
+  assert.ok(split.train.length > 0);
+  assert.ok(split.embargo.length > 0);
+  assert.ok(split.test.length > 0);
+  const lastTrain = Date.parse(split.train.at(-1)!.timeUtc);
+  const firstTest = Date.parse(split.test[0].timeUtc);
+  assert.ok(firstTest - lastTrain > 44 * 86_400_000);
+  assert.equal(split.train.length + split.embargo.length + split.test.length, samples.length);
 });
 
 test("fits a bounded monotonic Platt model when both classes are represented", () => {
@@ -87,10 +93,50 @@ test("fits a bounded monotonic Platt model when both classes are represented", (
   assert.ok(high > low && high < 1);
 });
 
-test("uses the global model as an explicit fallback for sparse regimes", () => {
-  const globalSamples = Array.from({ length: 100 }, (_, index) => sample(
+test("reports discrimination, climatology skill and calibration bins", () => {
+  const samples = [
+    sample(0, "mixed", 0.9, 1),
+    sample(1, "mixed", 0.8, 1),
+    sample(2, "mixed", 0.7, 1),
+    sample(3, "mixed", 0.3, 0),
+    sample(4, "mixed", 0.2, 0),
+    sample(5, "mixed", 0.1, 0),
+  ];
+  const metrics = calculateSequenceCalibrationMetrics(
+    samples,
+    (item) => item.rawProbability,
+    0.5,
+  );
+  assert.ok(metrics);
+  assert.equal(metrics!.rocAuc, 1);
+  assert.equal(metrics!.prAuc, 1);
+  assert.ok(metrics!.brierSkillVsClimatology! > 0);
+  assert.ok(metrics!.expectedCalibrationError >= 0);
+  assert.ok(metrics!.calibrationBins.length > 0);
+  assert.equal(metrics!.majorityClassAccuracy, 0.5);
+});
+
+test("does not claim AUC when the evaluation contains only one class", () => {
+  const samples = Array.from({ length: 10 }, (_, index) => sample(
     index,
-    index < 95 ? "subduction" : "collision",
+    "collision",
+    0.1 + index * 0.01,
+    0,
+  ));
+  const metrics = calculateSequenceCalibrationMetrics(
+    samples,
+    (item) => item.rawProbability,
+    0.1,
+  );
+  assert.equal(metrics?.rocAuc, null);
+  assert.equal(metrics?.prAuc, null);
+  assert.equal(metrics?.majorityClassAccuracy, 1);
+});
+
+test("uses the global model as an explicit fallback for sparse regimes", () => {
+  const globalSamples = Array.from({ length: 220 }, (_, index) => sample(
+    index,
+    index < 210 ? "subduction" : "collision",
     index % 4 === 0 ? 0.75 : 0.2,
     index % 4 === 0 ? 1 : 0,
   ));
@@ -98,6 +144,7 @@ test("uses the global model as an explicit fallback for sparse regimes", () => {
   const global = result.regimes.find((item) => item.scope === "global");
   const collision = result.regimes.find((item) => item.scope === "collision");
   assert.ok(global?.model);
+  assert.equal(result.embargoDays, 45);
   assert.equal(collision?.fittedIndependently, false);
   assert.equal(collision?.fallbackScope, "global");
   assert.ok(collision?.model);
