@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { EarthquakeEvent, TectonicRegime } from "@/lib/earthquakes/types";
+import { sampleCalibrationEvents } from "./sequenceCalibrationLab";
 import {
   buildSequenceCalibrationSamples,
   calibrateSequenceAssociationByRegime,
@@ -32,6 +33,7 @@ function event(
   magnitude: number,
   latitude: number,
   longitude: number,
+  regime: TectonicRegime = "mixed",
 ): EarthquakeEvent {
   return {
     id,
@@ -50,10 +52,10 @@ function event(
     eventType: "earthquake",
     status: "reviewed",
     network: "test",
-    receiverZoneId: "caribbean-plate-boundary",
-    receiverZoneName: "Límite de placa del Caribe",
+    receiverZoneId: `${regime}-zone`,
+    receiverZoneName: `${regime} zone`,
     receiverZoneConfidence: "high",
-    tectonicRegime: "mixed",
+    tectonicRegime: regime,
   };
 }
 
@@ -122,4 +124,50 @@ test("reference labels require a causal, nearby and magnitude-compatible parent"
   const samples = buildSequenceCalibrationSamples([parent, child, far]);
   assert.equal(samples.find((item) => item.eventId === "child")?.referenceLabel, 1);
   assert.equal(samples.find((item) => item.eventId === "far")?.referenceLabel, 0);
+});
+
+test("oversized cohorts are sampled chronologically across every represented regime", () => {
+  const regimes: TectonicRegime[] = [
+    "subduction",
+    "strike_slip",
+    "rift_normal",
+    "collision",
+    "mixed",
+  ];
+  const events = regimes.flatMap((regime, regimeIndex) => Array.from(
+    { length: 100 },
+    (_, index) => event(
+      `${regime}-${index}`,
+      new Date(Date.UTC(2020, regimeIndex, index + 1)).toISOString(),
+      4.5 + index / 100,
+      regimeIndex * 5,
+      index / 10,
+      regime,
+    ),
+  ));
+
+  const result = sampleCalibrationEvents(events, 150);
+  assert.equal(result.sampling.applied, true);
+  assert.equal(result.sampling.available, 500);
+  assert.equal(result.events.length, 150);
+  for (const regime of regimes) {
+    assert.equal(result.sampling.regimeCountsSelected[regime], 30);
+  }
+  for (let index = 1; index < result.events.length; index += 1) {
+    assert.ok(Date.parse(result.events[index - 1].timeUtc) <= Date.parse(result.events[index].timeUtc));
+  }
+});
+
+test("small cohorts pass through without sampling", () => {
+  const events = Array.from({ length: 20 }, (_, index) => event(
+    `event-${index}`,
+    new Date(Date.UTC(2024, 0, index + 1)).toISOString(),
+    4.5,
+    18,
+    -70,
+  ));
+  const result = sampleCalibrationEvents(events, 100);
+  assert.equal(result.sampling.applied, false);
+  assert.equal(result.events.length, 20);
+  assert.deepEqual(result.events.map((item) => item.id), events.map((item) => item.id));
 });
