@@ -36,6 +36,19 @@ export interface SeismicEvent {
   duplicateReports?: number;
   /** Provider identifiers retained for traceability but never rendered separately. */
   sourceAliases?: Array<{ source: EventSource; id: string }>;
+
+  magnitudeMw?: number | null;
+  magnitudeNormalizationMethod?: string;
+  magnitudeNormalizationUncertainty?: number | null;
+  receiverZoneId?: string;
+  receiverZoneName?: string;
+  tectonicRegime?: "subduction" | "strike_slip" | "rift_normal" | "collision" | "mixed";
+  receiverZoneConfidence?: "high" | "medium" | "low";
+  parentCandidateId?: string | null;
+  sequenceAssociationScorePct?: number;
+  backgroundScorePct?: number;
+  sequenceClassification?: "sequence_likely" | "ambiguous" | "background_likely";
+  sequenceScoreCalibrated?: false;
 }
 
 export interface WatchedRegion {
