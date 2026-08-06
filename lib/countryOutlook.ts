@@ -66,10 +66,15 @@ function areSameSequence(a: SeismicEvent, b: SeismicEvent) {
   return timeDistance < 3 * DAY_MS && spatialDistance < 450;
 }
 
+function sourceMagnitude(event: SeismicEvent) {
+  return event.magnitudeMw ?? event.magnitude;
+}
+
 /**
  * Selects a small, diverse set of recent earthquakes for automatic analysis.
- * The score balances magnitude, recency and proximity to the selected country.
- * It is only a workload prioritizer, not a physical causality score.
+ * The score balances homogenized magnitude when available, recency and
+ * proximity to the selected country. It is only a workload prioritizer, not a
+ * physical causality score.
  */
 export function rankOutlookSourceEvents(
   events: SeismicEvent[],
@@ -88,7 +93,7 @@ export function rankOutlookSourceEvents(
   const ranked = events
     .filter((event) => {
       const ageDays = (now - new Date(event.time).getTime()) / DAY_MS;
-      return event.magnitude >= effectiveMinimum && ageDays >= 0 && ageDays <= 90;
+      return sourceMagnitude(event) >= effectiveMinimum && ageDays >= 0 && ageDays <= 90;
     })
     .map((event) => {
       const ageDays = Math.max(0, (now - new Date(event.time).getTime()) / DAY_MS);
@@ -98,17 +103,18 @@ export function rankOutlookSourceEvents(
         target.latitude,
         target.longitude,
       );
+      const normalizedMagnitude = sourceMagnitude(event);
       const magnitudeScore = clamp(
-        (event.magnitude - effectiveMinimum) / magnitudeSpan,
+        (normalizedMagnitude - effectiveMinimum) / magnitudeSpan,
         0,
         1,
       );
       const recencyScore = Math.exp(-ageDays / 24);
       const regionalScore = Math.exp(-distanceKm / Math.max(2_200, target.radiusKm + 1_500));
       const score = magnitudeScore * 0.55 + recencyScore * 0.2 + regionalScore * 0.25;
-      return { event, score, distanceKm, ageDays };
+      return { event, score, distanceKm, ageDays, normalizedMagnitude };
     })
-    .sort((a, b) => b.score - a.score || b.event.magnitude - a.event.magnitude);
+    .sort((a, b) => b.score - a.score || b.normalizedMagnitude - a.normalizedMagnitude);
 
   const selected: typeof ranked = [];
   for (const candidate of ranked) {
@@ -236,6 +242,7 @@ export function buildCountryOutlook(
     contributors: contributions,
     methodology: [
       "Selecciona automáticamente hasta tres eventos recientes que superan el umbral configurado y separa los pertenecientes a una misma secuencia.",
+      "Prioriza magnitud Mw reportada o una conversión global explícita y válida; nunca trata silenciosamente todas las escalas como equivalentes.",
       "Cada evento se compara con 50 años de análogos y con una ventana histórica de control.",
       "La proyección nacional combina las recurrencias activas mediante un promedio ponderado por semejanza, evidencia, confianza y antigüedad.",
       "La franja de mayor concentración utiliza la mediana temporal observada en los análogos de cada evento precedente.",
@@ -244,6 +251,7 @@ export function buildCountryOutlook(
       "La probabilidad mostrada es empírica y las contribuciones no se consideran independientes.",
       "Las líneas del mapa representan asociaciones históricas, no el recorrido físico de energía sísmica.",
       "La magnitud y el tiempo son franjas orientativas; no constituyen una predicción determinista.",
+      "La puntuación causal fondo/secuencia todavía no está calibrada por régimen tectónico y no modifica la probabilidad operacional.",
     ],
   };
 }
