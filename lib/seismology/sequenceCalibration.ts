@@ -24,19 +24,38 @@ export interface PlattCalibrationModel {
   trainPositiveRate: number;
 }
 
+export interface SequenceCalibrationBin {
+  lowerBound: number;
+  upperBound: number;
+  sampleCount: number;
+  averageProbability: number;
+  observedRate: number;
+  absoluteGap: number;
+}
+
 export interface SequenceCalibrationMetrics {
   sampleCount: number;
   positiveRate: number;
   averageProbability: number;
+  calibrationGap: number;
   brierScore: number;
   logLoss: number;
   accuracyAt50: number;
+  majorityClassAccuracy: number;
+  climatologyProbability: number;
+  climatologyBrierScore: number;
+  brierSkillVsClimatology: number | null;
+  rocAuc: number | null;
+  prAuc: number | null;
+  expectedCalibrationError: number;
+  calibrationBins: SequenceCalibrationBin[];
 }
 
 export interface SequenceRegimeCalibration {
   scope: SequenceCalibrationScope;
   sampleCount: number;
   trainSampleCount: number;
+  embargoedSampleCount: number;
   testSampleCount: number;
   positiveCount: number;
   negativeCount: number;
@@ -49,15 +68,17 @@ export interface SequenceRegimeCalibration {
 }
 
 export interface SequenceCalibrationResult {
-  method: "platt_logistic_by_tectonic_regime_v1";
+  method: "platt_logistic_by_tectonic_regime_v2";
   referenceLabelMethod: "magnitude_scaled_space_time_proxy_v1";
   trainFraction: number;
+  embargoDays: number;
   minimumIndependentSamples: number;
   regimes: SequenceRegimeCalibration[];
 }
 
 const EPSILON = 1e-6;
 const DEFAULT_TRAIN_FRACTION = 0.7;
+const DEFAULT_EMBARGO_DAYS = 45;
 const MINIMUM_INDEPENDENT_SAMPLES = 40;
 const MINIMUM_CLASS_SAMPLES = 5;
 const REGIMES: TectonicRegime[] = [
@@ -114,6 +135,10 @@ function classCounts(samples: SequenceCalibrationSample[]) {
   return { positive, negative: samples.length - positive };
 }
 
+function positiveRate(samples: SequenceCalibrationSample[]) {
+  return samples.length ? classCounts(samples).positive / samples.length : 0;
+}
+
 function canFitIndependently(samples: SequenceCalibrationSample[]) {
   const counts = classCounts(samples);
   return samples.length >= MINIMUM_INDEPENDENT_SAMPLES
@@ -124,19 +149,29 @@ function canFitIndependently(samples: SequenceCalibrationSample[]) {
 export function splitSequenceCalibrationSamples(
   samples: SequenceCalibrationSample[],
   trainFraction = DEFAULT_TRAIN_FRACTION,
+  embargoDays = DEFAULT_EMBARGO_DAYS,
 ) {
   const chronological = [...samples].sort(
     (a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc),
   );
   if (chronological.length < 2) {
-    return { train: chronological, test: [] as SequenceCalibrationSample[] };
+    return {
+      train: chronological,
+      embargo: [] as SequenceCalibrationSample[],
+      test: [] as SequenceCalibrationSample[],
+    };
   }
   const minimumTest = Math.min(20, Math.max(1, Math.floor(chronological.length * 0.2)));
   const requested = Math.floor(chronological.length * clamp(trainFraction, 0.5, 0.9));
   const splitIndex = clamp(requested, 1, chronological.length - minimumTest);
+  const test = chronological.slice(splitIndex);
+  const firstTestTime = Date.parse(test[0].timeUtc);
+  const embargoStart = firstTestTime - Math.max(0, embargoDays) * 86_400_000;
+  const candidates = chronological.slice(0, splitIndex);
   return {
-    train: chronological.slice(0, splitIndex),
-    test: chronological.slice(splitIndex),
+    train: candidates.filter((sample) => Date.parse(sample.timeUtc) < embargoStart),
+    embargo: candidates.filter((sample) => Date.parse(sample.timeUtc) >= embargoStart),
+    test,
   };
 }
 
@@ -148,8 +183,8 @@ export function fitPlattCalibration(
   const features = samples.map((sample) => logit(sample.rawProbability));
   const featureMean = mean(features);
   const featureScale = standardDeviation(features, featureMean);
-  const positiveRate = (classCounts(samples).positive + 1) / (samples.length + 2);
-  let intercept = logit(positiveRate);
+  const smoothedPositiveRate = (classCounts(samples).positive + 1) / (samples.length + 2);
+  let intercept = logit(smoothedPositiveRate);
   let slope = 1;
 
   for (let iteration = 0; iteration < 1_500; iteration += 1) {
@@ -175,7 +210,7 @@ export function fitPlattCalibration(
     featureMean: round(featureMean),
     featureScale: round(featureScale),
     trainSamples: samples.length,
-    trainPositiveRate: round(classCounts(samples).positive / samples.length),
+    trainPositiveRate: round(positiveRate(samples)),
   };
 }
 
@@ -189,23 +224,101 @@ export function calibratedSequenceProbability(
   return probability(sigmoid(model.intercept + model.slope * standardized));
 }
 
+function rocAuc(labels: number[], predictions: number[]) {
+  const positives = labels.filter((label) => label === 1).length;
+  const negatives = labels.length - positives;
+  if (!positives || !negatives) return null;
+
+  const ranked = predictions
+    .map((prediction, index) => ({ prediction, label: labels[index] }))
+    .sort((a, b) => a.prediction - b.prediction);
+  let positiveRankSum = 0;
+  let index = 0;
+  while (index < ranked.length) {
+    let end = index + 1;
+    while (end < ranked.length && ranked[end].prediction === ranked[index].prediction) end += 1;
+    const averageRank = (index + 1 + end) / 2;
+    for (let cursor = index; cursor < end; cursor += 1) {
+      if (ranked[cursor].label === 1) positiveRankSum += averageRank;
+    }
+    index = end;
+  }
+  return round((positiveRankSum - positives * (positives + 1) / 2) / (positives * negatives));
+}
+
+function prAuc(labels: number[], predictions: number[]) {
+  const positives = labels.filter((label) => label === 1).length;
+  if (!positives) return null;
+  const ranked = predictions
+    .map((prediction, index) => ({ prediction, label: labels[index] }))
+    .sort((a, b) => b.prediction - a.prediction);
+  let truePositives = 0;
+  let precisionAtPositives = 0;
+  for (let index = 0; index < ranked.length; index += 1) {
+    if (ranked[index].label !== 1) continue;
+    truePositives += 1;
+    precisionAtPositives += truePositives / (index + 1);
+  }
+  return round(precisionAtPositives / positives);
+}
+
+function calibrationDiagnostics(labels: number[], predictions: number[], binCount = 10) {
+  const bins: SequenceCalibrationBin[] = [];
+  let weightedGap = 0;
+  for (let bin = 0; bin < binCount; bin += 1) {
+    const lowerBound = bin / binCount;
+    const upperBound = (bin + 1) / binCount;
+    const members = predictions
+      .map((prediction, index) => ({ prediction, label: labels[index] }))
+      .filter(({ prediction }) => (
+        prediction >= lowerBound
+        && (bin === binCount - 1 ? prediction <= upperBound : prediction < upperBound)
+      ));
+    if (!members.length) continue;
+    const averageProbability = mean(members.map((member) => member.prediction));
+    const observedRate = mean(members.map((member) => member.label));
+    const absoluteGap = Math.abs(averageProbability - observedRate);
+    weightedGap += absoluteGap * members.length;
+    bins.push({
+      lowerBound: round(lowerBound, 2),
+      upperBound: round(upperBound, 2),
+      sampleCount: members.length,
+      averageProbability: round(averageProbability),
+      observedRate: round(observedRate),
+      absoluteGap: round(absoluteGap),
+    });
+  }
+  return {
+    expectedCalibrationError: predictions.length ? round(weightedGap / predictions.length) : 0,
+    calibrationBins: bins,
+  };
+}
+
 export function calculateSequenceCalibrationMetrics(
   samples: SequenceCalibrationSample[],
   predict: (sample: SequenceCalibrationSample) => number,
+  trainingClimatology = positiveRate(samples),
 ): SequenceCalibrationMetrics | null {
   if (!samples.length) return null;
+  const predictions: number[] = [];
+  const labels: number[] = [];
   let probabilitySum = 0;
   let observedSum = 0;
   let brierSum = 0;
   let logLossSum = 0;
+  let climatologyBrierSum = 0;
   let correct = 0;
+  const climatology = probability(trainingClimatology);
 
   for (const sample of samples) {
     const predicted = probability(predict(sample));
     const observed = sample.referenceLabel;
+    predictions.push(predicted);
+    labels.push(observed);
     probabilitySum += predicted;
     observedSum += observed;
     brierSum += (predicted - observed) ** 2;
+    climatologyBrierSum += (climatology - observed) ** 2;
     logLossSum += -(
       observed * Math.log(predicted)
       + (1 - observed) * Math.log(1 - predicted)
@@ -213,13 +326,30 @@ export function calculateSequenceCalibrationMetrics(
     if ((predicted >= 0.5 ? 1 : 0) === observed) correct += 1;
   }
 
+  const observedRate = observedSum / samples.length;
+  const averageProbability = probabilitySum / samples.length;
+  const brierScore = brierSum / samples.length;
+  const climatologyBrierScore = climatologyBrierSum / samples.length;
+  const diagnostics = calibrationDiagnostics(labels, predictions);
+
   return {
     sampleCount: samples.length,
-    positiveRate: round(observedSum / samples.length),
-    averageProbability: round(probabilitySum / samples.length),
-    brierScore: round(brierSum / samples.length),
+    positiveRate: round(observedRate),
+    averageProbability: round(averageProbability),
+    calibrationGap: round(averageProbability - observedRate),
+    brierScore: round(brierScore),
     logLoss: round(logLossSum / samples.length),
     accuracyAt50: round(correct / samples.length),
+    majorityClassAccuracy: round(Math.max(observedRate, 1 - observedRate)),
+    climatologyProbability: round(climatology),
+    climatologyBrierScore: round(climatologyBrierScore),
+    brierSkillVsClimatology: climatologyBrierScore > 0
+      ? round(1 - brierScore / climatologyBrierScore)
+      : null,
+    rocAuc: rocAuc(labels, predictions),
+    prAuc: prAuc(labels, predictions),
+    expectedCalibrationError: diagnostics.expectedCalibrationError,
+    calibrationBins: diagnostics.calibrationBins,
   };
 }
 
@@ -298,14 +428,19 @@ function scopeCalibration(
   const model = independentlyFitted ?? globalModel;
   const evaluation = split.test.length ? split.test : samples;
   const counts = classCounts(samples);
+  const trainingClimatology = split.train.length
+    ? positiveRate(split.train)
+    : positiveRate(samples);
   const rawMetrics = calculateSequenceCalibrationMetrics(
     evaluation,
     (sample) => sample.rawProbability,
+    trainingClimatology,
   );
   const calibratedMetrics = model
     ? calculateSequenceCalibrationMetrics(
       evaluation,
       (sample) => calibratedSequenceProbability(sample.rawProbability, model),
+      trainingClimatology,
     )
     : null;
   const brierSkillVsRaw = rawMetrics
@@ -318,6 +453,7 @@ function scopeCalibration(
     scope,
     sampleCount: samples.length,
     trainSampleCount: split.train.length,
+    embargoedSampleCount: split.embargo.length,
     testSampleCount: split.test.length,
     positiveCount: counts.positive,
     negativeCount: counts.negative,
@@ -343,9 +479,10 @@ export function calibrateSequenceAssociationByRegime(
   ));
 
   return {
-    method: "platt_logistic_by_tectonic_regime_v1",
+    method: "platt_logistic_by_tectonic_regime_v2",
     referenceLabelMethod: "magnitude_scaled_space_time_proxy_v1",
     trainFraction: DEFAULT_TRAIN_FRACTION,
+    embargoDays: DEFAULT_EMBARGO_DAYS,
     minimumIndependentSamples: MINIMUM_INDEPENDENT_SAMPLES,
     regimes: [globalCalibration, ...regimes],
   };
