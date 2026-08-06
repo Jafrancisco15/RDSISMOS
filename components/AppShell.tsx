@@ -9,8 +9,9 @@ import { HybridModelFoundationPanel } from "./HybridModelFoundationPanel";
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
+import { SequenceCalibrationLabPanel } from "./SequenceCalibrationLabPanel";
 
-type AppTab = "globe" | "projection" | "history" | "events";
+type AppTab = "globe" | "projection" | "history" | "events" | "laboratory";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -21,6 +22,7 @@ export function AppShell() {
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>Proyección</button>
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
+        <button className={tab === "laboratory" ? "active" : ""} onClick={() => setTab("laboratory")}>Laboratorio</button>
       </nav>
       {tab === "globe" && <SeismicGlobe3D />}
       {tab === "projection" && (
@@ -49,6 +51,7 @@ export function AppShell() {
         </>
       )}
       {tab === "events" && <EarthquakeEventsDashboard />}
+      {tab === "laboratory" && <SequenceCalibrationLabPanel />}
     </>
   );
 }
