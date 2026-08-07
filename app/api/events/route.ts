@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { COUNTRIES, countryByCode } from "@/lib/countries";
-import {
-  loadRegionalEtasProjections,
-  persistRegionalEtasProjections,
-} from "@/lib/learning/etasStore";
+import { loadRegionalEtasProjections } from "@/lib/learning/etasStore";
+import { persistImmutableRegionalEtasProjections } from "@/lib/learning/immutableEtasStore";
 import { calculateMigrationAnalysis } from "@/lib/migration";
 import { generateMigrationProjections } from "@/lib/projections";
 import { fetchExpandedSeismicCatalog } from "@/lib/providers/multisource";
@@ -31,7 +29,7 @@ export async function GET(request: NextRequest) {
       generatedAt,
       60,
     );
-    const registry = await persistRegionalEtasProjections(generatedProjections);
+    const registry = await persistImmutableRegionalEtasProjections(generatedProjections);
     const storedProjections = registry.registryAvailable
       ? await loadRegionalEtasProjections(target.code, {
           includeResolved: true,

@@ -14,6 +14,14 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+function cronSecretConfigured() {
+  return Boolean(normalizeCronSecret(process.env.CRON_SECRET));
+}
+
+function invokedByVercelCron(request: NextRequest) {
+  return request.headers.get("user-agent")?.toLowerCase().includes("vercel-cron/") ?? false;
+}
+
 function authorized(request: NextRequest) {
   const tokens = [
     process.env.CRON_SECRET,
@@ -39,6 +47,16 @@ async function runEvaluation(
   request: NextRequest,
   values: { activeLimit?: unknown; dueLimit?: unknown; etasLimit?: unknown },
 ) {
+  if (invokedByVercelCron(request) && !cronSecretConfigured()) {
+    return NextResponse.json(
+      {
+        error: "CRON_SECRET no está configurado en producción. Vercel Cron no puede autenticarse de forma segura contra este evaluador.",
+        configurationError: "missing_cron_secret",
+      },
+      { status: 503, headers: { "Cache-Control": "no-store" } },
+    );
+  }
+
   if (!authorized(request)) {
     return NextResponse.json(
       { error: "No autorizado." },
@@ -78,6 +96,11 @@ async function runEvaluation(
     return NextResponse.json({
       ...historicalResult.value,
       regionalEtas,
+      scheduler: {
+        cronSecretConfigured: cronSecretConfigured(),
+        invokedByVercelCron: invokedByVercelCron(request),
+        evaluatedAt: new Date().toISOString(),
+      },
     }, {
       headers: { "Cache-Control": "no-store, max-age=0" },
     });

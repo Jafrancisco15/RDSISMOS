@@ -12,14 +12,25 @@ function isMissingLearningSchema(message?: string) {
 export async function GET() {
   const status = await getLearningStatus();
   const migrationPending = isMissingLearningSchema(status.message);
+  const cronSecretConfigured = Boolean(process.env.CRON_SECRET?.trim());
   const response = migrationPending
     ? {
         ...status,
         migrationPending: true,
+        cronSecretConfigured,
+        cronSchedule: "15 3 * * *",
         message:
           "Supabase está conectado, pero falta ejecutar database/learning.sql en el mismo proyecto y esquema public usados por DATABASE_URL.",
       }
-    : { ...status, migrationPending: false };
+    : {
+        ...status,
+        migrationPending: false,
+        cronSecretConfigured,
+        cronSchedule: "15 3 * * *",
+        schedulerWarning: cronSecretConfigured
+          ? undefined
+          : "CRON_SECRET no está configurado. El cron nativo de Vercel no podrá autenticar de forma segura el evaluador mientras exista protección administrativa.",
+      };
 
   return NextResponse.json(response, {
     status: status.databaseConnected || !status.databaseConfigured || migrationPending ? 200 : 503,
