@@ -89,6 +89,8 @@ test("reports empirical delta-M quantiles and converts them to source-relative i
   assert.equal(global.sampleCount, 5);
   assert.equal(global.probabilityChildLower, 1);
   assert.equal(global.medianDeltaMagnitude, -0.6);
+  assert.equal(global.largestFollowerParentCount, 1);
+  assert.equal(global.largestFollowerMeanDrop, 0.2);
 
   const interval = empiricalFollowerMagnitudeInterval(5.5, global);
   assert.ok(interval);
