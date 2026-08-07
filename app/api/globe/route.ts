@@ -6,7 +6,7 @@ import {
   loadGlobeProjectionsAt,
   loadRegionalEtasGlobeProjectionsAt,
 } from "@/lib/learning/globeStore";
-import { persistRegionalEtasProjections } from "@/lib/learning/etasStore";
+import { persistImmutableRegionalEtasProjections } from "@/lib/learning/immutableEtasStore";
 import {
   OPERATIONAL_MINIMUM_MAGNITUDE,
   projectionIsOperational,
@@ -118,7 +118,7 @@ export async function GET(request: Request) {
 
   if (catalog && liveView) {
     const generatedRegional = generateMigrationProjections(catalog.events, target, now, 60);
-    const registry = await persistRegionalEtasProjections(generatedRegional);
+    const registry = await persistImmutableRegionalEtasProjections(generatedRegional);
     if (registry.warning) warnings.push(`Registro ETAS: ${registry.warning}`);
   }
 
