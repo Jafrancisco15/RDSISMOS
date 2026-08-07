@@ -103,6 +103,10 @@ export async function persistImmutableRegionalEtasProjections(
     const times = countryProjections
       .map((projection) => Date.parse(projection.sourceEvent.time))
       .filter(Number.isFinite);
+    if (!times.length) {
+      newProjections.push(...countryProjections);
+      continue;
+    }
     const earliest = new Date(Math.min(...times) - SAME_SOURCE_TIME_TOLERANCE_MS).toISOString();
     const latest = new Date(Math.max(...times) + SAME_SOURCE_TIME_TOLERANCE_MS).toISOString();
     const rows = await sql`
@@ -147,7 +151,7 @@ export async function persistImmutableRegionalEtasProjections(
       const fingerprint = etasSourceFingerprint(projection.sourceEvent);
       await sql`
         UPDATE regional_etas_projections
-        SET evaluation_payload = COALESCE(evaluation_payload, '{}'::jsonb) || ${sql.json(policy)},
+        SET projection_payload = COALESCE(projection_payload, '{}'::jsonb) || ${sql.json(policy)},
             updated_at = NOW()
         WHERE target_country_code = ${projection.targetCountry.code}
           AND source_event_fingerprint = ${fingerprint}
