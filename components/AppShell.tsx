@@ -7,7 +7,8 @@ import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashb
 import { HistoricalBacktestPanel } from "./HistoricalBacktestPanel";
 import { HybridModelFoundationPanel } from "./HybridModelFoundationPanel";
 import { LearningStatusPanel } from "./LearningStatusPanel";
-import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
+import { LiveProjectionHistory } from "./LiveProjectionHistory";
+import { ProjectionEffectivenessPanel } from "./ProjectionEffectivenessPanel";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { SequenceCalibrationLabPanel } from "./SequenceCalibrationLabPanel";
 
@@ -46,8 +47,9 @@ export function AppShell() {
       )}
       {tab === "history" && (
         <>
+          <ProjectionEffectivenessPanel />
           <div className="learning-panel-wrap"><HistoricalBacktestPanel /></div>
-          <ProjectionHistoryPanel />
+          <LiveProjectionHistory />
         </>
       )}
       {tab === "events" && <EarthquakeEventsDashboard />}
