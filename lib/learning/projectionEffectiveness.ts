@@ -151,16 +151,17 @@ export async function loadProjectionEffectiveness(): Promise<ProjectionEffective
     let legacyEtasResolvedExcluded = 0;
     let etasObservations: EffectivenessObservation[] = [];
     if (await regionalEtasRegistryAvailable()) {
+      const immutableMarker = {
+        issuancePolicyVersion: 1,
+        immutableIssuance: true,
+      };
       const [etasIssuedRow] = await sql`
         SELECT COUNT(*)::int AS count
         FROM regional_etas_projections
         WHERE probability_pct > 0
           AND excess_probability_pct > 0
           AND magnitude_max >= ${OPERATIONAL_MINIMUM_MAGNITUDE}
-          AND COALESCE(evaluation_payload, '{}'::jsonb) @> ${sql.json({
-            issuancePolicyVersion: 1,
-            immutableIssuance: true,
-          })}
+          AND COALESCE(projection_payload, '{}'::jsonb) @> ${sql.json(immutableMarker)}
       `;
       etasIssued = number(etasIssuedRow?.count);
       const etasRows = await sql`
@@ -170,10 +171,7 @@ export async function loadProjectionEffectiveness(): Promise<ProjectionEffective
           AND excess_probability_pct > 0
           AND magnitude_max >= ${OPERATIONAL_MINIMUM_MAGNITUDE}
           AND resolved_at IS NOT NULL
-          AND COALESCE(evaluation_payload, '{}'::jsonb) @> ${sql.json({
-            issuancePolicyVersion: 1,
-            immutableIssuance: true,
-          })}
+          AND COALESCE(projection_payload, '{}'::jsonb) @> ${sql.json(immutableMarker)}
       `;
       etasObservations = etasRows.map((row) => ({
         probabilityPct: number(row.probability_pct),
@@ -187,10 +185,7 @@ export async function loadProjectionEffectiveness(): Promise<ProjectionEffective
           AND probability_pct > 0
           AND excess_probability_pct > 0
           AND magnitude_max >= ${OPERATIONAL_MINIMUM_MAGNITUDE}
-          AND NOT (COALESCE(evaluation_payload, '{}'::jsonb) @> ${sql.json({
-            issuancePolicyVersion: 1,
-            immutableIssuance: true,
-          })})
+          AND NOT (COALESCE(projection_payload, '{}'::jsonb) @> ${sql.json(immutableMarker)})
       `;
       legacyEtasResolvedExcluded = number(legacyRow?.count);
     }
