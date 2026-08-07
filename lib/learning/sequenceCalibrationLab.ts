@@ -11,6 +11,10 @@ import {
   calibrateSequenceAssociationByRegime,
   type SequenceCalibrationResult,
 } from "@/lib/seismology/sequenceCalibration";
+import {
+  analyzeEmpiricalMagnitudeMigration,
+  type EmpiricalMagnitudeMigrationResult,
+} from "@/lib/seismology/magnitudeMigration";
 
 const DAY_MS = 86_400_000;
 const MODEL_VERSION = "sequence-calibration-lab-v1";
@@ -66,6 +70,7 @@ export interface SequenceCalibrationLabResult {
   samplesBuilt: number;
   sampling: SequenceCalibrationSampling;
   calibration: SequenceCalibrationResult;
+  magnitudeMigration: EmpiricalMagnitudeMigrationResult;
   interpretation: string[];
 }
 
@@ -331,6 +336,7 @@ export async function runSequenceCalibrationLab(
   const events = sampled.events;
   const samples = buildSequenceCalibrationSamples(events);
   const calibration = calibrateSequenceAssociationByRegime(samples);
+  const magnitudeMigration = analyzeEmpiricalMagnitudeMigration(events);
   const result: SequenceCalibrationLabResult = {
     id: runId(configuration, events.map((event) => event.id)),
     modelVersionId: MODEL_VERSION,
@@ -344,13 +350,16 @@ export async function runSequenceCalibrationLab(
     samplesBuilt: samples.length,
     sampling: sampled.sampling,
     calibration,
+    magnitudeMigration,
     interpretation: [
       "La calibración se ejecuta en un laboratorio separado y no modifica el Mapa 3D, Historial, probabilidades ni estados operacionales.",
       "Cada régimen usa una división cronológica: los eventos iniciales entrenan y los posteriores evalúan, evitando mezclar aleatoriamente pasado y futuro.",
       sampled.sampling.applied
         ? `El catálogo contenía ${sampled.sampling.available.toLocaleString()} eventos y se seleccionaron ${sampled.sampling.selected.toLocaleString()} mediante muestreo cronológico estratificado por régimen; no se truncó simplemente el principio o el final del período.`
         : "La cohorte completa entró dentro del límite solicitado y no necesitó muestreo.",
-      "La etiqueta de referencia es un proxy conservador de espacio, tiempo, magnitud y corredor receptor; no demuestra causalidad física.",
+      "La etiqueta de referencia del clasificador sigue siendo un proxy conservador y no demuestra causalidad física.",
+      "La nueva capa de magnitud aprende Delta-M directamente de pares espacio-temporales compatibles y no usa la magnitud posterior para decidir si el par entra en la muestra.",
+      `La distribución de magnitud está truncada por el umbral M${minimumMagnitude.toFixed(1)} de esta corrida; para estudiar mejor la caída de magnitud conviene repetir el laboratorio con M4.0 y una muestra mayor.`,
       "El Brier skill frente al score crudo indica si la calibración mejora la correspondencia con ese proxy de referencia. Solo resultados repetidos en varias ventanas justificarían promover el modelo.",
       "Los regímenes con pocos ejemplos usan temporalmente el modelo global y quedan marcados como fallback.",
     ],
