@@ -6,6 +6,7 @@ import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
+import { RecentFulfilledProjections } from "./RecentFulfilledProjections";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 
 type AppTab = "globe" | "projection" | "history" | "events";
@@ -20,7 +21,12 @@ export function AppShell() {
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
       </nav>
-      {tab === "globe" && <SeismicGlobe3D />}
+      {tab === "globe" && (
+        <>
+          <SeismicGlobe3D />
+          <RecentFulfilledProjections />
+        </>
+      )}
       {tab === "projection" && (
         <>
           <div className="learning-panel-wrap"><LearningStatusPanel /></div>

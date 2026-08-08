@@ -15,6 +15,22 @@ const STATUS_LABELS: Record<ProjectionHistoryStatus, string> = {
   pending_evaluation: "Pendiente de evaluación",
 };
 
+interface RefreshStatus {
+  checkedAt: string;
+  attempted: boolean;
+  staleActive: boolean;
+  duePending: boolean;
+  activePredictionsChecked: number;
+  liveFulfillments: number;
+  duePredictionsEvaluated: number;
+  positiveOutcomes: number;
+  errors: string[];
+}
+
+type ProjectionHistoryApiResponse = ProjectionHistoryResponse & {
+  refresh?: RefreshStatus;
+};
+
 function formatDate(value: string, withTime = false) {
   return new Intl.DateTimeFormat("es-DO", {
     dateStyle: "medium",
@@ -50,7 +66,7 @@ function observedEvent(item: ProjectionHistoryItem) {
 }
 
 export function ProjectionHistoryPanel() {
-  const [data, setData] = useState<ProjectionHistoryResponse | null>(null);
+  const [data, setData] = useState<ProjectionHistoryApiResponse | null>(null);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<ProjectionHistoryStatus | "all">("all");
   const [country, setCountry] = useState("");
@@ -58,6 +74,8 @@ export function ProjectionHistoryPanel() {
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,8 +89,10 @@ export function ProjectionHistoryPanel() {
 
   useEffect(() => {
     const controller = new AbortController();
-    async function load() {
-      setLoading(true);
+    let disposed = false;
+
+    async function load(showLoader: boolean) {
+      if (showLoader) setLoading(true);
       try {
         const params = new URLSearchParams({
           page: String(page), status, country, search, from, to, _: String(Date.now()),
@@ -81,20 +101,29 @@ export function ProjectionHistoryPanel() {
           cache: "no-store",
           signal: controller.signal,
         });
-        const payload = await response.json() as ProjectionHistoryResponse;
+        const payload = await response.json() as ProjectionHistoryApiResponse;
         if (!response.ok) throw new Error(payload.message ?? `HTTP ${response.status}`);
-        setData(payload);
-        setError(null);
+        if (!disposed) {
+          setData(payload);
+          setLastLoadedAt(new Date().toISOString());
+          setError(null);
+        }
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
-        setError(loadError instanceof Error ? loadError.message : "No fue posible cargar las proyecciones.");
+        if (!disposed) setError(loadError instanceof Error ? loadError.message : "No fue posible cargar las proyecciones.");
       } finally {
-        setLoading(false);
+        if (!disposed && showLoader) setLoading(false);
       }
     }
-    void load();
-    return () => controller.abort();
-  }, [country, from, page, search, status, to]);
+
+    void load(true);
+    const interval = window.setInterval(() => void load(false), 5 * 60_000);
+    return () => {
+      disposed = true;
+      controller.abort();
+      window.clearInterval(interval);
+    };
+  }, [country, from, page, refreshNonce, search, status, to]);
 
   const showing = useMemo(() => {
     if (!data?.total) return "0 resultados";
@@ -171,9 +200,23 @@ export function ProjectionHistoryPanel() {
           <input type="date" value={to} onChange={(event) => { setPage(1); setTo(event.target.value); }} />
         </label>
         <button type="button" className="projection-clear-filters" onClick={resetFilters}>Limpiar</button>
+        <button type="button" className="projection-clear-filters" onClick={() => setRefreshNonce((value) => value + 1)}>Actualizar ahora</button>
       </section>
 
+      <div className="quality-warning">
+        <strong>Actualización viva:</strong> el historial se vuelve a consultar cada 5 minutos y el servidor revisa automáticamente proyecciones activas o vencidas que lleven más de 15 minutos sin evaluación.
+        {lastLoadedAt ? ` Última consulta: ${formatDate(lastLoadedAt, true)} UTC.` : ""}
+        {data?.refresh?.attempted
+          ? ` En esta consulta se revisaron ${data.refresh.activePredictionsChecked} activas y ${data.refresh.duePredictionsEvaluated} vencidas; ${data.refresh.liveFulfillments + data.refresh.positiveOutcomes} aciertos nuevos.`
+          : ""}
+      </div>
+
       {error && <div className="warning-banner projection-history-error">{error}</div>}
+      {(data?.refresh?.errors.length ?? 0) > 0 && (
+        <div className="warning-banner projection-history-error">
+          Evaluación automática: {data?.refresh?.errors.join(" · ")}
+        </div>
+      )}
 
       <section className="panel projection-history-list">
         <div className="projection-history-list-head">
