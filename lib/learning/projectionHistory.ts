@@ -223,7 +223,11 @@ export async function loadProjectionHistory(
           CASE
             WHEN o.occurred IS TRUE THEN 'fulfilled'
             WHEN o.prediction_id IS NOT NULL
-              AND jsonb_array_length(COALESCE(o.evaluation_payload->'outsideRangeEventIds', '[]'::jsonb)) > 0
+              AND CASE
+                WHEN jsonb_typeof(o.evaluation_payload->'outsideRangeEventIds') = 'array'
+                  THEN jsonb_array_length(o.evaluation_payload->'outsideRangeEventIds')
+                ELSE 0
+              END > 0
               THEN 'fulfilled_outside_range'
             WHEN o.prediction_id IS NOT NULL THEN 'not_fulfilled'
             WHEN p.surveillance_end >= NOW() THEN 'active'
@@ -263,7 +267,11 @@ export async function loadProjectionHistory(
           CASE
             WHEN o.occurred IS TRUE THEN 'fulfilled'
             WHEN o.prediction_id IS NOT NULL
-              AND jsonb_array_length(COALESCE(o.evaluation_payload->'outsideRangeEventIds', '[]'::jsonb)) > 0
+              AND CASE
+                WHEN jsonb_typeof(o.evaluation_payload->'outsideRangeEventIds') = 'array'
+                  THEN jsonb_array_length(o.evaluation_payload->'outsideRangeEventIds')
+                ELSE 0
+              END > 0
               THEN 'fulfilled_outside_range'
             WHEN o.prediction_id IS NOT NULL THEN 'not_fulfilled'
             WHEN p.surveillance_end >= NOW() THEN 'active'
