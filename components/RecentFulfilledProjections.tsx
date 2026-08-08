@@ -6,18 +6,6 @@ import type {
   ProjectionHistoryResponse,
 } from "@/lib/learning/projectionHistory";
 
-type FulfilledResponse = ProjectionHistoryResponse & {
-  refresh?: {
-    checkedAt: string;
-    attempted: boolean;
-    activePredictionsChecked: number;
-    duePredictionsEvaluated: number;
-    liveFulfillments: number;
-    positiveOutcomes: number;
-    errors: string[];
-  };
-};
-
 function formatDate(value: string, withTime = false) {
   return new Intl.DateTimeFormat("es-DO", {
     dateStyle: "medium",
@@ -36,8 +24,23 @@ function observed(item: ProjectionHistoryItem) {
   return item.outcome?.firstEvent ?? null;
 }
 
+async function readHistoryResponse(response: Response): Promise<ProjectionHistoryResponse> {
+  const raw = await response.text();
+  let payload: ProjectionHistoryResponse | null = null;
+  try {
+    payload = JSON.parse(raw) as ProjectionHistoryResponse;
+  } catch {
+    const compact = raw.replace(/\s+/g, " ").trim().slice(0, 240);
+    throw new Error(compact || `El servidor devolvió HTTP ${response.status} sin JSON válido.`);
+  }
+  if (!response.ok) {
+    throw new Error(payload.message ?? `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
 export function RecentFulfilledProjections() {
-  const [data, setData] = useState<FulfilledResponse | null>(null);
+  const [data, setData] = useState<ProjectionHistoryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -58,15 +61,16 @@ export function RecentFulfilledProjections() {
           cache: "no-store",
           signal: controller.signal,
         });
-        const payload = await response.json() as FulfilledResponse;
-        if (!response.ok) throw new Error(payload.message ?? `HTTP ${response.status}`);
+        const payload = await readHistoryResponse(response);
         if (!disposed) {
           setData(payload);
           setError(null);
         }
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
-        if (!disposed) setError(loadError instanceof Error ? loadError.message : "No fue posible cargar los aciertos recientes.");
+        if (!disposed) {
+          setError(loadError instanceof Error ? loadError.message : "No fue posible cargar los aciertos recientes.");
+        }
       } finally {
         if (!disposed && showLoader) setLoading(false);
       }
@@ -100,10 +104,7 @@ export function RecentFulfilledProjections() {
         </div>
       </header>
 
-      {error && <div className="warning-banner">{error}</div>}
-      {(data?.refresh?.errors.length ?? 0) > 0 && (
-        <div className="warning-banner">Evaluación automática: {data?.refresh?.errors.join(" · ")}</div>
-      )}
+      {error && <div className="warning-banner">Tabla de cumplidas: {error}</div>}
 
       <div className="globe-fulfilled-cards">
         {fulfilled.slice(0, 3).map((item) => {
@@ -146,7 +147,7 @@ export function RecentFulfilledProjections() {
             </article>
           );
         })}
-        {!loading && !fulfilled.length && (
+        {!loading && !fulfilled.length && !error && (
           <div className="panel globe-fulfilled-empty">Todavía no hay proyecciones cumplidas registradas.</div>
         )}
       </div>
@@ -206,7 +207,7 @@ export function RecentFulfilledProjections() {
                   </tr>
                 );
               })}
-              {!loading && !fulfilled.length && (
+              {!loading && !fulfilled.length && !error && (
                 <tr><td colSpan={6} className="projection-history-empty">No hay aciertos registrados para mostrar.</td></tr>
               )}
             </tbody>
