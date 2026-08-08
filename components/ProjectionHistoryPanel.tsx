@@ -15,22 +15,6 @@ const STATUS_LABELS: Record<ProjectionHistoryStatus, string> = {
   pending_evaluation: "Pendiente de evaluación",
 };
 
-interface RefreshStatus {
-  checkedAt: string;
-  attempted: boolean;
-  staleActive: boolean;
-  duePending: boolean;
-  activePredictionsChecked: number;
-  liveFulfillments: number;
-  duePredictionsEvaluated: number;
-  positiveOutcomes: number;
-  errors: string[];
-}
-
-type ProjectionHistoryApiResponse = ProjectionHistoryResponse & {
-  refresh?: RefreshStatus;
-};
-
 function formatDate(value: string, withTime = false) {
   return new Intl.DateTimeFormat("es-DO", {
     dateStyle: "medium",
@@ -65,8 +49,23 @@ function observedEvent(item: ProjectionHistoryItem) {
   return null;
 }
 
+async function readHistoryResponse(response: Response): Promise<ProjectionHistoryResponse> {
+  const raw = await response.text();
+  let payload: ProjectionHistoryResponse | null = null;
+  try {
+    payload = JSON.parse(raw) as ProjectionHistoryResponse;
+  } catch {
+    const compact = raw.replace(/\s+/g, " ").trim().slice(0, 300);
+    throw new Error(compact || `El servidor devolvió HTTP ${response.status} sin JSON válido.`);
+  }
+  if (!response.ok) {
+    throw new Error(payload.message ?? `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
 export function ProjectionHistoryPanel() {
-  const [data, setData] = useState<ProjectionHistoryApiResponse | null>(null);
+  const [data, setData] = useState<ProjectionHistoryResponse | null>(null);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState<ProjectionHistoryStatus | "all">("all");
   const [country, setCountry] = useState("");
@@ -101,8 +100,7 @@ export function ProjectionHistoryPanel() {
           cache: "no-store",
           signal: controller.signal,
         });
-        const payload = await response.json() as ProjectionHistoryApiResponse;
-        if (!response.ok) throw new Error(payload.message ?? `HTTP ${response.status}`);
+        const payload = await readHistoryResponse(response);
         if (!disposed) {
           setData(payload);
           setLastLoadedAt(new Date().toISOString());
@@ -110,7 +108,9 @@ export function ProjectionHistoryPanel() {
         }
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
-        if (!disposed) setError(loadError instanceof Error ? loadError.message : "No fue posible cargar las proyecciones.");
+        if (!disposed) {
+          setError(loadError instanceof Error ? loadError.message : "No fue posible cargar las proyecciones.");
+        }
       } finally {
         if (!disposed && showLoader) setLoading(false);
       }
@@ -204,19 +204,11 @@ export function ProjectionHistoryPanel() {
       </section>
 
       <div className="quality-warning">
-        <strong>Actualización viva:</strong> el historial se vuelve a consultar cada 5 minutos y el servidor revisa automáticamente proyecciones activas o vencidas que lleven más de 15 minutos sin evaluación.
-        {lastLoadedAt ? ` Última consulta: ${formatDate(lastLoadedAt, true)} UTC.` : ""}
-        {data?.refresh?.attempted
-          ? ` En esta consulta se revisaron ${data.refresh.activePredictionsChecked} activas y ${data.refresh.duePredictionsEvaluated} vencidas; ${data.refresh.liveFulfillments + data.refresh.positiveOutcomes} aciertos nuevos.`
-          : ""}
+        <strong>Lectura segura:</strong> esta tabla consulta únicamente los resultados ya persistidos y se vuelve a cargar cada 5 minutos. La evaluación de nuevas coincidencias se ejecuta por el evaluador independiente, para que una consulta sísmica lenta nunca deje el historial en blanco.
+        {lastLoadedAt ? ` Última lectura: ${formatDate(lastLoadedAt, true)} UTC.` : ""}
       </div>
 
-      {error && <div className="warning-banner projection-history-error">{error}</div>}
-      {(data?.refresh?.errors.length ?? 0) > 0 && (
-        <div className="warning-banner projection-history-error">
-          Evaluación automática: {data?.refresh?.errors.join(" · ")}
-        </div>
-      )}
+      {error && <div className="warning-banner projection-history-error">Historial: {error}</div>}
 
       <section className="panel projection-history-list">
         <div className="projection-history-list-head">
@@ -266,7 +258,7 @@ export function ProjectionHistoryPanel() {
                   </tr>
                 );
               })}
-              {!loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">No hay proyecciones que coincidan con los filtros.</td></tr>}
+              {!loading && !data?.items.length && !error && <tr><td colSpan={17} className="projection-history-empty">No hay proyecciones que coincidan con los filtros.</td></tr>}
               {loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">Cargando las últimas proyecciones…</td></tr>}
             </tbody>
           </table>
