@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { after, NextRequest, NextResponse } from "next/server";
 import { refreshProjectionEvaluationIfStale } from "@/lib/learning/evaluationFreshness";
 import {
   loadProjectionHistory,
@@ -29,11 +29,9 @@ export async function GET(request: NextRequest) {
     ? rawStatus as ProjectionHistoryStatus | "all"
     : "all";
 
-  // History is not a passive DB view anymore. If active/due projections have not
-  // been checked recently, this read repairs the evaluation cycle before returning.
-  // This makes the UI recover even if Vercel's daily cron failed or was delayed.
-  const refresh = await refreshProjectionEvaluationIfStale(request.signal, 15);
-
+  // Always return the persisted history first. Evaluation can involve external
+  // catalogues and must never turn a temporary timeout into an apparently empty
+  // history. Next.js `after` keeps the freshness repair outside the response path.
   const result = await loadProjectionHistory({
     page: Math.max(1, integer(request.nextUrl.searchParams.get("page"), 1)),
     pageSize: Math.min(100, Math.max(1, integer(request.nextUrl.searchParams.get("pageSize"), 30))),
@@ -44,7 +42,11 @@ export async function GET(request: NextRequest) {
     to: request.nextUrl.searchParams.get("to") ?? "",
   });
 
-  return NextResponse.json({ ...result, refresh }, {
+  after(async () => {
+    await refreshProjectionEvaluationIfStale(undefined, 15);
+  });
+
+  return NextResponse.json(result, {
     status: result.databaseConnected || !result.databaseConfigured ? 200 : 503,
     headers: { "Cache-Control": "no-store, max-age=0" },
   });
