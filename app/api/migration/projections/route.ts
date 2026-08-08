@@ -1,5 +1,4 @@
-import { after, NextRequest, NextResponse } from "next/server";
-import { refreshProjectionEvaluationIfStale } from "@/lib/learning/evaluationFreshness";
+import { NextRequest, NextResponse } from "next/server";
 import {
   loadProjectionHistory,
   type ProjectionHistoryStatus,
@@ -7,7 +6,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 const VALID_STATUSES = new Set<ProjectionHistoryStatus | "all">([
   "all",
@@ -29,25 +28,45 @@ export async function GET(request: NextRequest) {
     ? rawStatus as ProjectionHistoryStatus | "all"
     : "all";
 
-  // Always return the persisted history first. Evaluation can involve external
-  // catalogues and must never turn a temporary timeout into an apparently empty
-  // history. Next.js `after` keeps the freshness repair outside the response path.
-  const result = await loadProjectionHistory({
-    page: Math.max(1, integer(request.nextUrl.searchParams.get("page"), 1)),
-    pageSize: Math.min(100, Math.max(1, integer(request.nextUrl.searchParams.get("pageSize"), 30))),
-    status,
-    countryCode: request.nextUrl.searchParams.get("country") ?? "",
-    search: request.nextUrl.searchParams.get("search") ?? "",
-    from: request.nextUrl.searchParams.get("from") ?? "",
-    to: request.nextUrl.searchParams.get("to") ?? "",
-  });
+  try {
+    // This route is intentionally read-only and fast. Forecast evaluation is
+    // handled by the dedicated evaluator/cron so catalogue latency can never
+    // corrupt or replace the history response.
+    const result = await loadProjectionHistory({
+      page: Math.max(1, integer(request.nextUrl.searchParams.get("page"), 1)),
+      pageSize: Math.min(100, Math.max(1, integer(request.nextUrl.searchParams.get("pageSize"), 30))),
+      status,
+      countryCode: request.nextUrl.searchParams.get("country") ?? "",
+      search: request.nextUrl.searchParams.get("search") ?? "",
+      from: request.nextUrl.searchParams.get("from") ?? "",
+      to: request.nextUrl.searchParams.get("to") ?? "",
+    });
 
-  after(async () => {
-    await refreshProjectionEvaluationIfStale(undefined, 15);
-  });
-
-  return NextResponse.json(result, {
-    status: result.databaseConnected || !result.databaseConfigured ? 200 : 503,
-    headers: { "Cache-Control": "no-store, max-age=0" },
-  });
+    return NextResponse.json(result, {
+      status: result.databaseConnected || !result.databaseConfigured ? 200 : 503,
+      headers: { "Cache-Control": "no-store, max-age=0" },
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        databaseConfigured: Boolean(process.env.DATABASE_URL?.trim()),
+        databaseConnected: false,
+        page: 1,
+        pageSize: 30,
+        total: 0,
+        totalPages: 0,
+        items: [],
+        countries: [],
+        statusCounts: {
+          active: 0,
+          fulfilled: 0,
+          fulfilled_outside_range: 0,
+          not_fulfilled: 0,
+          pending_evaluation: 0,
+        },
+        message: error instanceof Error ? error.message : "No fue posible cargar el historial de proyecciones.",
+      },
+      { status: 500, headers: { "Cache-Control": "no-store, max-age=0" } },
+    );
+  }
 }
