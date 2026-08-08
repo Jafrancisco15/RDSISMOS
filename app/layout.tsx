@@ -7,6 +7,7 @@ import "./outlook-overrides.css";
 import "./globe.css";
 import "./globe-history.css";
 import "./globe-geology.css";
+import "./globe-fulfilled.css";
 import "./projection-history.css";
 import "./catalog-refinement.css";
 
