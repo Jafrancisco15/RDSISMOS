@@ -125,6 +125,7 @@ export function rankHistoricalAnalogs(
         similarityReasons: reasonsFor(magnitudeDifference, depthDifferenceKm, distanceKm),
       } satisfies HistoricalAnalogEvent;
     })
+    .filter((event) => event.distanceKm <= radiusKm)
     .sort((left, right) =>
       right.similarityScore - left.similarityScore
       || left.magnitudeDifference - right.magnitudeDifference
