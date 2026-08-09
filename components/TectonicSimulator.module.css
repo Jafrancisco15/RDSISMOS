@@ -1,0 +1,452 @@
+.dashboard {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 28px;
+}
+
+.header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 28px;
+  margin-bottom: 18px;
+}
+
+.header p {
+  max-width: 900px;
+  margin: 0;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #22c55e;
+  font-size: .76rem;
+  font-weight: 800;
+  letter-spacing: .16em;
+}
+
+.brand span {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 7px rgba(34, 197, 94, .13);
+}
+
+.modelBadge {
+  min-width: 235px;
+  border: 1px solid rgba(56, 189, 248, .28);
+  background: rgba(56, 189, 248, .07);
+  border-radius: 16px;
+  padding: 12px 14px;
+  text-align: right;
+}
+
+.modelBadge span,
+.modelBadge strong,
+.modelBadge small {
+  display: block;
+}
+
+.modelBadge span,
+.modelBadge small {
+  color: #91a4b2;
+  font-size: .72rem;
+}
+
+.modelBadge strong {
+  color: #bae6fd;
+  margin: 3px 0;
+}
+
+.notice,
+.controls,
+.visualSection,
+.tableSection,
+.scienceGrid article,
+.references {
+  border: 1px solid rgba(148, 163, 184, .2);
+  background: rgba(13, 27, 38, .88);
+  backdrop-filter: blur(18px);
+  border-radius: 22px;
+}
+
+.notice {
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  color: #bae6fd;
+  background: rgba(56, 189, 248, .08);
+  border-color: rgba(56, 189, 248, .28);
+  line-height: 1.55;
+}
+
+.controls,
+.visualSection,
+.tableSection,
+.references {
+  padding: 22px;
+  margin-top: 16px;
+}
+
+.controlHeading,
+.visualHeader,
+.tableHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.controlHeading span,
+.visualHeader span,
+.tableHeader span,
+.scienceGrid article > span,
+.references > span,
+.sideHead span {
+  color: #22c55e;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: .66rem;
+  font-weight: 800;
+}
+
+.controlHeading h2,
+.visualHeader h2,
+.tableHeader h2,
+.scienceGrid h2 {
+  margin: 5px 0 0;
+}
+
+.controlHeading button {
+  border: 1px solid rgba(56, 189, 248, .48);
+  background: rgba(56, 189, 248, .13);
+  color: #e8f1f5;
+  border-radius: 999px;
+  padding: 10px 16px;
+}
+
+.controlHeading button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.formGrid label {
+  display: grid;
+  gap: 6px;
+  color: #91a4b2;
+  font-size: .72rem;
+}
+
+.formGrid input,
+.formGrid select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, .22);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, .2);
+  color: #e8f1f5;
+  padding: 10px 11px;
+}
+
+.mapHint {
+  margin: 12px 0 0;
+  font-size: .8rem;
+}
+
+.error {
+  margin-top: 16px;
+  border: 1px solid rgba(239, 68, 68, .35);
+  background: rgba(239, 68, 68, .1);
+  color: #fecaca;
+  border-radius: 14px;
+  padding: 12px 14px;
+}
+
+.loading {
+  min-height: 520px;
+  display: grid;
+  place-content: center;
+  color: #91a4b2;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.metrics article {
+  border: 1px solid rgba(148, 163, 184, .2);
+  background: rgba(13, 27, 38, .74);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.metrics span,
+.metrics strong,
+.metrics small {
+  display: block;
+}
+
+.metrics span {
+  color: #91a4b2;
+  font-size: .72rem;
+}
+
+.metrics strong {
+  margin: 6px 0 3px;
+  font-size: 1.15rem;
+}
+
+.metrics small {
+  color: #91a4b2;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  color: #91a4b2;
+  font-size: .74rem;
+}
+
+.legend span {
+  color: #91a4b2;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: .74rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+}
+
+.sourceDot { background: #facc15; }
+.promotedDot { background: #fb7185; }
+.inhibitedDot { background: #38bdf8; }
+.neutralDot { background: #cbd5e1; }
+
+.visualGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.globeWrap {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, .16);
+  border-radius: 18px;
+  background: rgba(0, 0, 0, .16);
+}
+
+.sideList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 690px;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.sideHead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: rgba(13, 27, 38, .98);
+  padding-bottom: 8px;
+}
+
+.sideHead > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.sideHead strong {
+  font-size: 1.4rem;
+}
+
+.sideHead small {
+  color: #91a4b2;
+}
+
+.interactionItem {
+  border: 1px solid rgba(148, 163, 184, .17);
+  border-left: 3px solid #cbd5e1;
+  border-radius: 13px;
+  padding: 10px 11px;
+  background: rgba(0, 0, 0, .16);
+}
+
+.interactionItem[data-state="promoted"] { border-left-color: #fb7185; }
+.interactionItem[data-state="inhibited"] { border-left-color: #38bdf8; }
+
+.itemTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.itemTop strong {
+  font-size: .86rem;
+}
+
+.itemTop span {
+  color: #e8f1f5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-size: .78rem;
+}
+
+.interactionItem p,
+.interactionItem small {
+  margin: 4px 0 0;
+  color: #91a4b2;
+  font-size: .72rem;
+}
+
+.empty {
+  color: #91a4b2;
+  padding: 18px 4px;
+}
+
+.tableHeader p {
+  max-width: 520px;
+  margin: 0;
+  text-align: right;
+  font-size: .78rem;
+}
+
+.tableScroll {
+  overflow-x: auto;
+  margin-top: 14px;
+}
+
+.tableScroll table {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: collapse;
+}
+
+.tableScroll th,
+.tableScroll td {
+  border-bottom: 1px solid rgba(148, 163, 184, .14);
+  padding: 10px 9px;
+  text-align: left;
+  vertical-align: top;
+  font-size: .76rem;
+}
+
+.tableScroll th {
+  color: #91a4b2;
+  font-weight: 700;
+}
+
+.tableScroll td:last-child {
+  max-width: 330px;
+  color: #91a4b2;
+}
+
+.stressValue {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.stressValue[data-state="promoted"] { color: #fda4af; }
+.stressValue[data-state="inhibited"] { color: #7dd3fc; }
+.stressValue[data-state="neutral"] { color: #cbd5e1; }
+
+.scienceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.scienceGrid article {
+  padding: 20px;
+}
+
+.scienceGrid ul {
+  margin: 14px 0 0;
+  padding-left: 18px;
+  color: #91a4b2;
+  line-height: 1.55;
+}
+
+.scienceGrid li + li {
+  margin-top: 7px;
+}
+
+.references > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.references article {
+  border: 1px solid rgba(148, 163, 184, .15);
+  border-radius: 13px;
+  padding: 11px;
+  background: rgba(0, 0, 0, .14);
+}
+
+.references article strong {
+  font-size: .8rem;
+}
+
+.references article p {
+  margin: 5px 0 0;
+  font-size: .72rem;
+}
+
+@media (max-width: 1180px) {
+  .formGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .visualGrid { grid-template-columns: 1fr; }
+  .sideList { max-height: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sideHead { grid-column: 1 / -1; position: static; }
+  .references > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .dashboard { padding: 18px; }
+  .header,
+  .controlHeading,
+  .visualHeader,
+  .tableHeader {
+    display: grid;
+  }
+  .modelBadge { min-width: 0; text-align: left; }
+  .formGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .scienceGrid { grid-template-columns: 1fr; }
+  .sideList { grid-template-columns: 1fr; }
+  .references > div { grid-template-columns: 1fr; }
+  .legend { justify-content: flex-start; }
+  .tableHeader p { text-align: left; }
+}
+
+@media (max-width: 460px) {
+  .formGrid,
+  .metrics { grid-template-columns: 1fr; }
+}
