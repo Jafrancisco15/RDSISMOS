@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeGeoJsonPaths } from "@/lib/globeLayers";
 import {
+  normalizeSimulationInput,
   simulateTectonicInteractions,
   type TectonicMechanism,
   type TectonicSimulationInput,
@@ -53,9 +54,21 @@ function simulationInput(body: Record<string, unknown>): TectonicSimulationInput
   };
 }
 
+function localPriorityBounds(latitude: number, longitude: number) {
+  const latitudeSpan = 24;
+  const longitudeSpan = 30;
+  return {
+    minLat: Math.max(-90, latitude - latitudeSpan),
+    maxLat: Math.min(90, latitude + latitudeSpan),
+    minLng: Math.max(-180, longitude - longitudeSpan),
+    maxLng: Math.min(180, longitude + longitudeSpan),
+  };
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   try {
+    const input = normalizeSimulationInput(simulationInput(body));
     const [platePayload, faultPayload] = await Promise.all([
       fetchGeoJson(SOURCES.plateBoundaries),
       fetchGeoJson(SOURCES.activeFaults),
@@ -63,13 +76,15 @@ export async function POST(request: NextRequest) {
     const platePaths = normalizeGeoJsonPaths(platePayload, "plate-boundary", {
       maxPointsPerPath: 120,
       maxPaths: 1_400,
+      priorityBounds: localPriorityBounds(input.latitude, input.longitude),
     });
     const faultPaths = normalizeGeoJsonPaths(faultPayload, "active-fault", {
       maxPointsPerPath: 80,
-      maxPaths: 4_500,
+      maxPaths: 6_000,
+      priorityBounds: localPriorityBounds(input.latitude, input.longitude),
     });
     const result = simulateTectonicInteractions(
-      simulationInput(body),
+      input,
       platePaths,
       faultPaths,
       platePayload,
