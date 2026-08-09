@@ -106,7 +106,7 @@ export function TectonicSimulatorGlobe({
   }, [simulation.generatedAt, simulation.input.latitude, simulation.input.longitude, simulation.source.interactionRadiusKm]);
 
   const paths = useMemo<RenderPath[]>(() => {
-    const interactionPaths = simulation.interactions.map((interaction) => ({
+    const interactionPaths: RenderPath[] = simulation.interactions.map((interaction) => ({
       id: interaction.id,
       name: interaction.name,
       kind: interaction.kind === "active-fault" ? "Falla activa" : "Límite de placa",
