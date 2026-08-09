@@ -17,7 +17,7 @@ export interface HistoricalAnalogEvent {
   longitude: number;
   place: string;
   sourceCatalog: string;
-  sourceUrl: string;
+  sourceUrl?: string;
   distanceKm: number;
   magnitudeDifference: number;
   depthDifferenceKm: number;
