@@ -8,6 +8,7 @@ import {
   historicalAnalogRadiusKm,
   rankHistoricalAnalogs,
 } from "@/lib/tectonicAnalogs";
+import { simulateGlobalTectonicResponse } from "@/lib/tectonicGlobal";
 import {
   normalizeSimulationInput,
   simulateTectonicInteractions,
@@ -43,7 +44,7 @@ async function fetchGeoJson(url: string) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/geo+json, application/json",
-      "User-Agent": "RDSISMOS/0.7 tectonic-interaction-simulator",
+      "User-Agent": "RDSISMOS/0.8 global-tectonic-interaction-simulator",
     },
     next: { revalidate: REVALIDATE_SECONDS },
   });
@@ -125,12 +126,19 @@ export async function POST(request: NextRequest) {
       maxPaths: 6_000,
       priorityBounds: localPriorityBounds(input.latitude, input.longitude),
     });
+
     const result = simulateTectonicInteractions(
       input,
       platePaths,
       faultPaths,
       platePayload,
       faultPayload,
+    );
+    const globalTectonics = simulateGlobalTectonicResponse(
+      result.input,
+      platePaths,
+      faultPaths,
+      platePayload,
     );
     const analogRadiusKm = historicalAnalogRadiusKm(result.source.interactionRadiusKm);
     const historicalAnalogs = rankHistoricalAnalogs(
@@ -142,6 +150,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ...result,
+      globalTectonics,
       historicalAnalogs,
       historicalCatalog: {
         minimumMagnitude: HISTORICAL_ANALOG_MINIMUM_MAGNITUDE,

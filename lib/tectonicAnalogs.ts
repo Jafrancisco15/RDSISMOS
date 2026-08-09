@@ -1,5 +1,6 @@
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import { haversineKm } from "@/lib/regions";
+import type { GlobalTectonicResponse } from "@/lib/tectonicGlobal";
 import type {
   TectonicSimulationInput,
   TectonicSimulationResponse,
@@ -36,6 +37,7 @@ export interface HistoricalAnalogCatalog {
 }
 
 export type TectonicSimulationWithAnalogs = TectonicSimulationResponse & {
+  globalTectonics: GlobalTectonicResponse;
   historicalAnalogs: HistoricalAnalogEvent[];
   historicalCatalog: HistoricalAnalogCatalog;
 };
@@ -96,10 +98,6 @@ export function rankHistoricalAnalogs(
       const magnitudeSimilarity = exponentialSimilarity(magnitudeDifference, 0.55);
       const depthSimilarity = exponentialSimilarity(depthDifferenceKm, depthScale);
       const distanceSimilarity = exponentialSimilarity(distanceKm, distanceScale);
-
-      // The score intentionally uses only observable catalogue quantities.
-      // Standard ComCat rows do not consistently contain focal mechanisms, so
-      // mechanism similarity is not invented when moment tensors are absent.
       const similarityScore = Math.round(100 * clamp(
         0.47 * magnitudeSimilarity
           + 0.20 * depthSimilarity

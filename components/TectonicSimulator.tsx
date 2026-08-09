@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EarthquakeEvent, EarthquakePage } from "@/lib/earthquakes/types";
 import type { TectonicSimulationWithAnalogs } from "@/lib/tectonicAnalogs";
+import type { GlobalDistanceBand } from "@/lib/tectonicGlobal";
 import {
   defaultDipForMechanism,
   defaultRakeForMechanism,
@@ -75,6 +76,18 @@ function mechanismLabel(mechanism: TectonicMechanism) {
   if (mechanism === "reverse") return "Inversa / cabalgamiento";
   if (mechanism === "normal") return "Normal / extensión";
   return "Rumbo / strike-slip";
+}
+
+function distanceBandLabel(band: GlobalDistanceBand) {
+  if (band === "teleseismic") return "Teleseísmica";
+  if (band === "regional") return "Regional";
+  return "Cercana";
+}
+
+function globalBandColor(band: GlobalDistanceBand) {
+  if (band === "teleseismic") return "#c084fc";
+  if (band === "regional") return "#2dd4bf";
+  return "#a3e635";
 }
 
 function formatEventDate(value: string, withTime = false) {
@@ -177,8 +190,14 @@ export function TectonicSimulator() {
     void loadRecent(90, true);
   }, [loadRecent]);
 
-  const strongest = useMemo(
-    () => simulation?.interactions.slice(0, 8) ?? [],
+  const strongestStatic = useMemo(
+    () => simulation?.interactions.slice(0, 6) ?? [],
+    [simulation],
+  );
+  const strongestGlobal = useMemo(
+    () => simulation?.globalTectonics.interactions
+      .filter((interaction) => interaction.distanceBand !== "near")
+      .slice(0, 8) ?? [],
     [simulation],
   );
 
@@ -221,23 +240,23 @@ export function TectonicSimulator() {
       <header className={styles.header}>
         <div>
           <div className={styles.brand}><span /> RDSISMOS · LABORATORIO FÍSICO</div>
-          <h1>Simulador de migración e interacción tectónica 3D</h1>
+          <h1>Simulador global de interacción de placas y fallas</h1>
           <p>
-            Selecciona un terremoto real reciente y explora cómo su cambio de esfuerzo podría propagarse
-            sobre fallas activas y límites de placas. El modo manual queda disponible para escenarios hipotéticos.
+            Selecciona un terremoto real reciente y observa dos escalas distintas: transferencia estática local cerca de la ruptura
+            y respuesta dinámica global de fallas y límites de placas al paso de las ondas sísmicas.
           </p>
         </div>
         <div className={styles.modelBadge}>
-          <span>Flujo principal</span>
-          <strong>Evento real → migración</strong>
-          <small>Análogos históricos reales M5.9+</small>
+          <span>Modelo híbrido</span>
+          <strong>Local + global</strong>
+          <small>Coulomb estático · ondas teleseísmicas · red de placas</small>
         </div>
       </header>
 
       <section className={styles.notice}>
-        <strong>Interpretación:</strong> el evento elegido es real; la migración posterior es una simulación física simplificada.
-        Rojo/rosa indica una geometría receptora relativamente favorecida, azul una sombra relativa y gris un cambio pequeño.
-        No significa que una falla vaya a romper ni constituye una alerta sísmica.
+        <strong>La diferencia clave:</strong> un evento lejano, por ejemplo en Tonga, no transmite un cambio estático de Coulomb hasta Perú como si las placas fueran piezas rígidas.
+        La interacción remota se representa mediante el paso de ondas sísmicas y la susceptibilidad de fallas/límites tectónicos a esos esfuerzos dinámicos.
+        El mapa también muestra cuántos saltos de conectividad tectónica separan cada límite del límite de placa fuente. Ninguna de estas capas equivale a una predicción de ruptura.
       </section>
 
       <section className={styles.recentSection} aria-label="Sismos reales recientes para simular">
@@ -245,7 +264,7 @@ export function TectonicSimulator() {
           <div>
             <span>Sismos reales recientes · M5.9+</span>
             <h2>Escoge el evento fuente</h2>
-            <p>Al seleccionar uno se cargan automáticamente epicentro, magnitud y profundidad y se ejecuta la simulación.</p>
+            <p>Al seleccionar uno se cargan automáticamente epicentro, magnitud y profundidad y se ejecuta la simulación local + global.</p>
           </div>
           <div className={styles.rangeButtons} aria-label="Rango de eventos recientes">
             {([7, 30, 90, 365] as RecentDays[]).map((days) => (
@@ -294,7 +313,7 @@ export function TectonicSimulator() {
           </div>
           <div>
             <strong>{selectedRecent.latitude.toFixed(3)}°, {selectedRecent.longitude.toFixed(3)}°</strong>
-            <small>Epicentro usado por el simulador</small>
+            <small>Epicentro usado por ambos modelos</small>
           </div>
         </section>
       )}
@@ -308,7 +327,7 @@ export function TectonicSimulator() {
               <h2>{selectedRecent ? "Ajusta el mecanismo si lo conoces" : "Define un sismo hipotético"}</h2>
             </div>
             <button type="button" onClick={simulate} disabled={loading}>
-              {loading ? "Calculando…" : "Simular migración"}
+              {loading ? "Calculando…" : "Simular interacción"}
             </button>
           </div>
           <div className={styles.formGrid}>
@@ -367,14 +386,14 @@ export function TectonicSimulator() {
               <small>{selectedRecent ? selectedRecent.place : "Escenario definido por el usuario"}</small>
             </article>
             <article>
-              <span>Ruptura mediana</span>
-              <strong>{simulation.source.ruptureLengthKm.toFixed(0)} × {simulation.source.ruptureWidthKm.toFixed(0)} km</strong>
-              <small>{simulation.source.ruptureAreaKm2.toLocaleString()} km²</small>
+              <span>Alcance Coulomb local</span>
+              <strong>{simulation.source.interactionRadiusKm.toLocaleString()} km</strong>
+              <small>Transferencia estática ~M₀/r³ · no es el alcance global</small>
             </article>
             <article>
-              <span>Radio analizado</span>
-              <strong>{simulation.source.interactionRadiusKm.toLocaleString()} km</strong>
-              <small>Decaimiento estático ~M₀/r³</small>
+              <span>Respuesta dinámica global</span>
+              <strong>{simulation.globalTectonics.counts.teleseismic} teleseísmicas</strong>
+              <small>{simulation.globalTectonics.counts.regional} regionales · {simulation.globalTectonics.counts.plateLinked} conectadas por red de placas</small>
             </article>
             <article>
               <span>Análogos históricos</span>
@@ -386,15 +405,14 @@ export function TectonicSimulator() {
           <section className={styles.visualSection}>
             <div className={styles.visualHeader}>
               <div>
-                <span>Respuesta espacial</span>
-                <h2>Migración simulada sobre placas y fallas</h2>
+                <span>Respuesta espacial multiescala</span>
+                <h2>Coulomb local + interacción dinámica global</h2>
               </div>
               <div className={styles.legend}>
                 <span><i className={styles.sourceDot} /> Fuente</span>
-                <span><i className={styles.promotedDot} /> Favorecida</span>
-                <span><i className={styles.inhibitedDot} /> Sombra</span>
-                <span><i className={styles.neutralDot} /> Pequeña</span>
-                <span><i className={styles.analogDot} /> Histórico M5.9+</span>
+                <span><i className={styles.promotedDot} /> Coulomb +</span>
+                <span><i className={styles.inhibitedDot} /> Coulomb −</span>
+                <span><i className={styles.analogDot} /> Histórico</span>
               </div>
             </div>
             <div className={styles.visualGrid}>
@@ -403,10 +421,33 @@ export function TectonicSimulator() {
               </div>
               <aside className={styles.sideList}>
                 <div className={styles.sideHead}>
-                  <div><span>Mayor respuesta</span><strong>{simulation.interactions.length}</strong></div>
+                  <div><span>Respuesta global remota</span><strong>{strongestGlobal.length}</strong></div>
+                  <small>{simulation.globalTectonics.sourceBoundary
+                    ? `Fuente tectónica: ${simulation.globalTectonics.sourceBoundary.name}`
+                    : "Límite fuente no resuelto"}</small>
+                </div>
+                {strongestGlobal.map((interaction) => (
+                  <article
+                    key={interaction.id}
+                    className={styles.interactionItem}
+                    style={{ borderLeftColor: globalBandColor(interaction.distanceBand) }}
+                  >
+                    <div className={styles.itemTop}>
+                      <strong>{interaction.name}</strong>
+                      <span>{interaction.responseScore}%</span>
+                    </div>
+                    <p>{distanceBandLabel(interaction.distanceBand)} · {interaction.distanceKm.toFixed(0)} km · llegada ~{interaction.arrivalMinutes.toFixed(0)} min</p>
+                    <small>
+                      índice dinámico {interaction.dynamicIndex}/100
+                      {interaction.connectivityHops === null ? " · sin ruta de placa" : ` · ${interaction.connectivityHops} saltos de placa`}
+                    </small>
+                  </article>
+                ))}
+                <div className={styles.sideHead} style={{ position: "static", marginTop: 8 }}>
+                  <div><span>Coulomb local</span><strong>{simulation.interactions.length}</strong></div>
                   <small>{simulation.counts.faults} fallas · {simulation.counts.plateBoundaries} límites</small>
                 </div>
-                {strongest.map((interaction) => (
+                {strongestStatic.map((interaction) => (
                   <article key={interaction.id} className={styles.interactionItem} data-state={interaction.stressState}>
                     <div className={styles.itemTop}>
                       <strong>{interaction.name}</strong>
@@ -416,7 +457,6 @@ export function TectonicSimulator() {
                     <small>{stateLabel(interaction.stressState)} · evidencia {qualityLabel(interaction.evidenceQuality).toLowerCase()}</small>
                   </article>
                 ))}
-                {!strongest.length && <div className={styles.empty}>No se localizaron estructuras dentro del radio modelado.</div>}
               </aside>
             </div>
           </section>
@@ -424,10 +464,52 @@ export function TectonicSimulator() {
           <section className={styles.tableSection}>
             <div className={styles.tableHeader}>
               <div>
-                <span>Auditoría del escenario</span>
-                <h2>Reacción estimada por estructura</h2>
+                <span>Interacción mundial</span>
+                <h2>Respuesta dinámica y conectividad de placas</h2>
               </div>
-              <p>ΔCFS proxy es una aproximación de primer orden; conserva signo y escala relativa, no precisión de ingeniería.</p>
+              <p>Esta tabla sí incluye estructuras a miles de kilómetros. El índice dinámico es relativo y no debe leerse como probabilidad de terremoto.</p>
+            </div>
+            <div className={styles.tableScroll}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Estructura</th>
+                    <th>Escala</th>
+                    <th>Distancia</th>
+                    <th>Llegada ondas</th>
+                    <th>Índice dinámico</th>
+                    <th>Respuesta</th>
+                    <th>Ruta de placas</th>
+                    <th>Placas / contexto</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {simulation.globalTectonics.interactions.map((interaction) => (
+                    <tr key={`global-row:${interaction.id}`}>
+                      <td><strong>{interaction.name}</strong></td>
+                      <td style={{ color: globalBandColor(interaction.distanceBand) }}>{distanceBandLabel(interaction.distanceBand)}</td>
+                      <td>{interaction.distanceKm.toFixed(0)} km</td>
+                      <td>~{interaction.arrivalMinutes.toFixed(1)} min</td>
+                      <td>{interaction.dynamicIndex}/100</td>
+                      <td>{interaction.responseScore}%</td>
+                      <td>{interaction.connectivityHops === null ? "—" : `${interaction.connectivityHops} saltos`}</td>
+                      <td>{interaction.plateA && interaction.plateB
+                        ? `${interaction.plateA} ↔ ${interaction.plateB}${interaction.boundaryType ? ` · ${interaction.boundaryType}` : ""}`
+                        : interaction.kind === "active-fault" ? "Falla activa GEM" : "PB2002"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          <section className={styles.tableSection}>
+            <div className={styles.tableHeader}>
+              <div>
+                <span>Campo cercano</span>
+                <h2>Transferencia estática de Coulomb</h2>
+              </div>
+              <p>ΔCFS proxy conserva signo y escala relativa solo cerca/regionalmente; no se extrapola como cambio estático hasta el otro lado del planeta.</p>
             </div>
             <div className={styles.tableScroll}>
               <table>
@@ -489,16 +571,20 @@ export function TectonicSimulator() {
 
           <section className={styles.scienceGrid}>
             <article>
-              <span>Supuestos del escenario</span>
-              <h2>{mechanismLabel(simulation.input.mechanism)} · strike {simulation.input.strikeDeg.toFixed(0)}°</h2>
+              <span>Modelo multiescala</span>
+              <h2>{mechanismLabel(simulation.input.mechanism)} · límite fuente + red global</h2>
               <ul>
+                <li>{simulation.globalTectonics.model.description}</li>
+                <li>Las ondas superficiales se visualizan globalmente con una velocidad representativa de {simulation.globalTectonics.model.surfaceWaveSpeedKmS.toFixed(1)} km/s para estimar tiempos de llegada, no para reconstruir una forma de onda real.</li>
+                <li>La red PB2002 se convierte en un grafo de placas: 0 saltos corresponde a una placa del límite fuente; 1, 2, 3… representan conectividad tectónica sucesiva.</li>
                 {simulation.methodology.map((item) => <li key={item}>{item}</li>)}
               </ul>
             </article>
             <article>
               <span>Limitaciones científicas</span>
-              <h2>Qué todavía no debe interpretarse como predicción</h2>
+              <h2>Interacción no significa causalidad</h2>
               <ul>
+                {simulation.globalTectonics.warnings.map((item) => <li key={`global-${item}`}>{item}</li>)}
                 {simulation.warnings.map((item) => <li key={item}>{item}</li>)}
               </ul>
             </article>
@@ -513,6 +599,14 @@ export function TectonicSimulator() {
                   <p>{source.citation}</p>
                 </article>
               ))}
+              <article>
+                <strong>Hill & Prejean · USGS</strong>
+                <p>Dynamic triggering: esfuerzos transitorios de ondas sísmicas pueden disparar sismicidad a distancias superiores a 10,000 km bajo condiciones susceptibles.</p>
+              </article>
+              <article>
+                <strong>Velasco et al. (2008)</strong>
+                <p>Global ubiquity of dynamic earthquake triggering: evidencia de disparo remoto por ondas Rayleigh y Love de grandes terremotos.</p>
+              </article>
             </div>
           </section>
         </>
