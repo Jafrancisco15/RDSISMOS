@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
+import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { TectonicSimulationWithAnalogs } from "@/lib/tectonicAnalogs";
 import type { TectonicInteraction, TectonicSimulationResponse } from "@/lib/tectonicSimulator";
 
@@ -110,9 +111,11 @@ function pathLabel(path: RenderPath) {
 export function TectonicSimulatorGlobe({
   simulation,
   onPickLocation,
+  sourceEvent,
 }: {
   simulation: TectonicSimulationResponse;
   onPickLocation: (latitude: number, longitude: number) => void;
+  sourceEvent?: EarthquakeEvent | null;
 }) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -184,7 +187,7 @@ export function TectonicSimulatorGlobe({
     );
     interactionPaths.push({
       id: "source-rupture",
-      name: "Ruptura fuente aproximada",
+      name: sourceEvent ? `Ruptura estimada · ${sourceEvent.place}` : "Ruptura fuente aproximada",
       kind: "Fuente",
       stressState: "source",
       stressProxyKpa: 0,
@@ -199,7 +202,7 @@ export function TectonicSimulatorGlobe({
       dashGap: 0,
     });
     return interactionPaths;
-  }, [simulation]);
+  }, [simulation, sourceEvent]);
 
   const receivers = useMemo<RenderPoint[]>(() => simulation.interactions.slice(0, 40).map((interaction) => ({
     id: `receiver:${interaction.id}`,
@@ -228,8 +231,10 @@ export function TectonicSimulatorGlobe({
     altitude: 0.13,
     radius: 0.46,
     color: "#facc15",
-    label: `<div class="globe-tooltip"><strong>Sismo simulado · Mw ${simulation.input.magnitude.toFixed(1)}</strong><span>${simulation.input.depthKm.toFixed(0)} km profundidad · ${simulation.input.mechanism}</span><small>Strike ${simulation.input.strikeDeg.toFixed(0)}° · dip ${simulation.input.dipDeg.toFixed(0)}° · rake ${simulation.input.rakeDeg.toFixed(0)}°</small></div>`,
-  }), [simulation]);
+    label: sourceEvent
+      ? `<div class="globe-tooltip"><strong>Evento real seleccionado · M${sourceEvent.magnitude.toFixed(1)}</strong><span>${escapeHtml(sourceEvent.place)}</span><small>${formatHistoricalDate(sourceEvent.timeUtc)} · ${sourceEvent.depthKm.toFixed(0)} km profundidad · ${escapeHtml(sourceEvent.sourceCatalog)}</small><small>La migración mostrada desde este punto es simulada.</small></div>`
+      : `<div class="globe-tooltip"><strong>Escenario manual · Mw ${simulation.input.magnitude.toFixed(1)}</strong><span>${simulation.input.depthKm.toFixed(0)} km profundidad · ${simulation.input.mechanism}</span><small>Strike ${simulation.input.strikeDeg.toFixed(0)}° · dip ${simulation.input.dipDeg.toFixed(0)}° · rake ${simulation.input.rakeDeg.toFixed(0)}°</small></div>`,
+  }), [simulation, sourceEvent]);
 
   const arcs = useMemo(() => simulation.interactions.slice(0, 24).map((interaction) => ({
     id: `arc:${interaction.id}`,
@@ -333,8 +338,8 @@ export function TectonicSimulatorGlobe({
         lineHeight: 1.45,
         pointerEvents: "none",
       }}>
-        <strong>Reacción sobre el mapa</strong><br />
-        <span style={{ color: "#fb7185" }}>● favorecida</span> · <span style={{ color: "#38bdf8" }}>● sombra</span> · <span style={{ color: "#f59e0b" }}>● sismo histórico real M5.9+</span><br />
+        <strong>{sourceEvent ? "Evento real → migración simulada" : "Escenario manual → reacción simulada"}</strong><br />
+        <span style={{ color: "#fb7185" }}>● favorecida</span> · <span style={{ color: "#38bdf8" }}>● sombra</span> · <span style={{ color: "#f59e0b" }}>● histórico real M5.9+</span><br />
         El grosor, los pulsos y los marcadores aumentan con la respuesta calculada.
       </div>
       <div style={{
