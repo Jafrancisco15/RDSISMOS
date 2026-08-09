@@ -4,7 +4,11 @@
   "outputDirectory": null,
   "crons": [
     {
-      "path": "/api/migration/learning/evaluate",
+      "path": "/api/migration/learning/generate?lookbackDays=14&minimumMagnitude=4.5&sourceLimit=1&candidateLimit=12",
+      "schedule": "45 2 * * *"
+    },
+    {
+      "path": "/api/migration/learning/evaluate?activeLimit=4&dueLimit=4",
       "schedule": "15 3 * * *"
     }
   ]
