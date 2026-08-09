@@ -18,6 +18,7 @@ export interface GlobalTectonicInteraction {
   distanceKm: number;
   distanceBand: GlobalDistanceBand;
   arrivalMinutes: number;
+  azimuthDeg: number;
   strikeDeg: number;
   dynamicIndex: number;
   connectivityHops: number | null;
@@ -67,11 +68,6 @@ function clamp(value: number, minimum: number, maximum: number) {
 function normalize360(value: number) {
   const normalized = value % 360;
   return normalized < 0 ? normalized + 360 : normalized;
-}
-
-function angularDifference(left: number, right: number) {
-  const difference = Math.abs(normalize360(left) - normalize360(right));
-  return Math.min(difference, 360 - difference);
 }
 
 function propertyString(properties: Record<string, unknown> | undefined, ...keys: string[]) {
@@ -181,8 +177,8 @@ function plateHopDistances(graph: Map<string, Set<string>>, sources: string[]) {
 }
 
 function dynamicWaveIndex(input: Required<TectonicSimulationInput>, distanceKm: number, azimuthDeg: number) {
-  // Relative teleseismic-wave proxy only. It intentionally avoids pretending to
-  // know absolute dynamic stress without a waveform, attenuation model and local site response.
+  // Relative teleseismic-wave proxy only. It avoids pretending to know absolute
+  // dynamic stress without a waveform, attenuation model and local site response.
   const magnitudeGain = 10 ** (0.42 * (input.magnitude - 6));
   const spreading = 1 / Math.sqrt(Math.max(distanceKm, 250) / 250);
   const depthFactor = 0.75 + 0.25 * Math.exp(-input.depthKm / 250);
@@ -257,6 +253,7 @@ function interactionForPath(
     distanceKm: Number(geometry.distanceKm.toFixed(1)),
     distanceBand: distanceBand(geometry.distanceKm),
     arrivalMinutes: Number((geometry.distanceKm / SURFACE_WAVE_SPEED_KM_S / 60).toFixed(1)),
+    azimuthDeg: Number(geometry.azimuthDeg.toFixed(1)),
     strikeDeg: Number(geometry.strikeDeg.toFixed(1)),
     dynamicIndex,
     connectivityHops: connectivity.hops,
@@ -269,10 +266,39 @@ function interactionForPath(
   };
 }
 
+function topByScore(items: GlobalTectonicInteraction[], limit: number) {
+  return [...items]
+    .sort((a, b) => b.responseScore - a.responseScore || a.distanceKm - b.distanceKm)
+    .slice(0, limit);
+}
+
+function diverseTeleseismic(items: GlobalTectonicInteraction[], limit: number) {
+  const teleseismic = items.filter((item) => item.distanceBand === "teleseismic");
+  const sectors = new Map<number, GlobalTectonicInteraction[]>();
+  for (const item of teleseismic) {
+    const sector = Math.floor(normalize360(item.azimuthDeg) / 45);
+    if (!sectors.has(sector)) sectors.set(sector, []);
+    sectors.get(sector)?.push(item);
+  }
+  const selected: GlobalTectonicInteraction[] = [];
+  for (let sector = 0; sector < 8; sector += 1) {
+    selected.push(...topByScore(sectors.get(sector) ?? [], 4));
+  }
+  const ids = new Set(selected.map((item) => item.id));
+  for (const item of topByScore(teleseismic, limit * 2)) {
+    if (selected.length >= limit) break;
+    if (ids.has(item.id)) continue;
+    selected.push(item);
+    ids.add(item.id);
+  }
+  return topByScore(selected, limit);
+}
+
 function selectByBand(items: GlobalTectonicInteraction[]) {
-  const sorted = [...items].sort((a, b) => b.responseScore - a.responseScore || a.distanceKm - b.distanceKm);
-  const take = (band: GlobalDistanceBand, limit: number) => sorted.filter((item) => item.distanceBand === band).slice(0, limit);
-  return [...take("near", 18), ...take("regional", 24), ...take("teleseismic", 34)]
+  const near = topByScore(items.filter((item) => item.distanceBand === "near"), 18);
+  const regional = topByScore(items.filter((item) => item.distanceBand === "regional"), 24);
+  const teleseismic = diverseTeleseismic(items, 40);
+  return [...near, ...regional, ...teleseismic]
     .sort((a, b) => b.responseScore - a.responseScore || a.distanceKm - b.distanceKm);
 }
 
@@ -315,6 +341,7 @@ export function simulateGlobalTectonicResponse(
     warnings: [
       "La capa global representa susceptibilidad a esfuerzo dinámico de ondas sísmicas; no es una transferencia estática de Coulomb a través de miles de kilómetros.",
       "La conectividad de placas indica relación tectónica topológica, no una cadena causal demostrada entre terremotos.",
+      "El tiempo de llegada usa una velocidad representativa de ondas superficiales y la animación del globo no está reproducida a escala temporal real.",
       "Sin formas de onda, estructura 3D, estado de esfuerzo local y presión de poros no puede estimarse una probabilidad física de disparo remoto.",
     ],
   };
