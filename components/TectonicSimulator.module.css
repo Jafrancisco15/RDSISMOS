@@ -66,7 +66,9 @@
 .visualSection,
 .tableSection,
 .scienceGrid article,
-.references {
+.references,
+.recentSection,
+.selectedSource {
   border: 1px solid rgba(148, 163, 184, .2);
   background: rgba(13, 27, 38, .88);
   backdrop-filter: blur(18px);
@@ -85,9 +87,169 @@
 .controls,
 .visualSection,
 .tableSection,
-.references {
+.references,
+.recentSection {
   padding: 22px;
   margin-top: 16px;
+}
+
+.recentSection {
+  margin-top: 0;
+  background: linear-gradient(135deg, rgba(245, 158, 11, .08), transparent 48%), rgba(13, 27, 38, .9);
+  border-color: rgba(245, 158, 11, .24);
+}
+
+.recentHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.recentHeader > div:first-child > span,
+.selectedSource span {
+  color: #fbbf24;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: .66rem;
+  font-weight: 800;
+}
+
+.recentHeader h2,
+.selectedSource h2 {
+  margin: 5px 0 4px;
+}
+
+.recentHeader p,
+.selectedSource p {
+  margin: 0;
+  font-size: .82rem;
+}
+
+.rangeButtons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.rangeButtons button {
+  border: 1px solid rgba(148, 163, 184, .2);
+  background: rgba(255, 255, 255, .035);
+  color: #91a4b2;
+  border-radius: 999px;
+  padding: 8px 11px;
+}
+
+.rangeButtons button:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+.rangeButtons .activeRange {
+  color: #fff7ed;
+  border-color: rgba(245, 158, 11, .55);
+  background: rgba(245, 158, 11, .15);
+}
+
+.recentList {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 16px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 3px;
+}
+
+.recentList button {
+  min-width: 0;
+  text-align: left;
+  border: 1px solid rgba(148, 163, 184, .17);
+  border-radius: 14px;
+  background: rgba(0, 0, 0, .17);
+  color: #e8f1f5;
+  padding: 11px;
+  display: grid;
+  gap: 5px;
+}
+
+.recentList button:hover {
+  border-color: rgba(245, 158, 11, .42);
+}
+
+.recentList button strong {
+  color: #fbbf24;
+  font-size: 1.08rem;
+}
+
+.recentList button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: .82rem;
+}
+
+.recentList button small {
+  color: #91a4b2;
+  font-size: .7rem;
+  line-height: 1.35;
+}
+
+.recentList .selectedRecent {
+  border-color: rgba(250, 204, 21, .72);
+  background: rgba(250, 204, 21, .1);
+  box-shadow: inset 0 0 0 1px rgba(250, 204, 21, .18);
+}
+
+.inlineWarning {
+  margin-top: 12px;
+  border: 1px solid rgba(234, 179, 8, .32);
+  background: rgba(234, 179, 8, .08);
+  color: #fde68a;
+  border-radius: 12px;
+  padding: 10px 12px;
+  font-size: .78rem;
+}
+
+.selectedSource {
+  margin-top: 12px;
+  padding: 15px 17px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  border-color: rgba(250, 204, 21, .28);
+  background: rgba(250, 204, 21, .055);
+}
+
+.selectedSource > div:last-child {
+  text-align: right;
+}
+
+.selectedSource > div:last-child strong,
+.selectedSource > div:last-child small {
+  display: block;
+}
+
+.selectedSource > div:last-child small {
+  color: #91a4b2;
+  margin-top: 3px;
+}
+
+.manualDetails {
+  margin-top: 14px;
+}
+
+.manualDetails > summary {
+  color: #bae6fd;
+  cursor: pointer;
+  font-size: .82rem;
+  padding: 4px 2px;
+}
+
+.manualDetails .controls {
+  margin-top: 9px;
 }
 
 .controlHeading,
@@ -190,6 +352,7 @@
   background: rgba(13, 27, 38, .74);
   border-radius: 16px;
   padding: 14px;
+  min-width: 0;
 }
 
 .metrics span,
@@ -210,6 +373,7 @@
 
 .metrics small {
   color: #91a4b2;
+  overflow-wrap: anywhere;
 }
 
 .legend {
@@ -241,6 +405,7 @@
 .promotedDot { background: #fb7185; }
 .inhibitedDot { background: #38bdf8; }
 .neutralDot { background: #cbd5e1; }
+.analogDot { background: #f59e0b; }
 
 .visualGrid {
   display: grid;
@@ -375,6 +540,55 @@
 .stressValue[data-state="inhibited"] { color: #7dd3fc; }
 .stressValue[data-state="neutral"] { color: #cbd5e1; }
 
+.analogGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 14px;
+}
+
+.analogGrid article {
+  border: 1px solid rgba(245, 158, 11, .18);
+  border-radius: 13px;
+  background: rgba(245, 158, 11, .055);
+  padding: 11px;
+  min-width: 0;
+}
+
+.analogGrid article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.analogGrid article > div strong {
+  color: #fbbf24;
+}
+
+.analogGrid article > div span {
+  color: #fdba74;
+  font-size: .72rem;
+}
+
+.analogGrid h3 {
+  margin: 7px 0 4px;
+  font-size: .82rem;
+}
+
+.analogGrid p,
+.analogGrid small {
+  display: block;
+  margin: 0;
+  color: #91a4b2;
+  font-size: .7rem;
+  line-height: 1.4;
+}
+
+.analogGrid small {
+  margin-top: 5px;
+}
+
 .scienceGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -426,6 +640,8 @@
   .sideList { max-height: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .sideHead { grid-column: 1 / -1; position: static; }
   .references > div { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .recentList { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .analogGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -433,7 +649,9 @@
   .header,
   .controlHeading,
   .visualHeader,
-  .tableHeader {
+  .tableHeader,
+  .recentHeader,
+  .selectedSource {
     display: grid;
   }
   .modelBadge { min-width: 0; text-align: left; }
@@ -442,11 +660,16 @@
   .scienceGrid { grid-template-columns: 1fr; }
   .sideList { grid-template-columns: 1fr; }
   .references > div { grid-template-columns: 1fr; }
-  .legend { justify-content: flex-start; }
+  .legend,
+  .rangeButtons { justify-content: flex-start; }
   .tableHeader p { text-align: left; }
+  .selectedSource > div:last-child { text-align: left; }
+  .recentList { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 430px; }
+  .analogGrid { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 460px) {
   .formGrid,
-  .metrics { grid-template-columns: 1fr; }
+  .metrics,
+  .recentList { grid-template-columns: 1fr; }
 }
