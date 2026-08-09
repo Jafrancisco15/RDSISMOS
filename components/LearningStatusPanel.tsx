@@ -6,6 +6,10 @@ interface LearningStatus {
   databaseConfigured: boolean;
   databaseConnected: boolean;
   migrationPending?: boolean;
+  cronSecretConfigured?: boolean;
+  generationCronSchedule?: string;
+  evaluationCronSchedule?: string;
+  schedulerWarning?: string;
   modelVersion: string;
   capsulesTotal: number;
   capsulesActive: number;
@@ -13,6 +17,13 @@ interface LearningStatus {
   capsulesEvaluated: number;
   predictionsTotal: number;
   outcomesTotal: number;
+  pipeline?: {
+    latestCapsuleCreatedAt: string | null;
+    latestSourceTime: string | null;
+    latestOutcomeEvaluatedAt: string | null;
+    latestPredictionUpdatedAt: string | null;
+    error: string | null;
+  };
   latestMetrics: {
     sampleCount: number;
     positiveCount: number;
@@ -30,6 +41,17 @@ function percent(value: number) {
   return `${(value * 100).toFixed(1)}%`;
 }
 
+function dateTime(value: string | null | undefined) {
+  if (!value) return "Sin registro";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Sin registro";
+  return new Intl.DateTimeFormat("es-DO", {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: "UTC",
+  }).format(date);
+}
+
 export function LearningStatusPanel() {
   const [status, setStatus] = useState<LearningStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -37,7 +59,13 @@ export function LearningStatusPanel() {
   const load = useCallback(async () => {
     try {
       const response = await fetch(`/api/migration/learning/status?_=${Date.now()}`, { cache: "no-store" });
-      const payload = await response.json() as LearningStatus;
+      const text = await response.text();
+      let payload: LearningStatus;
+      try {
+        payload = JSON.parse(text) as LearningStatus;
+      } catch {
+        throw new Error(`Estado del pipeline devolvió HTTP ${response.status}: ${text.slice(0, 180) || "respuesta vacía"}`);
+      }
       setStatus(payload);
     } catch (error) {
       setStatus({
@@ -98,6 +126,12 @@ export function LearningStatusPanel() {
       {status?.message && !status.databaseConnected && (
         <p className="learning-status-message">{status.message}</p>
       )}
+      {status?.schedulerWarning && (
+        <p className="learning-status-message">{status.schedulerWarning}</p>
+      )}
+      {status?.pipeline?.error && (
+        <p className="learning-status-message">Pipeline: {status.pipeline.error}</p>
+      )}
 
       <div className="learning-status-grid">
         <div><span>Cápsulas guardadas</span><strong>{status?.capsulesTotal ?? 0}</strong></div>
@@ -106,6 +140,25 @@ export function LearningStatusPanel() {
         <div><span>Evaluadas</span><strong>{status?.capsulesEvaluated ?? 0}</strong></div>
         <div><span>Predicciones nacionales</span><strong>{status?.predictionsTotal ?? 0}</strong></div>
         <div><span>Resultados observados</span><strong>{status?.outcomesTotal ?? 0}</strong></div>
+      </div>
+
+      <div className="learning-metrics-row">
+        <div>
+          <span>Último evento fuente en memoria</span>
+          <strong>{dateTime(status?.pipeline?.latestSourceTime)}</strong>
+        </div>
+        <div>
+          <span>Última cápsula creada</span>
+          <strong>{dateTime(status?.pipeline?.latestCapsuleCreatedAt)}</strong>
+        </div>
+        <div>
+          <span>Último resultado evaluado</span>
+          <strong>{dateTime(status?.pipeline?.latestOutcomeEvaluatedAt)}</strong>
+        </div>
+        <div>
+          <span>Generación automática</span>
+          <strong>{status?.generationCronSchedule ?? "45 2 * * *"}</strong>
+        </div>
       </div>
 
       <div className="learning-metrics-row">
@@ -128,7 +181,7 @@ export function LearningStatusPanel() {
       </div>
 
       <p className="learning-status-footnote">
-        El aprendizaje comienza guardando la predicción antes del resultado. Cuando termina la vigilancia, el evaluador registra lo ocurrido y calcula calibración y error probabilístico.
+        La generación automática busca cada día eventos fuente nuevos de los últimos 14 días y guarda la proyección antes de conocer el resultado. Después, el evaluador revisa las ventanas activas y vencidas. Las fechas de arriba permiten comprobar si la escritura y evaluación siguen vivas.
       </p>
     </section>
   );
