@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { loadProjectionBacklogState } from "@/lib/learning/reconcile";
 import { getLearningStatus } from "@/lib/learning/store";
 
 export const runtime = "nodejs";
@@ -54,33 +55,44 @@ async function loadPipelineFreshness() {
 }
 
 export async function GET() {
-  const [status, pipeline] = await Promise.all([
+  const [status, pipeline, reconciliation] = await Promise.all([
     getLearningStatus(),
     loadPipelineFreshness(),
+    loadProjectionBacklogState().catch(() => ({
+      dueCapsules: 0,
+      duePredictions: 0,
+      legacyOutcomesPendingAudit: 0,
+      oldestDueAt: null,
+    })),
   ]);
   const migrationPending = isMissingLearningSchema(status.message ?? pipeline.error ?? undefined);
   const cronSecretConfigured = Boolean(process.env.CRON_SECRET?.trim());
+  const scheduler = {
+    generationCronSchedule: "30 14 * * *",
+    evaluationCronSchedule: "0 15 * * *",
+    reconciliationCronSchedule: "15 17 * * *",
+  };
   const response = migrationPending
     ? {
         ...status,
         pipeline,
+        reconciliation,
         migrationPending: true,
         cronSecretConfigured,
-        generationCronSchedule: "45 2 * * *",
-        evaluationCronSchedule: "15 3 * * *",
+        ...scheduler,
         message:
           "Supabase está conectado, pero falta ejecutar database/learning.sql en el mismo proyecto y esquema public usados por DATABASE_URL.",
       }
     : {
         ...status,
         pipeline,
+        reconciliation,
         migrationPending: false,
         cronSecretConfigured,
-        generationCronSchedule: "45 2 * * *",
-        evaluationCronSchedule: "15 3 * * *",
+        ...scheduler,
         schedulerWarning: cronSecretConfigured
           ? undefined
-          : "CRON_SECRET no está configurado. Las llamadas nativas de Vercel usan un fallback muy limitado; conviene configurar el secreto en Production.",
+          : "CRON_SECRET no está configurado. Las llamadas nativas de Vercel usan un fallback limitado; conviene configurar el secreto en Production.",
       };
 
   return NextResponse.json(response, {

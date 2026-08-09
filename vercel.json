@@ -10,6 +10,10 @@
     {
       "path": "/api/migration/learning/evaluate?activeLimit=4&dueLimit=4",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/migration/learning/reconcile?batchSize=4&maxBatches=6&activeLimit=2&timeBudgetMs=46000",
+      "schedule": "15 17 * * *"
     }
   ]
 }
