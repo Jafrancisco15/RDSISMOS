@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
+import { queryEarthquakeCatalogAll } from "@/lib/earthquakes/catalog";
+import type { EarthquakeFilters } from "@/lib/earthquakes/types";
 import { normalizeGeoJsonPaths } from "@/lib/globeLayers";
+import {
+  HISTORICAL_ANALOG_MINIMUM_MAGNITUDE,
+  HISTORICAL_ANALOG_START,
+  historicalAnalogRadiusKm,
+  rankHistoricalAnalogs,
+} from "@/lib/tectonicAnalogs";
 import {
   normalizeSimulationInput,
   simulateTectonicInteractions,
@@ -12,6 +20,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const REVALIDATE_SECONDS = 604_800;
+const HISTORICAL_QUERY_RADIUS_KM = 3_000;
+const HISTORICAL_QUERY_MAXIMUM = 12_000;
 
 const SOURCES = {
   plateBoundaries: "https://raw.githubusercontent.com/fraxen/tectonicplates/master/GeoJSON/PB2002_boundaries.json",
@@ -33,7 +43,7 @@ async function fetchGeoJson(url: string) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/geo+json, application/json",
-      "User-Agent": "RDSISMOS/0.6 tectonic-interaction-simulator",
+      "User-Agent": "RDSISMOS/0.7 tectonic-interaction-simulator",
     },
     next: { revalidate: REVALIDATE_SECONDS },
   });
@@ -65,14 +75,46 @@ function localPriorityBounds(latitude: number, longitude: number) {
   };
 }
 
+function historicalFilters(input: Required<TectonicSimulationInput>, endTime: string): EarthquakeFilters {
+  return {
+    startTime: HISTORICAL_ANALOG_START,
+    endTime,
+    minMagnitude: HISTORICAL_ANALOG_MINIMUM_MAGNITUDE,
+    maxMagnitude: 9.5,
+    minDepth: 0,
+    maxDepth: 700,
+    eventType: "earthquake",
+    source: "usgs",
+    latitude: input.latitude,
+    longitude: input.longitude,
+    maxRadiusKm: HISTORICAL_QUERY_RADIUS_KM,
+    orderBy: "magnitude",
+    limit: 20_000,
+    offset: 1,
+  };
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   try {
     const input = normalizeSimulationInput(simulationInput(body));
-    const [platePayload, faultPayload] = await Promise.all([
+    const endTime = new Date().toISOString();
+    const historicalPromise = queryEarthquakeCatalogAll(
+      historicalFilters(input, endTime),
+      HISTORICAL_QUERY_MAXIMUM,
+      request.signal,
+    ).then((events) => ({ events, warning: null as string | null }))
+      .catch((error) => ({
+        events: [],
+        warning: error instanceof Error ? error.message : "No fue posible consultar el histórico USGS.",
+      }));
+
+    const [platePayload, faultPayload, historicalResult] = await Promise.all([
       fetchGeoJson(SOURCES.plateBoundaries),
       fetchGeoJson(SOURCES.activeFaults),
+      historicalPromise,
     ]);
+
     const platePaths = normalizeGeoJsonPaths(platePayload, "plate-boundary", {
       maxPointsPerPath: 120,
       maxPaths: 1_400,
@@ -90,7 +132,27 @@ export async function POST(request: NextRequest) {
       platePayload,
       faultPayload,
     );
-    return NextResponse.json(result, {
+    const analogRadiusKm = historicalAnalogRadiusKm(result.source.interactionRadiusKm);
+    const historicalAnalogs = rankHistoricalAnalogs(
+      result.input,
+      historicalResult.events,
+      analogRadiusKm,
+      36,
+    );
+
+    return NextResponse.json({
+      ...result,
+      historicalAnalogs,
+      historicalCatalog: {
+        minimumMagnitude: HISTORICAL_ANALOG_MINIMUM_MAGNITUDE,
+        startTime: HISTORICAL_ANALOG_START,
+        endTime,
+        radiusKm: analogRadiusKm,
+        totalCandidates: historicalResult.events.length,
+        provider: "USGS ComCat histórico",
+        warning: historicalResult.warning,
+      },
+    }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   } catch (error) {
