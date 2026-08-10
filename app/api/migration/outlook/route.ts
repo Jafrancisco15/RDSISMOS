@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { countryByCode } from "@/lib/countries";
 import { buildCountryOutlook } from "@/lib/countryOutlook";
+import { dedupeMigrationCapsules } from "@/lib/learning/projectionNormalization";
 import { loadActiveCountryCapsules } from "@/lib/learning/outlookStore";
 
 export const runtime = "nodejs";
@@ -11,12 +12,13 @@ export async function GET(request: NextRequest) {
   const target = countryByCode(countryCode);
   const generatedAt = new Date();
   const stored = await loadActiveCountryCapsules(target.code, 12);
-  const outlook = buildCountryOutlook(stored.capsules, target.code, generatedAt);
+  const capsules = dedupeMigrationCapsules(stored.capsules);
+  const outlook = buildCountryOutlook(capsules, target.code, generatedAt);
 
   return NextResponse.json({
     generatedAt: generatedAt.toISOString(),
     target,
-    capsules: stored.capsules,
+    capsules,
     outlook,
     databaseConfigured: stored.databaseConfigured,
     databaseConnected: stored.databaseConnected,

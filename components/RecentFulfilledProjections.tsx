@@ -5,6 +5,12 @@ import type {
   ProjectionHistoryItem,
   ProjectionHistoryResponse,
 } from "@/lib/learning/projectionHistory";
+import { ProjectionExplanationCard } from "./ProjectionExplanationCard";
+import {
+  formatProbability,
+  formatSignedPercentagePoints,
+  projectionInfoStyles,
+} from "./ProjectionInfo";
 
 function formatDate(value: string, withTime = false) {
   return new Intl.DateTimeFormat("es-DO", {
@@ -41,6 +47,7 @@ async function readHistoryResponse(response: Response): Promise<ProjectionHistor
 
 export function RecentFulfilledProjections() {
   const [data, setData] = useState<ProjectionHistoryResponse | null>(null);
+  const [selectedItem, setSelectedItem] = useState<ProjectionHistoryItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +71,9 @@ export function RecentFulfilledProjections() {
         const payload = await readHistoryResponse(response);
         if (!disposed) {
           setData(payload);
+          setSelectedItem((current) => current
+            ? payload.items.find((item) => item.id === current.id) ?? current
+            : null);
           setError(null);
         }
       } catch (loadError) {
@@ -96,7 +106,7 @@ export function RecentFulfilledProjections() {
         <div>
           <span className="eyebrow">Validación observada</span>
           <h2>Proyecciones cumplidas</h2>
-          <p>Comparación directa entre el evento precedente, lo que el modelo proyectó y el primer sismo que cumplió tiempo, ubicación y magnitud.</p>
+          <p>Comparación directa entre el evento precedente, la probabilidad y base histórica emitidas, y el primer sismo que cumplió tiempo, ubicación y magnitud. “Explicar” reconstruye por qué el sistema marca cada acierto.</p>
         </div>
         <div className="globe-fulfilled-count">
           <span>Aciertos registrados</span>
@@ -126,8 +136,8 @@ export function RecentFulfilledProjections() {
                 <b>→</b>
                 <div>
                   <small>Predicción</small>
-                  <strong>{item.probabilityPct.toFixed(0)}% · M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong>
-                  <span>{item.zoneName}</span>
+                  <strong>{formatProbability(item.probabilityPct)} · M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong>
+                  <span>Base {formatProbability(item.baselinePct)} · {formatSignedPercentagePoints(item.liftPct)}</span>
                   <em>hasta {formatDate(item.surveillanceEnd)}</em>
                 </div>
                 <b>→</b>
@@ -144,6 +154,9 @@ export function RecentFulfilledProjections() {
                   ? ` · ${item.outcome.daysToFirstEvent.toFixed(1)} días desde el inicio efectivo de la predicción`
                   : ""}
               </footer>
+              <button type="button" className={projectionInfoStyles.detailButton} onClick={() => setSelectedItem(item)}>
+                Explicar por qué se cumplió
+              </button>
             </article>
           );
         })}
@@ -151,6 +164,8 @@ export function RecentFulfilledProjections() {
           <div className="panel globe-fulfilled-empty">Todavía no hay proyecciones cumplidas registradas.</div>
         )}
       </div>
+
+      {selectedItem && <ProjectionExplanationCard item={selectedItem} onClose={() => setSelectedItem(null)} />}
 
       <section className="panel globe-fulfilled-table-panel">
         <div className="globe-fulfilled-table-head">
@@ -186,9 +201,9 @@ export function RecentFulfilledProjections() {
                       <small>{item.sourceEvent.depthKm.toFixed(1)} km de profundidad</small>
                     </td>
                     <td>
-                      <strong>{item.probabilityPct.toFixed(0)}% · M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong>
+                      <strong>{formatProbability(item.probabilityPct)} · M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong>
                       <span>{formatDate(item.surveillanceStart)} → {formatDate(item.surveillanceEnd)}</span>
-                      <small>Base {item.baselinePct.toFixed(0)}% · diferencia {item.liftPct > 0 ? "+" : ""}{item.liftPct.toFixed(0)} pp</small>
+                      <small>Base {formatProbability(item.baselinePct)} · diferencia {formatSignedPercentagePoints(item.liftPct)} · evidencia {item.confidencePct.toFixed(0)}%</small>
                     </td>
                     <td>
                       <strong>M{event.magnitude.toFixed(1)} · {event.place}</strong>
@@ -203,6 +218,7 @@ export function RecentFulfilledProjections() {
                     <td>
                       <span className="projection-status-badge fulfilled">Cumplida</span>
                       <span>Evaluada {item.outcome ? formatDate(item.outcome.evaluatedAt, true) : "—"}</span>
+                      <button type="button" className={projectionInfoStyles.detailButton} onClick={() => setSelectedItem(item)}>Explicar</button>
                     </td>
                   </tr>
                 );

@@ -24,6 +24,8 @@ export interface ProjectionHistoryItem {
   surveillanceEnd: string;
   analogHits: number;
   controlHits: number;
+  analogsFound: number;
+  analogsEvaluated: number;
   medianLeadDays: number | null;
   confidencePct: number;
   generatedAt: string;
@@ -178,7 +180,7 @@ export async function loadProjectionHistory(
 
   try {
     const rows = await sql`
-      WITH projection_rows AS (
+      WITH joined AS (
         SELECT
           p.id,
           p.capsule_id,
@@ -198,6 +200,8 @@ export async function loadProjectionHistory(
           p.created_at,
           c.model_version_id,
           c.confidence_pct,
+          c.analogs_found,
+          c.analogs_evaluated,
           c.generated_at,
           c.source_event_external_id,
           c.source_time,
@@ -219,27 +223,46 @@ export async function loadProjectionHistory(
           o.strongest_event_magnitude,
           o.days_to_first_event,
           o.evaluation_payload,
-          o.evaluated_at,
-          CASE
-            WHEN o.occurred IS TRUE THEN 'fulfilled'
-            WHEN o.prediction_id IS NOT NULL
-              AND CASE
-                WHEN jsonb_typeof(o.evaluation_payload->'outsideRangeEventIds') = 'array'
-                  THEN jsonb_array_length(o.evaluation_payload->'outsideRangeEventIds')
-                ELSE 0
-              END > 0
-              THEN 'fulfilled_outside_range'
-            WHEN o.prediction_id IS NOT NULL THEN 'not_fulfilled'
-            WHEN p.surveillance_end >= NOW() THEN 'active'
-            ELSE 'pending_evaluation'
-          END AS display_status
+          o.evaluated_at
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
         LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE p.analog_hits > 0
+      ), projection_rows AS (
+        SELECT
+          *,
+          CASE
+            WHEN occurred IS TRUE THEN 'fulfilled'
+            WHEN outcome_prediction_id IS NOT NULL
+              AND CASE
+                WHEN jsonb_typeof(evaluation_payload->'outsideRangeEventIds') = 'array'
+                  THEN jsonb_array_length(evaluation_payload->'outsideRangeEventIds')
+                ELSE 0
+              END > 0
+              THEN 'fulfilled_outside_range'
+            WHEN outcome_prediction_id IS NOT NULL THEN 'not_fulfilled'
+            WHEN surveillance_end >= NOW() THEN 'active'
+            ELSE 'pending_evaluation'
+          END AS display_status,
+          ROW_NUMBER() OVER (
+            PARTITION BY capsule_id, country_code
+            ORDER BY
+              CASE
+                WHEN occurred IS TRUE THEN 0
+                WHEN outcome_prediction_id IS NOT NULL THEN 1
+                ELSE 2
+              END,
+              analog_hits DESC,
+              probability_pct DESC,
+              created_at DESC,
+              id ASC
+          ) AS duplicate_rank
+        FROM joined
       )
       SELECT *, COUNT(*) OVER()::bigint AS total_count
       FROM projection_rows
-      WHERE (${status} = 'all' OR display_status = ${status})
+      WHERE duplicate_rank = 1
+        AND (${status} = 'all' OR display_status = ${status})
         AND (${countryCode} = '' OR country_code = ${countryCode})
         AND (${search} = '' OR
           country_name ILIKE ${searchPattern} OR
@@ -255,35 +278,62 @@ export async function loadProjectionHistory(
     `;
 
     const countRows = await sql`
-      WITH projection_rows AS (
+      WITH joined AS (
         SELECT
+          p.id,
+          p.capsule_id,
           p.country_code,
           p.country_name,
           p.zone_name,
-          p.id,
+          p.probability_pct,
+          p.analog_hits,
+          p.created_at,
+          p.surveillance_end,
           c.source_place,
           c.source_event_external_id,
           c.generated_at,
-          CASE
-            WHEN o.occurred IS TRUE THEN 'fulfilled'
-            WHEN o.prediction_id IS NOT NULL
-              AND CASE
-                WHEN jsonb_typeof(o.evaluation_payload->'outsideRangeEventIds') = 'array'
-                  THEN jsonb_array_length(o.evaluation_payload->'outsideRangeEventIds')
-                ELSE 0
-              END > 0
-              THEN 'fulfilled_outside_range'
-            WHEN o.prediction_id IS NOT NULL THEN 'not_fulfilled'
-            WHEN p.surveillance_end >= NOW() THEN 'active'
-            ELSE 'pending_evaluation'
-          END AS display_status
+          o.prediction_id AS outcome_prediction_id,
+          o.occurred,
+          o.evaluation_payload
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
         LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE p.analog_hits > 0
+      ), projection_rows AS (
+        SELECT
+          *,
+          CASE
+            WHEN occurred IS TRUE THEN 'fulfilled'
+            WHEN outcome_prediction_id IS NOT NULL
+              AND CASE
+                WHEN jsonb_typeof(evaluation_payload->'outsideRangeEventIds') = 'array'
+                  THEN jsonb_array_length(evaluation_payload->'outsideRangeEventIds')
+                ELSE 0
+              END > 0
+              THEN 'fulfilled_outside_range'
+            WHEN outcome_prediction_id IS NOT NULL THEN 'not_fulfilled'
+            WHEN surveillance_end >= NOW() THEN 'active'
+            ELSE 'pending_evaluation'
+          END AS display_status,
+          ROW_NUMBER() OVER (
+            PARTITION BY capsule_id, country_code
+            ORDER BY
+              CASE
+                WHEN occurred IS TRUE THEN 0
+                WHEN outcome_prediction_id IS NOT NULL THEN 1
+                ELSE 2
+              END,
+              analog_hits DESC,
+              probability_pct DESC,
+              created_at DESC,
+              id ASC
+          ) AS duplicate_rank
+        FROM joined
       )
       SELECT display_status, COUNT(*)::bigint AS count
       FROM projection_rows
-      WHERE (${countryCode} = '' OR country_code = ${countryCode})
+      WHERE duplicate_rank = 1
+        AND (${countryCode} = '' OR country_code = ${countryCode})
         AND (${search} = '' OR
           country_name ILIKE ${searchPattern} OR
           zone_name ILIKE ${searchPattern} OR
@@ -298,6 +348,7 @@ export async function loadProjectionHistory(
     const countryRows = await sql`
       SELECT DISTINCT country_code, country_name
       FROM migration_country_predictions
+      WHERE analog_hits > 0
       ORDER BY country_name ASC
     `;
 
@@ -328,6 +379,8 @@ export async function loadProjectionHistory(
         surveillanceEnd: iso(row.surveillance_end),
         analogHits: number(row.analog_hits),
         controlHits: number(row.control_hits),
+        analogsFound: number(row.analogs_found),
+        analogsEvaluated: number(row.analogs_evaluated),
         medianLeadDays: nullableNumber(row.median_lead_days),
         confidencePct: number(row.confidence_pct),
         generatedAt: iso(row.generated_at),

@@ -22,6 +22,7 @@ export interface GlobeProjection {
   magnitudeMax: number;
   analogHits: number;
   controlHits: number;
+  analogsEvaluated?: number;
   medianLeadDays: number | null;
   sourceEvent: {
     id: string;

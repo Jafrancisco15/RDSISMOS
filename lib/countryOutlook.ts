@@ -1,3 +1,4 @@
+import { dedupeMigrationCapsules } from "./learning/projectionNormalization";
 import { haversineKm } from "./regions";
 import type {
   CountryTarget,
@@ -17,6 +18,8 @@ export interface CountryOutlookContribution {
   liftPct: number;
   confidencePct: number;
   analogsEvaluated: number;
+  analogHits: number;
+  controlHits: number;
   surveillanceStart: string;
   surveillanceEnd: string;
   peakTime: string;
@@ -51,7 +54,7 @@ function clamp(value: number, minimum: number, maximum: number) {
 
 function round(value: number, digits = 0) {
   const factor = 10 ** digits;
-  return Math.round(value * factor) / factor;
+  return Math.round((value + Number.EPSILON) * factor) / factor;
 }
 
 function weightedAverage(values: Array<{ value: number; weight: number }>) {
@@ -126,23 +129,17 @@ function targetDestination(capsule: HistoricalMigrationCapsule, countryCode: str
 }
 
 export function buildCountryOutlook(
-  capsules: HistoricalMigrationCapsule[],
+  rawCapsules: HistoricalMigrationCapsule[],
   countryCode: string,
   generatedAt = new Date(),
 ): CountryOutlook | null {
   const now = generatedAt.getTime();
-  const newestBySource = new Map<string, HistoricalMigrationCapsule>();
-  for (const capsule of capsules) {
-    const existing = newestBySource.get(capsule.sourceEvent.id);
-    if (!existing || new Date(capsule.generatedAt).getTime() > new Date(existing.generatedAt).getTime()) {
-      newestBySource.set(capsule.sourceEvent.id, capsule);
-    }
-  }
+  const capsules = dedupeMigrationCapsules(rawCapsules);
 
   const contributions: CountryOutlookContribution[] = [];
-  for (const capsule of newestBySource.values()) {
+  for (const capsule of capsules) {
     const destination = targetDestination(capsule, countryCode);
-    if (!destination) continue;
+    if (!destination || destination.analogHits <= 0) continue;
     const surveillanceStart = destination.surveillanceStart ?? capsule.sourceEvent.time;
     const surveillanceEnd = destination.surveillanceEnd
       ?? new Date(new Date(capsule.sourceEvent.time).getTime() + capsule.windowDays * DAY_MS).toISOString();
@@ -164,11 +161,13 @@ export function buildCountryOutlook(
     contributions.push({
       capsuleId: capsule.id,
       sourceEvent: capsule.sourceEvent,
-      probabilityPct: destination.recurrencePct,
-      baselinePct: destination.baselinePct ?? 0,
-      liftPct: destination.liftPct ?? destination.recurrencePct - (destination.baselinePct ?? 0),
+      probabilityPct: round(destination.recurrencePct, 2),
+      baselinePct: round(destination.baselinePct ?? 0, 2),
+      liftPct: round(destination.liftPct ?? destination.recurrencePct - (destination.baselinePct ?? 0), 2),
       confidencePct: capsule.confidencePct,
       analogsEvaluated: capsule.analogsEvaluated,
+      analogHits: destination.analogHits,
+      controlHits: destination.controlHits ?? 0,
       surveillanceStart,
       surveillanceEnd,
       peakTime,
@@ -188,10 +187,11 @@ export function buildCountryOutlook(
 
   const probabilityPct = round(weightedAverage(
     contributions.map((item) => ({ value: item.probabilityPct, weight: item.weight })),
-  ));
+  ), 2);
   const baselinePct = round(weightedAverage(
     contributions.map((item) => ({ value: item.baselinePct, weight: item.weight })),
-  ));
+  ), 2);
+  const liftPct = round(probabilityPct - baselinePct, 2);
   const averageConfidence = weightedAverage(
     contributions.map((item) => ({ value: item.confidencePct, weight: item.weight })),
   );
@@ -224,7 +224,7 @@ export function buildCountryOutlook(
     targetCountry: capsules[0].targetCountry,
     probabilityPct,
     baselinePct,
-    liftPct: probabilityPct - baselinePct,
+    liftPct,
     confidencePct,
     surveillanceStart: generatedAt.toISOString(),
     surveillanceEnd: new Date(surveillanceEndMs).toISOString(),
@@ -242,6 +242,7 @@ export function buildCountryOutlook(
     ],
     limitations: [
       "La probabilidad mostrada es empírica y las contribuciones no se consideran independientes.",
+      "Una misma proyección país + evento precedente se consolida para evitar duplicados por solapamiento de zonas o alias de catálogo.",
       "Las líneas del mapa representan asociaciones históricas, no el recorrido físico de energía sísmica.",
       "La magnitud y el tiempo son franjas orientativas; no constituyen una predicción determinista.",
     ],

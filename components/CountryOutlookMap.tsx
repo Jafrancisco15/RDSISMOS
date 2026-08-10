@@ -13,6 +13,12 @@ import {
 } from "react-leaflet";
 import type { CountryOutlook } from "@/lib/countryOutlook";
 import type { CountryTarget, SeismicEvent } from "@/lib/types";
+import {
+  formatProbability,
+  formatSignedPercentagePoints,
+  ParameterLabel,
+  PROJECTION_PARAMETER_HELP,
+} from "./ProjectionInfo";
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("es-DO", {
@@ -84,19 +90,21 @@ export function CountryOutlookMap({
         }}
       >
         <Tooltip permanent direction="top">
-          {outlook ? `Área proyectada · ${outlook.probabilityPct}%` : target.name}
+          {outlook ? `Área proyectada · ${formatProbability(outlook.probabilityPct)}` : target.name}
         </Tooltip>
         <Popup>
           <strong>{target.name}</strong>
           {outlook ? (
-            <>
-              <br />Probabilidad empírica combinada: {outlook.probabilityPct}%
-              <br />Línea base: {outlook.baselinePct}%
-              <br />Diferencia: {outlook.liftPct > 0 ? "+" : ""}{outlook.liftPct}%
-              <br />Mayor concentración: {formatDate(outlook.peakStart)}–{formatDate(outlook.peakEnd)}
-              <br />Vigilancia: hasta {formatDate(outlook.surveillanceEnd)}
-              <br />Magnitud orientativa: M{outlook.magnitudeMin.toFixed(1)}–M{outlook.magnitudeMax.toFixed(1)}
-            </>
+            <div style={{ marginTop: 7, lineHeight: 1.6 }}>
+              <div><ParameterLabel label="Probabilidad empírica" help={PROJECTION_PARAMETER_HELP.probability} />: <strong>{formatProbability(outlook.probabilityPct)}</strong></div>
+              <div><ParameterLabel label="Línea base" help={PROJECTION_PARAMETER_HELP.baseline} />: {formatProbability(outlook.baselinePct)}</div>
+              <div><ParameterLabel label="Exceso" help={PROJECTION_PARAMETER_HELP.lift} />: {formatSignedPercentagePoints(outlook.liftPct)}</div>
+              <div><ParameterLabel label="Calidad de evidencia" help={PROJECTION_PARAMETER_HELP.confidence} />: {outlook.confidencePct.toFixed(0)}%</div>
+              <div><ParameterLabel label="Mayor concentración" help={PROJECTION_PARAMETER_HELP.window} />: {formatDate(outlook.peakStart)}–{formatDate(outlook.peakEnd)}</div>
+              <div>Vigilancia: hasta {formatDate(outlook.surveillanceEnd)}</div>
+              <div><ParameterLabel label="Magnitud orientativa" help={PROJECTION_PARAMETER_HELP.magnitude} />: M{outlook.magnitudeMin.toFixed(1)}–M{outlook.magnitudeMax.toFixed(1)}</div>
+              <p style={{ marginBottom: 0 }}>La calidad de evidencia no es una segunda probabilidad. La proyección combina los precedentes activos mostrados en rojo.</p>
+            </div>
           ) : <><br />Esperando evidencia suficiente.</>}
         </Popup>
       </Circle>
@@ -116,15 +124,21 @@ export function CountryOutlookMap({
                 weight: index === 0 ? 3 : 2,
               }}
             >
-              <Tooltip direction="top">Origen M{event.magnitude.toFixed(1)} · {contribution.probabilityPct}%</Tooltip>
+              <Tooltip direction="top">Origen M{event.magnitude.toFixed(1)} · {formatProbability(contribution.probabilityPct)}</Tooltip>
               <Popup>
                 <strong>{event.place}</strong>
-                <br />Evento precedente: M{event.magnitude.toFixed(1)} · {event.depthKm.toFixed(0)} km
-                <br />Fecha: {formatDate(event.time)}
-                <br />Recurrencia hacia {target.name}: {contribution.probabilityPct}%
-                <br />Línea base: {contribution.baselinePct}%
-                <br />Vigilancia: {formatDate(contribution.surveillanceStart)}–{formatDate(contribution.surveillanceEnd)}
-                <br />Magnitud orientativa: M{contribution.magnitudeMin.toFixed(1)}–M{contribution.magnitudeMax.toFixed(1)}
+                <div style={{ marginTop: 7, lineHeight: 1.6 }}>
+                  <div>Evento precedente: M{event.magnitude.toFixed(1)} · {event.depthKm.toFixed(0)} km</div>
+                  <div>Fecha: {formatDate(event.time)}</div>
+                  <div><ParameterLabel label="Probabilidad hacia el país" help={PROJECTION_PARAMETER_HELP.probability} />: <strong>{formatProbability(contribution.probabilityPct)}</strong></div>
+                  <div><ParameterLabel label="Línea base" help={PROJECTION_PARAMETER_HELP.baseline} />: {formatProbability(contribution.baselinePct)}</div>
+                  <div><ParameterLabel label="Exceso" help={PROJECTION_PARAMETER_HELP.lift} />: {formatSignedPercentagePoints(contribution.liftPct)}</div>
+                  <div><ParameterLabel label="Calidad de evidencia" help={PROJECTION_PARAMETER_HELP.confidence} />: {contribution.confidencePct.toFixed(0)}%</div>
+                  <div><ParameterLabel label="Análogos" help={PROJECTION_PARAMETER_HELP.analogs} />: {contribution.analogHits} coincidencias de {contribution.analogsEvaluated} evaluados</div>
+                  <div>Vigilancia: {formatDate(contribution.surveillanceStart)}–{formatDate(contribution.surveillanceEnd)}</div>
+                  <div>Magnitud orientativa: M{contribution.magnitudeMin.toFixed(1)}–M{contribution.magnitudeMax.toFixed(1)}</div>
+                  <p style={{ marginBottom: 0 }}>Esta proyección se originó en este sismo precedente. Para cumplirse, el evento observado debe entrar simultáneamente en zona, tiempo y magnitud.</p>
+                </div>
               </Popup>
             </CircleMarker>
             <Polyline

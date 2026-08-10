@@ -6,6 +6,14 @@ import type {
   ProjectionHistoryResponse,
   ProjectionHistoryStatus,
 } from "@/lib/learning/projectionHistory";
+import { ProjectionExplanationCard } from "./ProjectionExplanationCard";
+import {
+  formatProbability,
+  formatSignedPercentagePoints,
+  ParameterLabel,
+  PROJECTION_PARAMETER_HELP,
+  projectionInfoStyles,
+} from "./ProjectionInfo";
 
 const STATUS_LABELS: Record<ProjectionHistoryStatus, string> = {
   active: "Activa",
@@ -21,10 +29,6 @@ function formatDate(value: string, withTime = false) {
     ...(withTime ? { timeStyle: "short" as const } : {}),
     timeZone: "UTC",
   }).format(new Date(value));
-}
-
-function signed(value: number) {
-  return `${value > 0 ? "+" : ""}${value.toFixed(0)}`;
 }
 
 function observedEvent(item: ProjectionHistoryItem) {
@@ -75,6 +79,7 @@ export function ProjectionHistoryPanel() {
   const [to, setTo] = useState("");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
+  const [selectedItem, setSelectedItem] = useState<ProjectionHistoryItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -105,6 +110,9 @@ export function ProjectionHistoryPanel() {
           setData(payload);
           setLastLoadedAt(new Date().toISOString());
           setError(null);
+          setSelectedItem((current) => current
+            ? payload.items.find((item) => item.id === current.id) ?? current
+            : null);
         }
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
@@ -140,11 +148,13 @@ export function ProjectionHistoryPanel() {
     setSearch("");
     setFrom("");
     setTo("");
+    setSelectedItem(null);
   }
 
   function selectStatus(next: ProjectionHistoryStatus | "all") {
     setPage(1);
     setStatus(next);
+    setSelectedItem(null);
   }
 
   return (
@@ -153,7 +163,7 @@ export function ProjectionHistoryPanel() {
         <div>
           <span className="eyebrow">Registro y resultados</span>
           <h1>Historial de proyecciones</h1>
-          <p>Tabla completa de proyecciones, ventanas de vigilancia, eventos precedentes y resultados observados. La primera página muestra los 30 registros más recientes.</p>
+          <p>Tabla completa de proyecciones, ventanas de vigilancia, eventos precedentes y resultados observados. Toca “Explicar” para reconstruir qué sabía el modelo cuando emitió cada proyección y por qué se considera cumplida o no.</p>
         </div>
         <div className="projection-history-total">
           <span>Resultados filtrados</span>
@@ -186,29 +196,30 @@ export function ProjectionHistoryPanel() {
         </label>
         <label>
           <span>País</span>
-          <select value={country} onChange={(event) => { setPage(1); setCountry(event.target.value); }}>
+          <select value={country} onChange={(event) => { setPage(1); setCountry(event.target.value); setSelectedItem(null); }}>
             <option value="">Todos los países</option>
             {(data?.countries ?? []).map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}
           </select>
         </label>
         <label>
           <span>Generada desde</span>
-          <input type="date" value={from} onChange={(event) => { setPage(1); setFrom(event.target.value); }} />
+          <input type="date" value={from} onChange={(event) => { setPage(1); setFrom(event.target.value); setSelectedItem(null); }} />
         </label>
         <label>
           <span>Generada hasta</span>
-          <input type="date" value={to} onChange={(event) => { setPage(1); setTo(event.target.value); }} />
+          <input type="date" value={to} onChange={(event) => { setPage(1); setTo(event.target.value); setSelectedItem(null); }} />
         </label>
         <button type="button" className="projection-clear-filters" onClick={resetFilters}>Limpiar</button>
         <button type="button" className="projection-clear-filters" onClick={() => setRefreshNonce((value) => value + 1)}>Actualizar ahora</button>
       </section>
 
       <div className="quality-warning">
-        <strong>Lectura segura:</strong> esta tabla consulta únicamente los resultados ya persistidos y se vuelve a cargar cada 5 minutos. La evaluación de nuevas coincidencias se ejecuta por el evaluador independiente, para que una consulta sísmica lenta nunca deje el historial en blanco.
+        <strong>Lectura segura:</strong> las proyecciones antiguas duplicadas por solapamiento de zonas se consolidan como una sola proyección por evento precedente + país. La probabilidad se conserva con dos decimales; la calidad de evidencia no es una segunda probabilidad.
         {lastLoadedAt ? ` Última lectura: ${formatDate(lastLoadedAt, true)} UTC.` : ""}
       </div>
 
       {error && <div className="warning-banner projection-history-error">Historial: {error}</div>}
+      {selectedItem && <ProjectionExplanationCard item={selectedItem} onClose={() => setSelectedItem(null)} />}
 
       <section className="panel projection-history-list">
         <div className="projection-history-list-head">
@@ -221,10 +232,15 @@ export function ProjectionHistoryPanel() {
             <thead>
               <tr>
                 <th>Estado</th><th>Generada</th><th>País</th><th>Zona</th>
-                <th>Prob.</th><th>Base</th><th>Dif.</th><th>Conf.</th>
-                <th>Escala</th><th>Ventana</th><th>Evento precedente</th>
-                <th>M origen</th><th>Fecha origen</th><th>Prof. origen</th>
-                <th>Evidencia</th><th>Resultado</th><th>Evento observado</th>
+                <th><ParameterLabel label="Prob." help={PROJECTION_PARAMETER_HELP.probability} /></th>
+                <th><ParameterLabel label="Base" help={PROJECTION_PARAMETER_HELP.baseline} /></th>
+                <th><ParameterLabel label="Dif." help={PROJECTION_PARAMETER_HELP.lift} /></th>
+                <th><ParameterLabel label="Calidad evid." help={PROJECTION_PARAMETER_HELP.confidence} /></th>
+                <th><ParameterLabel label="Escala" help={PROJECTION_PARAMETER_HELP.magnitude} /></th>
+                <th><ParameterLabel label="Ventana" help={PROJECTION_PARAMETER_HELP.window} /></th>
+                <th>Evento precedente</th><th>M origen</th><th>Fecha origen</th><th>Prof. origen</th>
+                <th><ParameterLabel label="Evidencia" help={PROJECTION_PARAMETER_HELP.analogs} /></th>
+                <th>Resultado</th><th>Evento observado</th>
               </tr>
             </thead>
             <tbody>
@@ -232,21 +248,24 @@ export function ProjectionHistoryPanel() {
                 const observed = observedEvent(item);
                 return (
                   <tr key={item.id}>
-                    <td><span className={`projection-status-badge ${item.status}`}>{STATUS_LABELS[item.status]}</span></td>
+                    <td>
+                      <span className={`projection-status-badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
+                      <button type="button" className={projectionInfoStyles.detailButton} onClick={() => setSelectedItem(item)}>Explicar</button>
+                    </td>
                     <td><strong>{formatDate(item.generatedAt, true)}</strong><small>{item.id}</small></td>
                     <td><strong>{item.countryName}</strong><small>{item.countryCode}</small></td>
                     <td><span>{item.zoneName}</span></td>
-                    <td><strong className="projection-probability">{item.probabilityPct.toFixed(0)}%</strong></td>
-                    <td><strong>{item.baselinePct.toFixed(0)}%</strong></td>
-                    <td><strong>{signed(item.liftPct)} pp</strong></td>
-                    <td><strong>{item.confidencePct.toFixed(0)}%</strong></td>
+                    <td><strong className="projection-probability">{formatProbability(item.probabilityPct)}</strong></td>
+                    <td><strong>{formatProbability(item.baselinePct)}</strong></td>
+                    <td><strong>{formatSignedPercentagePoints(item.liftPct)}</strong></td>
+                    <td><strong>{item.confidencePct.toFixed(0)}%</strong><small>escenario</small></td>
                     <td><strong>M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong></td>
                     <td><strong>{formatDate(item.surveillanceStart)}</strong><span>hasta {formatDate(item.surveillanceEnd)}</span></td>
                     <td><strong>{item.sourceEvent.place}</strong><small>{item.sourceEvent.id}</small></td>
                     <td><strong>M{item.sourceEvent.magnitude.toFixed(1)}</strong></td>
                     <td><strong>{formatDate(item.sourceEvent.time, true)}</strong></td>
                     <td><strong>{item.sourceEvent.depthKm.toFixed(1)} km</strong></td>
-                    <td><strong>{item.analogHits} análogos</strong><span>{item.controlHits} controles</span><small>Mediana {item.medianLeadDays?.toFixed(1) ?? "—"} días</small></td>
+                    <td><strong>{item.analogHits}/{item.analogsEvaluated || "—"} análogos</strong><span>{item.controlHits} controles</span><small>Mediana {item.medianLeadDays?.toFixed(1) ?? "—"} días</small></td>
                     <td>
                       <strong>{STATUS_LABELS[item.status]}</strong>
                       {item.outcome && <span>{item.outcome.eventCount} dentro del rango</span>}
@@ -265,9 +284,9 @@ export function ProjectionHistoryPanel() {
         </div>
 
         <nav className="projection-pagination" aria-label="Paginación del historial">
-          <button type="button" disabled={!data || data.page <= 1 || loading} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</button>
+          <button type="button" disabled={!data || data.page <= 1 || loading} onClick={() => { setPage((value) => Math.max(1, value - 1)); setSelectedItem(null); }}>Anterior</button>
           <span>Página <strong>{data?.page ?? page}</strong> de <strong>{Math.max(1, data?.totalPages ?? 1)}</strong></span>
-          <button type="button" disabled={!data || data.page >= data.totalPages || loading} onClick={() => setPage((value) => value + 1)}>Siguiente</button>
+          <button type="button" disabled={!data || data.page >= data.totalPages || loading} onClick={() => { setPage((value) => value + 1); setSelectedItem(null); }}>Siguiente</button>
         </nav>
       </section>
 

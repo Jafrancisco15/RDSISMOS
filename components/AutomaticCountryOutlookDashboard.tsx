@@ -8,12 +8,19 @@ import {
   rankOutlookSourceEvents,
   type CountryOutlook,
 } from "@/lib/countryOutlook";
+import { dedupeMigrationCapsules } from "@/lib/learning/projectionNormalization";
 import type {
   CountryTarget,
   EventsApiResponse,
   HistoricalMigrationCapsule,
   SeismicEvent,
 } from "@/lib/types";
+import {
+  formatProbability,
+  formatSignedPercentagePoints,
+  ParameterLabel,
+  PROJECTION_PARAMETER_HELP,
+} from "./ProjectionInfo";
 
 const CountryOutlookMap = dynamic(
   () => import("./CountryOutlookMap").then((module) => module.CountryOutlookMap),
@@ -47,22 +54,6 @@ function formatDate(value: string) {
     year: "numeric",
     timeZone: "UTC",
   }).format(new Date(value));
-}
-
-function signed(value: number) {
-  return `${value > 0 ? "+" : ""}${value}%`;
-}
-
-function dedupeCapsules(capsules: HistoricalMigrationCapsule[]) {
-  const map = new Map<string, HistoricalMigrationCapsule>();
-  for (const capsule of capsules) {
-    const key = `${capsule.targetCountry.code}:${capsule.sourceEvent.id}`;
-    const current = map.get(key);
-    if (!current || new Date(capsule.generatedAt).getTime() > new Date(current.generatedAt).getTime()) {
-      map.set(key, capsule);
-    }
-  }
-  return [...map.values()];
 }
 
 export function AutomaticCountryOutlookDashboard() {
@@ -107,7 +98,7 @@ export function AutomaticCountryOutlookDashboard() {
         if (!response.ok) throw new Error(payload.warning ?? `HTTP ${response.status}`);
         if (disposed) return;
         setStoredTarget(payload.target);
-        setCapsules(dedupeCapsules(payload.capsules ?? []));
+        setCapsules(dedupeMigrationCapsules(payload.capsules ?? []));
         if (payload.warning && !payload.databaseConnected) setAnalysisWarnings([payload.warning]);
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
@@ -189,7 +180,7 @@ export function AutomaticCountryOutlookDashboard() {
           });
           const payload = await response.json();
           if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
-          setCapsules((current) => dedupeCapsules([
+          setCapsules((current) => dedupeMigrationCapsules([
             ...current,
             payload as HistoricalMigrationCapsule,
           ]));
@@ -269,7 +260,7 @@ export function AutomaticCountryOutlookDashboard() {
       </header>
 
       <div className="quality-warning">
-        Esta es una proyección probabilística basada en recurrencia histórica, no una predicción determinista. El umbral actual es M{minimumSourceMagnitude.toFixed(1)}; reducirlo incorpora más eventos y también más ruido estadístico.
+        Esta es una proyección probabilística basada en recurrencia histórica, no una predicción determinista. Las probabilidades se muestran con dos decimales para conservar señales pequeñas; una proyección solo se emite si existe al menos una coincidencia histórica posterior para el destino.
       </div>
 
       <section className="panel outlook-hero">
@@ -283,18 +274,21 @@ export function AutomaticCountryOutlookDashboard() {
             <div className="outlook-hero-header">
               <div>
                 <span className="eyebrow">Proyección activa para {target.name} · precedentes M{minimumSourceMagnitude.toFixed(1)}+</span>
-                <h2>{outlook.probabilityPct}% de recurrencia empírica combinada</h2>
+                <h2>{formatProbability(outlook.probabilityPct)} de recurrencia empírica combinada</h2>
                 <p>{outlook.activeContributors} fenómenos precedentes continúan dentro de su periodo de vigilancia.</p>
               </div>
-              <div className="outlook-confidence"><strong>{outlook.confidencePct}%</strong><span>confianza muestral</span></div>
+              <div className="outlook-confidence">
+                <strong>{outlook.confidencePct.toFixed(0)}%</strong>
+                <span><ParameterLabel label="calidad de evidencia" help={PROJECTION_PARAMETER_HELP.confidence} /></span>
+              </div>
             </div>
             <div className="outlook-main-grid">
-              <div><span>Línea base</span><strong>{outlook.baselinePct}%</strong></div>
-              <div><span>Diferencia</span><strong className={outlook.liftPct > 0 ? "positive-lift" : "negative-lift"}>{signed(outlook.liftPct)}</strong></div>
-              <div><span>Magnitud orientativa</span><strong>M{outlook.magnitudeMin.toFixed(1)}–M{outlook.magnitudeMax.toFixed(1)}</strong></div>
+              <div><ParameterLabel label="Probabilidad" help={PROJECTION_PARAMETER_HELP.probability} /><strong>{formatProbability(outlook.probabilityPct)}</strong></div>
+              <div><ParameterLabel label="Línea base" help={PROJECTION_PARAMETER_HELP.baseline} /><strong>{formatProbability(outlook.baselinePct)}</strong></div>
+              <div><ParameterLabel label="Exceso vs. base" help={PROJECTION_PARAMETER_HELP.lift} /><strong className={outlook.liftPct > 0 ? "positive-lift" : "negative-lift"}>{formatSignedPercentagePoints(outlook.liftPct)}</strong></div>
+              <div><ParameterLabel label="Magnitud orientativa" help={PROJECTION_PARAMETER_HELP.magnitude} /><strong>M{outlook.magnitudeMin.toFixed(1)}–M{outlook.magnitudeMax.toFixed(1)}</strong></div>
               <div><span>Mayor concentración</span><strong>{formatDate(outlook.peakStart)}–{formatDate(outlook.peakEnd)}</strong></div>
-              <div><span>Vigilancia extendida</span><strong>hasta {formatDate(outlook.surveillanceEnd)}</strong></div>
-              <div><span>Fuentes activas</span><strong>{outlook.activeContributors}</strong></div>
+              <div><ParameterLabel label="Vigilancia extendida" help={PROJECTION_PARAMETER_HELP.window} /><strong>hasta {formatDate(outlook.surveillanceEnd)}</strong></div>
             </div>
             <p className="outlook-interpretation">
               La cifra combina las asociaciones históricas activas; no suma probabilidades como si los fenómenos fueran independientes. La línea base muestra cuánto de la actividad ya era habitual en ventanas de control equivalentes.
@@ -324,7 +318,7 @@ export function AutomaticCountryOutlookDashboard() {
             <span>Rojo: precedente · violeta/verde: proyección</span>
           </div>
           <CountryOutlookMap target={target} outlook={outlook} candidates={candidateEvents} />
-          <p className="outlook-map-note">Las líneas son asociaciones históricas visuales; no representan un recorrido físico del sismo.</p>
+          <p className="outlook-map-note">Toca el área o un precedente para abrir la explicación. Las líneas son asociaciones históricas visuales; no representan un recorrido físico del sismo.</p>
         </section>
       )}
 
@@ -342,16 +336,25 @@ export function AutomaticCountryOutlookDashboard() {
                   <div><strong>M{contribution.sourceEvent.magnitude.toFixed(1)} · {contribution.sourceEvent.place}</strong><small>{formatUtc(contribution.sourceEvent.time)} UTC · {contribution.sourceEvent.depthKm.toFixed(0)} km</small></div>
                 </div>
                 <div className="outlook-contribution-metrics">
-                  <div><span>Asociación histórica</span><strong>{contribution.probabilityPct}%</strong></div>
-                  <div><span>Línea base</span><strong>{contribution.baselinePct}%</strong></div>
-                  <div><span>Diferencia</span><strong className={contribution.liftPct > 0 ? "positive-lift" : "negative-lift"}>{signed(contribution.liftPct)}</strong></div>
-                  <div><span>Confianza</span><strong>{contribution.confidencePct}%</strong></div>
+                  <div><ParameterLabel label="Probabilidad" help={PROJECTION_PARAMETER_HELP.probability} /><strong>{formatProbability(contribution.probabilityPct)}</strong></div>
+                  <div><ParameterLabel label="Línea base" help={PROJECTION_PARAMETER_HELP.baseline} /><strong>{formatProbability(contribution.baselinePct)}</strong></div>
+                  <div><ParameterLabel label="Exceso" help={PROJECTION_PARAMETER_HELP.lift} /><strong className={contribution.liftPct > 0 ? "positive-lift" : "negative-lift"}>{formatSignedPercentagePoints(contribution.liftPct)}</strong></div>
+                  <div><ParameterLabel label="Calidad evidencia" help={PROJECTION_PARAMETER_HELP.confidence} /><strong>{contribution.confidencePct.toFixed(0)}%</strong></div>
                 </div>
                 <div className="outlook-contribution-window">
-                  <div><span>Franja de vigilancia</span><strong>{formatDate(contribution.surveillanceStart)}–{formatDate(contribution.surveillanceEnd)}</strong></div>
-                  <div><span>Severidad orientativa</span><strong>M{contribution.magnitudeMin.toFixed(1)}–M{contribution.magnitudeMax.toFixed(1)}</strong></div>
+                  <div><ParameterLabel label="Franja de vigilancia" help={PROJECTION_PARAMETER_HELP.window} /><strong>{formatDate(contribution.surveillanceStart)}–{formatDate(contribution.surveillanceEnd)}</strong></div>
+                  <div><ParameterLabel label="Severidad orientativa" help={PROJECTION_PARAMETER_HELP.magnitude} /><strong>M{contribution.magnitudeMin.toFixed(1)}–M{contribution.magnitudeMax.toFixed(1)}</strong></div>
                 </div>
-                <p>Basado en {contribution.analogsEvaluated} análogos independientes. {contribution.medianLeadDays !== null ? `La mediana histórica fue ${contribution.medianLeadDays} días.` : "No hubo mediana temporal suficiente."}</p>
+                <p>Basado en {contribution.analogsEvaluated} análogos independientes; {contribution.analogHits} mostraron una coincidencia posterior y {contribution.controlHits} la mostraron en la ventana de control. {contribution.medianLeadDays !== null ? `La mediana histórica fue ${contribution.medianLeadDays} días.` : "No hubo mediana temporal suficiente."}</p>
+                <details className="model-details">
+                  <summary>Explicar esta proyección</summary>
+                  <p>
+                    Esta señal hacia {target?.name} nació del terremoto M{contribution.sourceEvent.magnitude.toFixed(1)} de {contribution.sourceEvent.place}. En los análogos históricos comparables, la recurrencia ponderada posterior fue {formatProbability(contribution.probabilityPct)}, frente a una línea base de {formatProbability(contribution.baselinePct)}; la diferencia fue {formatSignedPercentagePoints(contribution.liftPct)}.
+                  </p>
+                  <p>
+                    La calidad de evidencia de {contribution.confidencePct.toFixed(0)}% describe cuánta evidencia y semejanza sustentan el escenario; no significa que exista esa probabilidad de que ocurra un sismo. Para cumplir la proyección, un evento debe entrar en la zona del país, la ventana temporal y el rango M{contribution.magnitudeMin.toFixed(1)}–M{contribution.magnitudeMax.toFixed(1)}.
+                  </p>
+                </details>
               </article>
             ))}
           </div>
@@ -371,7 +374,7 @@ export function AutomaticCountryOutlookDashboard() {
             return (
               <article key={event.id}>
                 <div><strong>M{event.magnitude.toFixed(1)} · {event.place}</strong><small>{formatUtc(event.time)} UTC · a {Math.round(distanceKm).toLocaleString()} km del país</small></div>
-                <span>{contribution ? `${contribution.probabilityPct}% hacia el país` : analyzing ? "Analizando…" : `prioridad ${Math.round(score * 100)}%`}</span>
+                <span>{contribution ? `${formatProbability(contribution.probabilityPct)} hacia el país` : analyzing ? "Analizando…" : `prioridad ${Math.round(score * 100)}%`}</span>
                 <button onClick={() => void reanalyze(event)}>Recalcular</button>
               </article>
             );

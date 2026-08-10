@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { buildHistoricalMigrationCapsuleV2 } from "@/lib/historicalMigrationV2";
+import { normalizeMigrationCapsule } from "@/lib/learning/projectionNormalization";
 import { persistMigrationCapsule } from "@/lib/learning/store";
 import type { EventSource, SeismicEvent } from "@/lib/types";
 
@@ -72,11 +73,11 @@ export async function POST(request: NextRequest) {
         ? body.countryCode.toUpperCase()
         : "DO";
     const sourceEvent = parseSourceEvent(body.sourceEvent);
-    const capsule = await buildHistoricalMigrationCapsuleV2(
+    const capsule = normalizeMigrationCapsule(await buildHistoricalMigrationCapsuleV2(
       sourceEvent,
       countryCode,
       request.signal,
-    );
+    ));
 
     let learningStorage: Awaited<ReturnType<typeof persistMigrationCapsule>>;
     try {
