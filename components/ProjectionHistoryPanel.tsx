@@ -4,6 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   ProjectionHistoryItem,
   ProjectionHistoryResponse,
+  ProjectionHistorySort,
+  ProjectionHistorySortDirection,
   ProjectionHistoryStatus,
 } from "@/lib/learning/projectionHistory";
 import { ProjectionExplanationCard } from "./ProjectionExplanationCard";
@@ -68,15 +70,24 @@ async function readHistoryResponse(response: Response): Promise<ProjectionHistor
   return payload;
 }
 
+function defaultDirection(column: ProjectionHistorySort): ProjectionHistorySortDirection {
+  return column === "country" || column === "zone" || column === "sourcePlace" || column === "status"
+    ? "asc"
+    : "desc";
+}
+
 export function ProjectionHistoryPanel() {
   const [data, setData] = useState<ProjectionHistoryResponse | null>(null);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [status, setStatus] = useState<ProjectionHistoryStatus | "all">("all");
   const [country, setCountry] = useState("");
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
+  const [sort, setSort] = useState<ProjectionHistorySort>("generatedAt");
+  const [direction, setDirection] = useState<ProjectionHistorySortDirection>("desc");
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [selectedItem, setSelectedItem] = useState<ProjectionHistoryItem | null>(null);
@@ -99,7 +110,16 @@ export function ProjectionHistoryPanel() {
       if (showLoader) setLoading(true);
       try {
         const params = new URLSearchParams({
-          page: String(page), status, country, search, from, to, _: String(Date.now()),
+          page: String(page),
+          pageSize: String(pageSize),
+          status,
+          country,
+          search,
+          from,
+          to,
+          sort,
+          direction,
+          _: String(Date.now()),
         });
         const response = await fetch(`/api/migration/projections?${params}`, {
           cache: "no-store",
@@ -131,7 +151,7 @@ export function ProjectionHistoryPanel() {
       controller.abort();
       window.clearInterval(interval);
     };
-  }, [country, from, page, refreshNonce, search, status, to]);
+  }, [country, direction, from, page, pageSize, refreshNonce, search, sort, status, to]);
 
   const showing = useMemo(() => {
     if (!data?.total) return "0 resultados";
@@ -142,12 +162,15 @@ export function ProjectionHistoryPanel() {
 
   function resetFilters() {
     setPage(1);
+    setPageSize(50);
     setStatus("all");
     setCountry("");
     setSearchDraft("");
     setSearch("");
     setFrom("");
     setTo("");
+    setSort("generatedAt");
+    setDirection("desc");
     setSelectedItem(null);
   }
 
@@ -157,13 +180,49 @@ export function ProjectionHistoryPanel() {
     setSelectedItem(null);
   }
 
+  function toggleSort(column: ProjectionHistorySort) {
+    setPage(1);
+    setSelectedItem(null);
+    if (sort === column) {
+      setDirection((current) => current === "asc" ? "desc" : "asc");
+      return;
+    }
+    setSort(column);
+    setDirection(defaultDirection(column));
+  }
+
+  function sortButton(column: ProjectionHistorySort, label: string) {
+    const active = sort === column;
+    const symbol = active ? (direction === "asc" ? "↑" : "↓") : "↕";
+    return (
+      <button
+        type="button"
+        aria-label={`Ordenar por ${label}${active ? `, orden ${direction === "asc" ? "ascendente" : "descendente"}` : ""}`}
+        title={`Ordenar por ${label}`}
+        onClick={() => toggleSort(column)}
+        style={{
+          marginLeft: 6,
+          border: "1px solid rgba(148,163,184,.28)",
+          borderRadius: 7,
+          padding: "2px 6px",
+          background: active ? "rgba(56,189,248,.14)" : "rgba(255,255,255,.03)",
+          color: active ? "#bae6fd" : "#94a3b8",
+          fontSize: ".72rem",
+          lineHeight: 1.2,
+        }}
+      >
+        {symbol}
+      </button>
+    );
+  }
+
   return (
     <main className="projection-history-page">
       <header className="projection-history-head">
         <div>
           <span className="eyebrow">Registro y resultados</span>
           <h1>Historial de proyecciones</h1>
-          <p>Tabla completa de proyecciones, ventanas de vigilancia, eventos precedentes y resultados observados. Toca “Explicar” para reconstruir qué sabía el modelo cuando emitió cada proyección y por qué se considera cumplida o no.</p>
+          <p>Tabla completa de proyecciones, ventanas de vigilancia, eventos precedentes y resultados observados. Se muestran 50 registros por página de forma predeterminada; usa las flechas de los encabezados para ordenar todo el historial, no solo la página visible.</p>
         </div>
         <div className="projection-history-total">
           <span>Resultados filtrados</span>
@@ -209,12 +268,19 @@ export function ProjectionHistoryPanel() {
           <span>Generada hasta</span>
           <input type="date" value={to} onChange={(event) => { setPage(1); setTo(event.target.value); setSelectedItem(null); }} />
         </label>
+        <label>
+          <span>Filas por página</span>
+          <select value={pageSize} onChange={(event) => { setPage(1); setPageSize(Number(event.target.value)); setSelectedItem(null); }}>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </label>
         <button type="button" className="projection-clear-filters" onClick={resetFilters}>Limpiar</button>
         <button type="button" className="projection-clear-filters" onClick={() => setRefreshNonce((value) => value + 1)}>Actualizar ahora</button>
       </section>
 
       <div className="quality-warning">
-        <strong>Lectura segura:</strong> las proyecciones antiguas duplicadas por solapamiento de zonas se consolidan como una sola proyección por evento precedente + país. La probabilidad se conserva con dos decimales; la calidad de evidencia no es una segunda probabilidad.
+        <strong>Lectura segura:</strong> el selector de países usa ahora el catálogo completo de la aplicación, aunque un país todavía no tenga una proyección con señal histórica. Las proyecciones antiguas duplicadas por solapamiento de zonas continúan consolidadas como una sola proyección por evento precedente + país.
         {lastLoadedAt ? ` Última lectura: ${formatDate(lastLoadedAt, true)} UTC.` : ""}
       </div>
 
@@ -224,23 +290,30 @@ export function ProjectionHistoryPanel() {
       <section className="panel projection-history-list">
         <div className="projection-history-list-head">
           <div><span className="eyebrow">Tabla</span><h2>Proyecciones registradas</h2></div>
-          <span>{loading ? "Actualizando…" : showing}</span>
+          <span>{loading ? "Actualizando…" : `${showing} · ${data?.pageSize ?? pageSize} por página`}</span>
         </div>
 
         <div className="projection-table-wrap">
           <table className="projection-history-table projection-history-table-expanded">
             <thead>
               <tr>
-                <th>Estado</th><th>Generada</th><th>País</th><th>Zona</th>
-                <th><ParameterLabel label="Prob." help={PROJECTION_PARAMETER_HELP.probability} /></th>
-                <th><ParameterLabel label="Base" help={PROJECTION_PARAMETER_HELP.baseline} /></th>
-                <th><ParameterLabel label="Dif." help={PROJECTION_PARAMETER_HELP.lift} /></th>
-                <th><ParameterLabel label="Calidad evid." help={PROJECTION_PARAMETER_HELP.confidence} /></th>
-                <th><ParameterLabel label="Escala" help={PROJECTION_PARAMETER_HELP.magnitude} /></th>
+                <th>Estado {sortButton("status", "estado")}</th>
+                <th>Generada {sortButton("generatedAt", "fecha de generación")}</th>
+                <th>País {sortButton("country", "país")}</th>
+                <th>Zona {sortButton("zone", "zona")}</th>
+                <th><ParameterLabel label="Prob." help={PROJECTION_PARAMETER_HELP.probability} />{sortButton("probability", "probabilidad")}</th>
+                <th><ParameterLabel label="Base" help={PROJECTION_PARAMETER_HELP.baseline} />{sortButton("baseline", "línea base")}</th>
+                <th><ParameterLabel label="Dif." help={PROJECTION_PARAMETER_HELP.lift} />{sortButton("lift", "diferencia")}</th>
+                <th><ParameterLabel label="Calidad evid." help={PROJECTION_PARAMETER_HELP.confidence} />{sortButton("confidence", "calidad de evidencia")}</th>
+                <th><ParameterLabel label="Escala" help={PROJECTION_PARAMETER_HELP.magnitude} />{sortButton("magnitude", "magnitud proyectada")}</th>
                 <th><ParameterLabel label="Ventana" help={PROJECTION_PARAMETER_HELP.window} /></th>
-                <th>Evento precedente</th><th>M origen</th><th>Fecha origen</th><th>Prof. origen</th>
+                <th>Evento precedente {sortButton("sourcePlace", "lugar del evento precedente")}</th>
+                <th>M origen {sortButton("sourceMagnitude", "magnitud del precedente")}</th>
+                <th>Fecha origen {sortButton("sourceTime", "fecha del precedente")}</th>
+                <th>Prof. origen</th>
                 <th><ParameterLabel label="Evidencia" help={PROJECTION_PARAMETER_HELP.analogs} /></th>
-                <th>Resultado</th><th>Evento observado</th>
+                <th>Resultado</th>
+                <th>Evento observado</th>
               </tr>
             </thead>
             <tbody>
