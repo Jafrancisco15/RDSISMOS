@@ -1,6 +1,7 @@
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
 import type { HistoricalMigrationCapsule } from "@/lib/types";
 import { calculateForecastMetrics } from "./metrics";
+import { normalizeMigrationCapsule } from "./projectionNormalization";
 
 export const CURRENT_MODEL_VERSION = "migration-country-v2";
 
@@ -85,10 +86,11 @@ function storedCapsuleId(capsule: HistoricalMigrationCapsule) {
   return `${CURRENT_MODEL_VERSION}:${capsule.id}`;
 }
 
-export async function persistMigrationCapsule(capsule: HistoricalMigrationCapsule) {
+export async function persistMigrationCapsule(rawCapsule: HistoricalMigrationCapsule) {
   const sql = getDb();
   if (!sql) return { persisted: false, reason: "DATABASE_URL no está configurada." };
 
+  const capsule = normalizeMigrationCapsule(rawCapsule);
   const capsuleId = storedCapsuleId(capsule);
   const surveillanceStart = capsule.destinations
     .map((item) => item.surveillanceStart)
@@ -145,7 +147,21 @@ export async function persistMigrationCapsule(capsule: HistoricalMigrationCapsul
 
     for (const destination of capsule.destinations) {
       if (!destination.countryCode) continue;
-      const predictionId = `${capsuleId}:${destination.zoneId}:${destination.countryCode}`;
+      const predictionId = `${capsuleId}:${destination.countryCode}`;
+
+      // Old versions used zone + country in the ID and could therefore create
+      // several unresolved rows for the same user-facing projection. Remove
+      // only obsolete unresolved aliases; rows with outcomes remain auditable.
+      await tx`
+        DELETE FROM migration_country_predictions p
+        WHERE p.capsule_id = ${capsuleId}
+          AND p.country_code = ${destination.countryCode}
+          AND p.id <> ${predictionId}
+          AND NOT EXISTS (
+            SELECT 1 FROM migration_outcomes o WHERE o.prediction_id = p.id
+          )
+      `;
+
       await tx`
         INSERT INTO migration_country_predictions (
           id, capsule_id, zone_id, zone_name, country_code, country_name,
@@ -167,6 +183,12 @@ export async function persistMigrationCapsule(capsule: HistoricalMigrationCapsul
           ${tx.json(toJsonValue(destination))}, NOW()
         )
         ON CONFLICT (id) DO UPDATE SET
+          zone_id = EXCLUDED.zone_id,
+          zone_name = EXCLUDED.zone_name,
+          country_name = EXCLUDED.country_name,
+          latitude = EXCLUDED.latitude,
+          longitude = EXCLUDED.longitude,
+          radius_km = EXCLUDED.radius_km,
           probability_pct = EXCLUDED.probability_pct,
           baseline_probability_pct = EXCLUDED.baseline_probability_pct,
           excess_probability_pct = EXCLUDED.excess_probability_pct,
@@ -214,8 +236,12 @@ export async function getLearningStatus(): Promise<LearningStatus> {
     `;
     const [predictionCounts] = await sql`
       SELECT
-        (SELECT COUNT(*)::bigint FROM migration_country_predictions) AS predictions_total,
-        (SELECT COUNT(*)::bigint FROM migration_outcomes) AS outcomes_total
+        (SELECT COUNT(DISTINCT (capsule_id, country_code))::bigint FROM migration_country_predictions) AS predictions_total,
+        (
+          SELECT COUNT(DISTINCT (p.capsule_id, p.country_code))::bigint
+          FROM migration_country_predictions p
+          JOIN migration_outcomes o ON o.prediction_id = p.id
+        ) AS outcomes_total
     `;
     const metricsRows = await sql`
       SELECT sample_count, positive_count, average_probability, observed_rate,
@@ -272,27 +298,39 @@ export async function loadDuePredictions(limitCapsules = 5): Promise<DuePredicti
       WHERE status = 'due'
       ORDER BY surveillance_end ASC
       LIMIT ${limitCapsules}
+    ), ranked AS (
+      SELECT
+        p.id AS prediction_id,
+        p.capsule_id,
+        c.model_version_id,
+        p.country_code,
+        p.country_name,
+        p.latitude,
+        p.longitude,
+        p.radius_km,
+        p.probability_pct,
+        p.surveillance_start,
+        p.surveillance_end,
+        p.magnitude_min,
+        p.magnitude_max,
+        o.prediction_id AS outcome_prediction_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY p.capsule_id, p.country_code
+          ORDER BY
+            CASE WHEN o.prediction_id IS NOT NULL THEN 0 ELSE 1 END,
+            p.analog_hits DESC,
+            p.probability_pct DESC,
+            p.updated_at DESC
+        ) AS duplicate_rank
+      FROM migration_country_predictions p
+      JOIN due_capsules d ON d.id = p.capsule_id
+      JOIN migration_capsules c ON c.id = p.capsule_id
+      LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
     )
-    SELECT
-      p.id AS prediction_id,
-      p.capsule_id,
-      c.model_version_id,
-      p.country_code,
-      p.country_name,
-      p.latitude,
-      p.longitude,
-      p.radius_km,
-      p.probability_pct,
-      p.surveillance_start,
-      p.surveillance_end,
-      p.magnitude_min,
-      p.magnitude_max
-    FROM migration_country_predictions p
-    JOIN due_capsules d ON d.id = p.capsule_id
-    JOIN migration_capsules c ON c.id = p.capsule_id
-    LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-    WHERE o.prediction_id IS NULL
-    ORDER BY p.capsule_id, p.country_code
+    SELECT *
+    FROM ranked
+    WHERE duplicate_rank = 1 AND outcome_prediction_id IS NULL
+    ORDER BY capsule_id, country_code
   `;
 
   return rows.map((row) => ({
@@ -358,9 +396,17 @@ export async function markCompletedCapsulesEvaluated() {
     WHERE c.status = 'due'
       AND NOT EXISTS (
         SELECT 1
-        FROM migration_country_predictions p
-        LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-        WHERE p.capsule_id = c.id AND o.prediction_id IS NULL
+        FROM (
+          SELECT
+            p.capsule_id,
+            p.country_code,
+            BOOL_OR(o.prediction_id IS NOT NULL) AS has_outcome
+          FROM migration_country_predictions p
+          LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+          WHERE p.capsule_id = c.id
+          GROUP BY p.capsule_id, p.country_code
+        ) country_state
+        WHERE country_state.has_outcome IS FALSE
       )
   `;
 }
@@ -369,11 +415,27 @@ export async function refreshModelMetrics(modelVersionId = CURRENT_MODEL_VERSION
   const sql = getDb();
   if (!sql) throw new Error("DATABASE_URL no está configurada.");
   const rows = await sql`
-    SELECT p.country_code, p.probability_pct, o.occurred
-    FROM migration_country_predictions p
-    JOIN migration_capsules c ON c.id = p.capsule_id
-    JOIN migration_outcomes o ON o.prediction_id = p.id
-    WHERE c.model_version_id = ${modelVersionId}
+    WITH ranked AS (
+      SELECT
+        p.country_code,
+        p.probability_pct,
+        o.occurred,
+        ROW_NUMBER() OVER (
+          PARTITION BY p.capsule_id, p.country_code
+          ORDER BY
+            CASE WHEN o.occurred IS TRUE THEN 0 ELSE 1 END,
+            o.evaluated_at DESC,
+            p.analog_hits DESC,
+            p.probability_pct DESC
+        ) AS duplicate_rank
+      FROM migration_country_predictions p
+      JOIN migration_capsules c ON c.id = p.capsule_id
+      JOIN migration_outcomes o ON o.prediction_id = p.id
+      WHERE c.model_version_id = ${modelVersionId}
+    )
+    SELECT country_code, probability_pct, occurred
+    FROM ranked
+    WHERE duplicate_rank = 1
   `;
 
   const all = rows.map((row) => ({
