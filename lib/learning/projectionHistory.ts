@@ -227,6 +227,7 @@ export async function loadProjectionHistory(
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
         LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE p.analog_hits > 0
       ), projection_rows AS (
         SELECT
           *,
@@ -297,6 +298,7 @@ export async function loadProjectionHistory(
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
         LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE p.analog_hits > 0
       ), projection_rows AS (
         SELECT
           *,
@@ -346,6 +348,7 @@ export async function loadProjectionHistory(
     const countryRows = await sql`
       SELECT DISTINCT country_code, country_name
       FROM migration_country_predictions
+      WHERE analog_hits > 0
       ORDER BY country_name ASC
     `;
 
