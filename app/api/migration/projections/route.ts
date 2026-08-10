@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { COUNTRIES } from "@/lib/countries";
 import {
   loadProjectionHistory,
+  type ProjectionHistorySort,
+  type ProjectionHistorySortDirection,
   type ProjectionHistoryStatus,
 } from "@/lib/learning/projectionHistory";
 
@@ -17,6 +20,21 @@ const VALID_STATUSES = new Set<ProjectionHistoryStatus | "all">([
   "pending_evaluation",
 ]);
 
+const VALID_SORTS = new Set<ProjectionHistorySort>([
+  "generatedAt",
+  "country",
+  "zone",
+  "probability",
+  "baseline",
+  "lift",
+  "confidence",
+  "magnitude",
+  "sourceMagnitude",
+  "sourceTime",
+  "sourcePlace",
+  "status",
+]);
+
 function integer(value: string | null, fallback: number) {
   const parsed = Number(value);
   return Number.isInteger(parsed) ? parsed : fallback;
@@ -27,6 +45,13 @@ export async function GET(request: NextRequest) {
   const status = VALID_STATUSES.has(rawStatus as ProjectionHistoryStatus | "all")
     ? rawStatus as ProjectionHistoryStatus | "all"
     : "all";
+  const rawSort = request.nextUrl.searchParams.get("sort") ?? "generatedAt";
+  const sort = VALID_SORTS.has(rawSort as ProjectionHistorySort)
+    ? rawSort as ProjectionHistorySort
+    : "generatedAt";
+  const direction: ProjectionHistorySortDirection = request.nextUrl.searchParams.get("direction") === "asc"
+    ? "asc"
+    : "desc";
 
   try {
     // This route is intentionally read-only and fast. Forecast evaluation is
@@ -34,12 +59,14 @@ export async function GET(request: NextRequest) {
     // corrupt or replace the history response.
     const result = await loadProjectionHistory({
       page: Math.max(1, integer(request.nextUrl.searchParams.get("page"), 1)),
-      pageSize: Math.min(100, Math.max(1, integer(request.nextUrl.searchParams.get("pageSize"), 30))),
+      pageSize: Math.min(100, Math.max(1, integer(request.nextUrl.searchParams.get("pageSize"), 50))),
       status,
       countryCode: request.nextUrl.searchParams.get("country") ?? "",
       search: request.nextUrl.searchParams.get("search") ?? "",
       from: request.nextUrl.searchParams.get("from") ?? "",
       to: request.nextUrl.searchParams.get("to") ?? "",
+      sort,
+      direction,
     });
 
     return NextResponse.json(result, {
@@ -52,11 +79,13 @@ export async function GET(request: NextRequest) {
         databaseConfigured: Boolean(process.env.DATABASE_URL?.trim()),
         databaseConnected: false,
         page: 1,
-        pageSize: 30,
+        pageSize: 50,
         total: 0,
         totalPages: 0,
         items: [],
-        countries: [],
+        countries: COUNTRIES
+          .map((country) => ({ code: country.code, name: country.name }))
+          .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" })),
         statusCounts: {
           active: 0,
           fulfilled: 0,
@@ -64,6 +93,8 @@ export async function GET(request: NextRequest) {
           not_fulfilled: 0,
           pending_evaluation: 0,
         },
+        sort,
+        direction,
         message: error instanceof Error ? error.message : "No fue posible cargar el historial de proyecciones.",
       },
       { status: 500, headers: { "Cache-Control": "no-store, max-age=0" } },
