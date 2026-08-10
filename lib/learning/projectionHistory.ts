@@ -1,3 +1,4 @@
+import { COUNTRIES } from "@/lib/countries";
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
 
 export type ProjectionHistoryStatus =
@@ -6,6 +7,22 @@ export type ProjectionHistoryStatus =
   | "fulfilled_outside_range"
   | "not_fulfilled"
   | "pending_evaluation";
+
+export type ProjectionHistorySort =
+  | "generatedAt"
+  | "country"
+  | "zone"
+  | "probability"
+  | "baseline"
+  | "lift"
+  | "confidence"
+  | "magnitude"
+  | "sourceMagnitude"
+  | "sourceTime"
+  | "sourcePlace"
+  | "status";
+
+export type ProjectionHistorySortDirection = "asc" | "desc";
 
 export interface ProjectionHistoryItem {
   id: string;
@@ -74,6 +91,8 @@ export interface ProjectionHistoryFilters {
   search?: string;
   from?: string;
   to?: string;
+  sort?: ProjectionHistorySort;
+  direction?: ProjectionHistorySortDirection;
 }
 
 export interface ProjectionHistoryResponse {
@@ -86,6 +105,8 @@ export interface ProjectionHistoryResponse {
   items: ProjectionHistoryItem[];
   countries: Array<{ code: string; name: string }>;
   statusCounts: Record<ProjectionHistoryStatus, number>;
+  sort: ProjectionHistorySort;
+  direction: ProjectionHistorySortDirection;
   message?: string;
 }
 
@@ -96,6 +117,10 @@ const EMPTY_COUNTS: Record<ProjectionHistoryStatus, number> = {
   not_fulfilled: 0,
   pending_evaluation: 0,
 };
+
+const ALL_COUNTRIES = COUNTRIES
+  .map((country) => ({ code: country.code, name: country.name }))
+  .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
 
 function number(value: unknown) {
   const parsed = Number(value);
@@ -151,7 +176,7 @@ function dateBoundary(value: string | undefined, endOfDay: boolean) {
 export async function loadProjectionHistory(
   filters: ProjectionHistoryFilters = {},
 ): Promise<ProjectionHistoryResponse> {
-  const pageSize = Math.min(100, Math.max(1, Math.trunc(filters.pageSize ?? 30)));
+  const pageSize = Math.min(100, Math.max(50, Math.trunc(filters.pageSize ?? 50)));
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
   const status = filters.status ?? "all";
   const countryCode = (filters.countryCode ?? "").trim().toUpperCase();
@@ -161,6 +186,8 @@ export async function loadProjectionHistory(
   const to = dateBoundary(filters.to, true) ?? "9999-12-31T23:59:59.999Z";
   const hasFrom = Boolean(dateBoundary(filters.from, false));
   const hasTo = Boolean(dateBoundary(filters.to, true));
+  const sort = filters.sort ?? "generatedAt";
+  const direction = filters.direction ?? "desc";
   const offset = (page - 1) * pageSize;
 
   const base: ProjectionHistoryResponse = {
@@ -171,8 +198,10 @@ export async function loadProjectionHistory(
     total: 0,
     totalPages: 0,
     items: [],
-    countries: [],
+    countries: ALL_COUNTRIES,
     statusCounts: { ...EMPTY_COUNTS },
+    sort,
+    direction,
   };
 
   const sql = getDb();
@@ -272,7 +301,35 @@ export async function loadProjectionHistory(
           id ILIKE ${searchPattern})
         AND (${hasFrom} = FALSE OR generated_at >= ${from})
         AND (${hasTo} = FALSE OR generated_at <= ${to})
-      ORDER BY created_at DESC, generated_at DESC, probability_pct DESC
+      ORDER BY
+        CASE WHEN ${sort} = 'generatedAt' AND ${direction} = 'asc' THEN generated_at END ASC,
+        CASE WHEN ${sort} = 'generatedAt' AND ${direction} = 'desc' THEN generated_at END DESC,
+        CASE WHEN ${sort} = 'country' AND ${direction} = 'asc' THEN LOWER(country_name) END ASC,
+        CASE WHEN ${sort} = 'country' AND ${direction} = 'desc' THEN LOWER(country_name) END DESC,
+        CASE WHEN ${sort} = 'zone' AND ${direction} = 'asc' THEN LOWER(zone_name) END ASC,
+        CASE WHEN ${sort} = 'zone' AND ${direction} = 'desc' THEN LOWER(zone_name) END DESC,
+        CASE WHEN ${sort} = 'probability' AND ${direction} = 'asc' THEN probability_pct END ASC,
+        CASE WHEN ${sort} = 'probability' AND ${direction} = 'desc' THEN probability_pct END DESC,
+        CASE WHEN ${sort} = 'baseline' AND ${direction} = 'asc' THEN baseline_probability_pct END ASC,
+        CASE WHEN ${sort} = 'baseline' AND ${direction} = 'desc' THEN baseline_probability_pct END DESC,
+        CASE WHEN ${sort} = 'lift' AND ${direction} = 'asc' THEN excess_probability_pct END ASC,
+        CASE WHEN ${sort} = 'lift' AND ${direction} = 'desc' THEN excess_probability_pct END DESC,
+        CASE WHEN ${sort} = 'confidence' AND ${direction} = 'asc' THEN confidence_pct END ASC,
+        CASE WHEN ${sort} = 'confidence' AND ${direction} = 'desc' THEN confidence_pct END DESC,
+        CASE WHEN ${sort} = 'magnitude' AND ${direction} = 'asc' THEN magnitude_max END ASC,
+        CASE WHEN ${sort} = 'magnitude' AND ${direction} = 'desc' THEN magnitude_max END DESC,
+        CASE WHEN ${sort} = 'sourceMagnitude' AND ${direction} = 'asc' THEN source_magnitude END ASC,
+        CASE WHEN ${sort} = 'sourceMagnitude' AND ${direction} = 'desc' THEN source_magnitude END DESC,
+        CASE WHEN ${sort} = 'sourceTime' AND ${direction} = 'asc' THEN source_time END ASC,
+        CASE WHEN ${sort} = 'sourceTime' AND ${direction} = 'desc' THEN source_time END DESC,
+        CASE WHEN ${sort} = 'sourcePlace' AND ${direction} = 'asc' THEN LOWER(source_place) END ASC,
+        CASE WHEN ${sort} = 'sourcePlace' AND ${direction} = 'desc' THEN LOWER(source_place) END DESC,
+        CASE WHEN ${sort} = 'status' AND ${direction} = 'asc' THEN display_status END ASC,
+        CASE WHEN ${sort} = 'status' AND ${direction} = 'desc' THEN display_status END DESC,
+        created_at DESC,
+        generated_at DESC,
+        probability_pct DESC,
+        id ASC
       LIMIT ${pageSize}
       OFFSET ${offset}
     `;
@@ -345,13 +402,6 @@ export async function loadProjectionHistory(
       GROUP BY display_status
     `;
 
-    const countryRows = await sql`
-      SELECT DISTINCT country_code, country_name
-      FROM migration_country_predictions
-      WHERE analog_hits > 0
-      ORDER BY country_name ASC
-    `;
-
     const total = number(rows[0]?.total_count);
     const statusCounts = { ...EMPTY_COUNTS };
     for (const row of countRows) {
@@ -420,10 +470,6 @@ export async function loadProjectionHistory(
       total,
       totalPages: total ? Math.ceil(total / pageSize) : 0,
       items,
-      countries: countryRows.map((row) => ({
-        code: String(row.country_code),
-        name: String(row.country_name),
-      })),
       statusCounts,
     };
   } catch (error) {
