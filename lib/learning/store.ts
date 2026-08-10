@@ -149,6 +149,16 @@ export async function persistMigrationCapsule(rawCapsule: HistoricalMigrationCap
       if (!destination.countryCode) continue;
       const predictionId = `${capsuleId}:${destination.countryCode}`;
 
+      const resolved = await tx`
+        SELECT 1
+        FROM migration_country_predictions p
+        JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE p.capsule_id = ${capsuleId}
+          AND p.country_code = ${destination.countryCode}
+        LIMIT 1
+      `;
+      if (resolved.length) continue;
+
       // Old versions used zone + country in the ID and could therefore create
       // several unresolved rows for the same user-facing projection. Remove
       // only obsolete unresolved aliases; rows with outcomes remain auditable.
