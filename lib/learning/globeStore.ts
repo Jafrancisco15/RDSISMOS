@@ -16,15 +16,9 @@ function utcDayStart(value: Date) {
 }
 
 /**
- * Loads every unresolved projection that was active at the requested instant.
- *
- * A projection is visible on the active globe only while:
- * - it had already been generated;
- * - its individual surveillance window had started and had not ended; and
- * - no outcome had been recorded by that instant.
- *
- * We intentionally do not rank one "winner" per country. Multiple independent
- * precedents for the same country remain visible until each one is resolved.
+ * Loads unresolved projections that were active at the requested instant.
+ * Multiple independent source events may project toward the same country, but
+ * duplicate rows from the same capsule + country are collapsed to one record.
  */
 export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
   databaseConfigured: boolean;
@@ -47,49 +41,66 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
 
   try {
     const rows = await sql`
-      SELECT
-        p.id,
-        p.country_code,
-        p.country_name,
-        p.latitude,
-        p.longitude,
-        p.radius_km,
-        p.probability_pct,
-        p.baseline_probability_pct,
-        p.excess_probability_pct,
-        p.surveillance_start,
-        p.surveillance_end,
-        p.magnitude_min,
-        p.magnitude_max,
-        p.analog_hits,
-        p.control_hits,
-        p.median_lead_days,
-        c.source_event_external_id,
-        c.source_time,
-        c.source_magnitude,
-        c.source_latitude,
-        c.source_longitude,
-        c.source_place,
-        c.confidence_pct,
-        c.generated_at
-      FROM migration_country_predictions p
-      JOIN migration_capsules c ON c.id = p.capsule_id
-      WHERE c.generated_at <= ${snapshotInstant}
-        AND p.surveillance_start <= ${snapshotInstant}
-        AND p.surveillance_end >= ${snapshotInstant}
-        AND p.magnitude_max >= 4.2
-        AND p.probability_pct > 0
-        AND NOT EXISTS (
-          SELECT 1
-          FROM migration_outcomes o
-          WHERE o.prediction_id = p.id
-            AND o.evaluated_at <= ${snapshotInstant}
-        )
+      WITH candidates AS (
+        SELECT
+          p.id,
+          p.capsule_id,
+          p.country_code,
+          p.country_name,
+          p.latitude,
+          p.longitude,
+          p.radius_km,
+          p.probability_pct,
+          p.baseline_probability_pct,
+          p.excess_probability_pct,
+          p.surveillance_start,
+          p.surveillance_end,
+          p.magnitude_min,
+          p.magnitude_max,
+          p.analog_hits,
+          p.control_hits,
+          p.median_lead_days,
+          p.updated_at,
+          c.source_event_external_id,
+          c.source_time,
+          c.source_magnitude,
+          c.source_latitude,
+          c.source_longitude,
+          c.source_place,
+          c.confidence_pct,
+          c.analogs_evaluated,
+          c.generated_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY p.capsule_id, p.country_code
+            ORDER BY
+              p.analog_hits DESC,
+              GREATEST(p.excess_probability_pct, 0) DESC,
+              p.probability_pct DESC,
+              p.updated_at DESC,
+              p.id ASC
+          ) AS duplicate_rank
+        FROM migration_country_predictions p
+        JOIN migration_capsules c ON c.id = p.capsule_id
+        WHERE c.generated_at <= ${snapshotInstant}
+          AND p.surveillance_start <= ${snapshotInstant}
+          AND p.surveillance_end >= ${snapshotInstant}
+          AND p.magnitude_max >= 4.2
+          AND p.probability_pct > 0
+          AND NOT EXISTS (
+            SELECT 1
+            FROM migration_outcomes o
+            WHERE o.prediction_id = p.id
+              AND o.evaluated_at <= ${snapshotInstant}
+          )
+      )
+      SELECT *
+      FROM candidates
+      WHERE duplicate_rank = 1
       ORDER BY
-        GREATEST(p.excess_probability_pct, 0) DESC,
-        p.probability_pct DESC,
-        c.generated_at DESC,
-        p.country_code ASC
+        GREATEST(excess_probability_pct, 0) DESC,
+        probability_pct DESC,
+        generated_at DESC,
+        country_code ASC
       LIMIT ${Math.min(1_000, Math.max(1, limit))}
     `;
 
@@ -115,6 +126,7 @@ export async function loadGlobeProjectionsAt(asOf: Date, limit = 500): Promise<{
         magnitudeMax: number(row.magnitude_max),
         analogHits: number(row.analog_hits),
         controlHits: number(row.control_hits),
+        analogsEvaluated: number(row.analogs_evaluated),
         medianLeadDays: row.median_lead_days === null ? null : number(row.median_lead_days),
         sourceEvent: {
           id: String(row.source_event_external_id),
