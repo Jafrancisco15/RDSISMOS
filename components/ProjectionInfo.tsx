@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import styles from "./ProjectionInfo.module.css";
 
 export const PROJECTION_PARAMETER_HELP = {
@@ -35,7 +35,8 @@ export const PROJECTION_PARAMETER_HELP = {
 } as const;
 
 export function formatProbability(value: number) {
-  return `${Number.isFinite(value) ? value.toFixed(2) : "—"}%`;
+  if (!Number.isFinite(value)) return "—";
+  return `${value.toFixed(2)}%`;
 }
 
 export function formatSignedPercentagePoints(value: number) {
@@ -50,14 +51,30 @@ export function ProjectionInfo({
   title: string;
   children: ReactNode;
 }) {
+  const [open, setOpen] = useState(false);
   return (
-    <details className={styles.info}>
-      <summary aria-label={`Información: ${title}`} title={`Información: ${title}`}>i</summary>
-      <div className={styles.popover} role="note">
-        <strong>{title}</strong>
-        <span>{children}</span>
-      </div>
-    </details>
+    <span className={styles.info}>
+      <button
+        type="button"
+        className={styles.infoButton}
+        aria-label={`Información: ${title}`}
+        aria-expanded={open}
+        title={`Información: ${title}`}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen((value) => !value);
+        }}
+      >
+        i
+      </button>
+      {open ? (
+        <span className={styles.popover} role="note" onClick={(event) => event.stopPropagation()}>
+          <strong>{title}</strong>
+          <span>{children}</span>
+        </span>
+      ) : null}
+    </span>
   );
 }
 
