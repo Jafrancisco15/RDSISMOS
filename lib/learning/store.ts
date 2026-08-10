@@ -396,17 +396,11 @@ export async function markCompletedCapsulesEvaluated() {
     WHERE c.status = 'due'
       AND NOT EXISTS (
         SELECT 1
-        FROM (
-          SELECT
-            p.capsule_id,
-            p.country_code,
-            BOOL_OR(o.prediction_id IS NOT NULL) AS has_outcome
-          FROM migration_country_predictions p
-          LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-          WHERE p.capsule_id = c.id
-          GROUP BY p.capsule_id, p.country_code
-        ) country_state
-        WHERE country_state.has_outcome IS FALSE
+        FROM migration_country_predictions p
+        LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
+        WHERE p.capsule_id = c.id
+        GROUP BY p.country_code
+        HAVING BOOL_OR(o.prediction_id IS NOT NULL) IS FALSE
       )
   `;
 }
