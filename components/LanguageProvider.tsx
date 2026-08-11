@@ -25,6 +25,7 @@ interface LanguageContextValue {
 
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 const TRANSLATABLE_ATTRIBUTES = ["aria-label", "title", "placeholder", "alt"] as const;
+const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "CODE", "PRE"]);
 
 export function useLanguage() {
   const value = useContext(LanguageContext);
@@ -39,6 +40,12 @@ function updateMetadata(locale: SiteLocale) {
   document.title = localeMeta[locale].title;
   const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
   if (description) description.content = localeMeta[locale].description;
+}
+
+function skippedElement(element: Element | null) {
+  if (!element) return false;
+  if (SKIP_TAGS.has(element.tagName)) return true;
+  return Boolean(element.closest("[data-i18n-ignore='true']"));
 }
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
@@ -62,6 +69,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     updateMetadata(locale);
 
     const renderTextNode = (node: Text) => {
+      if (skippedElement(node.parentElement)) return;
       const current = node.nodeValue ?? "";
       const previousSource = textSources.current.get(node);
       const previousRendered = previousSource === undefined ? undefined : translateText(previousSource, locale);
@@ -74,6 +82,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
     };
 
     const renderAttributes = (element: Element) => {
+      if (skippedElement(element)) return;
       let stored = attributeSources.current.get(element);
       if (!stored) {
         stored = new Map<string, string>();
@@ -99,7 +108,10 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
         return;
       }
       if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return;
-      if (root instanceof Element) renderAttributes(root);
+      if (root instanceof Element) {
+        if (skippedElement(root)) return;
+        renderAttributes(root);
+      }
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT);
       let current = walker.nextNode();
       while (current) {
