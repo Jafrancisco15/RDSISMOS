@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  loadEarthScopeIntegration,
+  type EarthScopeSourceEvent,
+} from "@/lib/earthscopeIntegration";
 import { queryEarthquakeCatalogAll } from "@/lib/earthquakes/catalog";
 import type { EarthquakeFilters } from "@/lib/earthquakes/types";
 import { normalizeGeoJsonPaths } from "@/lib/globeLayers";
@@ -40,11 +44,15 @@ function mechanism(value: unknown): TectonicMechanism {
     : "strike-slip";
 }
 
+function cleanText(value: unknown, maximum = 300) {
+  return typeof value === "string" ? value.replace(/[<>]/g, "").trim().slice(0, maximum) : "";
+}
+
 async function fetchGeoJson(url: string) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/geo+json, application/json",
-      "User-Agent": "RDSISMOS/0.8 global-tectonic-interaction-simulator",
+      "User-Agent": "RDSISMOS/0.9 EarthScope-wave-simulator",
     },
     next: { revalidate: REVALIDATE_SECONDS },
   });
@@ -62,6 +70,25 @@ function simulationInput(body: Record<string, unknown>): TectonicSimulationInput
     strikeDeg: finite(body.strikeDeg, 90),
     dipDeg: body.dipDeg === null || body.dipDeg === undefined ? undefined : finite(body.dipDeg, 90),
     rakeDeg: body.rakeDeg === null || body.rakeDeg === undefined ? undefined : finite(body.rakeDeg, 0),
+  };
+}
+
+function sourceEventFromBody(body: Record<string, unknown>): EarthScopeSourceEvent | undefined {
+  const raw = body.sourceEvent;
+  if (!raw || typeof raw !== "object") return undefined;
+  const record = raw as Record<string, unknown>;
+  const id = cleanText(record.id, 120);
+  const timeUtc = cleanText(record.timeUtc, 80);
+  const place = cleanText(record.place, 240);
+  if (!id || !timeUtc || Number.isNaN(Date.parse(timeUtc))) return undefined;
+  return {
+    id,
+    timeUtc: new Date(timeUtc).toISOString(),
+    place: place || "Evento sísmico",
+    sourceCatalog: cleanText(record.sourceCatalog, 80) || undefined,
+    sourceUrl: /^https:\/\//.test(cleanText(record.sourceUrl, 500))
+      ? cleanText(record.sourceUrl, 500)
+      : undefined,
   };
 }
 
@@ -99,6 +126,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({})) as Record<string, unknown>;
   try {
     const input = normalizeSimulationInput(simulationInput(body));
+    const sourceEvent = sourceEventFromBody(body);
     const endTime = new Date().toISOString();
     const historicalPromise = queryEarthquakeCatalogAll(
       historicalFilters(input, endTime),
@@ -148,6 +176,14 @@ export async function POST(request: NextRequest) {
       36,
     );
 
+    const earthScope = await loadEarthScopeIntegration({
+      latitude: result.input.latitude,
+      longitude: result.input.longitude,
+      depthKm: result.input.depthKm,
+      interactionDistancesKm: globalTectonics.interactions.map((interaction) => interaction.distanceKm),
+      sourceEvent,
+    });
+
     return NextResponse.json({
       ...result,
       globalTectonics,
@@ -161,6 +197,7 @@ export async function POST(request: NextRequest) {
         provider: "USGS ComCat histórico",
         warning: historicalResult.warning,
       },
+      earthScope,
     }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
