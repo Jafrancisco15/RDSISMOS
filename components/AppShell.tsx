@@ -7,10 +7,11 @@ import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashb
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { RecentFulfilledProjections } from "./RecentFulfilledProjections";
+import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "projection" | "history" | "events" | "simulator";
+type AppTab = "globe" | "scope" | "projection" | "history" | "events" | "simulator";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -18,6 +19,7 @@ export function AppShell() {
     <>
       <nav className="main-tabs" aria-label="Navegación principal">
         <button className={tab === "globe" ? "active" : ""} onClick={() => setTab("globe")}>Mapa 3D</button>
+        <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>Proyección</button>
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
@@ -29,6 +31,7 @@ export function AppShell() {
           <RecentFulfilledProjections />
         </>
       )}
+      {tab === "scope" && <ScopeProjection />}
       {tab === "projection" && (
         <>
           <div className="learning-panel-wrap"><LearningStatusPanel /></div>
