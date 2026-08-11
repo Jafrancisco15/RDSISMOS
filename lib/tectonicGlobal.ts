@@ -9,6 +9,12 @@ const SURFACE_WAVE_SPEED_KM_S = 3.6;
 export type GlobalDistanceBand = "near" | "regional" | "teleseismic";
 export type GlobalInteractionKind = "active-fault" | "plate-boundary";
 
+export interface TectonicSusceptibilityComponents {
+  environmentPrior: number;
+  geometryCoupling: number;
+  metadataSupport: number;
+}
+
 export interface GlobalTectonicInteraction {
   id: string;
   kind: GlobalInteractionKind;
@@ -20,13 +26,24 @@ export interface GlobalTectonicInteraction {
   arrivalMinutes: number;
   azimuthDeg: number;
   strikeDeg: number;
+  /** Relative incoming-wave energy proxy. This is not measured stress. */
   dynamicIndex: number;
+  /** Alias with an explicit physical meaning for the UI. */
+  energyArrivalIndex: number;
+  /** Receiver-side proxy based on tectonic regime, geometry and metadata support. */
+  susceptibilityIndex: number;
+  susceptibilityComponents: TectonicSusceptibilityComponents;
+  /** Combined energy × susceptibility proxy. This is not earthquake probability. */
+  potentialResponseIndex: number;
   connectivityHops: number | null;
   connectivityScore: number;
+  /** Backward-compatible alias of potentialResponseIndex. */
   responseScore: number;
   plateA?: string | null;
   plateB?: string | null;
   boundaryType?: string | null;
+  slipType?: string | null;
+  activityConfidence?: number | null;
   interpretation: string;
 }
 
@@ -44,6 +61,7 @@ export interface GlobalTectonicResponse {
     regional: number;
     teleseismic: number;
     plateLinked: number;
+    elevatedPotential: number;
   };
   model: {
     surfaceWaveSpeedKmS: number;
@@ -61,6 +79,14 @@ interface GeoJsonFeatureCollection {
   features?: GeoJsonFeature[];
 }
 
+interface ReceiverContext {
+  plateA: string | null;
+  plateB: string | null;
+  boundaryType: string | null;
+  slipType: string | null;
+  activityConfidence: number | null;
+}
+
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -74,6 +100,15 @@ function propertyString(properties: Record<string, unknown> | undefined, ...keys
   for (const key of keys) {
     const value = properties?.[key];
     if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function propertyNumber(properties: Record<string, unknown> | undefined, ...keys: string[]) {
+  for (const key of keys) {
+    const value = properties?.[key];
+    const parsed = typeof value === "number" ? value : Number(value);
+    if (Number.isFinite(parsed)) return parsed;
   }
   return null;
 }
@@ -96,6 +131,38 @@ function platePair(path: GlobeMapPath, payload: unknown) {
     plateA: propertyString(properties, "PlateA", "plate_a", "PLATE_A"),
     plateB: propertyString(properties, "PlateB", "plate_b", "PLATE_B"),
     boundaryType: propertyString(properties, "Type", "type", "LAYER"),
+  };
+}
+
+function faultContext(path: GlobeMapPath, payload: unknown) {
+  const properties = propertiesForPath(path, payload);
+  return {
+    slipType: propertyString(properties, "slip_type", "slipType", "fault_type", "type"),
+    activityConfidence: propertyNumber(properties, "activity_confidence", "activityConfidence"),
+  };
+}
+
+function receiverContext(
+  path: GlobeMapPath,
+  kind: GlobalInteractionKind,
+  platePayload: unknown,
+  faultPayload: unknown,
+): ReceiverContext {
+  if (kind === "plate-boundary") {
+    const pair = platePair(path, platePayload);
+    return {
+      ...pair,
+      slipType: null,
+      activityConfidence: null,
+    };
+  }
+  const fault = faultContext(path, faultPayload);
+  return {
+    plateA: null,
+    plateB: null,
+    boundaryType: null,
+    slipType: fault.slipType,
+    activityConfidence: fault.activityConfidence,
   };
 }
 
@@ -200,18 +267,69 @@ function connectivityFor(plateA: string | null, plateB: string | null, hops: Map
   };
 }
 
-function responseScore(dynamicIndex: number, strikeDeg: number, azimuthDeg: number) {
-  // Plate-graph connectivity is context only. Seismic waves propagate through
-  // the Earth and do not gain amplitude because two plate boundaries are linked.
-  const orientation = 0.55 + 0.45 * Math.abs(Math.cos((strikeDeg - azimuthDeg) * DEG));
-  return Math.round(clamp(dynamicIndex * orientation, 0, 100));
+function tectonicEnvironmentPrior(kind: GlobalInteractionKind, context: ReceiverContext) {
+  const text = `${context.boundaryType ?? ""} ${context.slipType ?? ""}`.toLowerCase();
+  // Dynamic-triggering susceptibility varies by tectonic environment. These are
+  // deliberately broad priors, not a claim that a particular fault is critically stressed.
+  if (/normal|diverg|ridge|spread|extens|transtens/.test(text)) return 78;
+  if (/strike|transform|transcurrent|dextral|sinistral|lateral/.test(text)) return 70;
+  if (/reverse|thrust|subduct|converg|compress|collision/.test(text)) return 62;
+  return kind === "active-fault" ? 66 : 58;
 }
 
-function interpretation(kind: GlobalInteractionKind, band: GlobalDistanceBand, dynamicIndex: number, hops: number | null) {
+function geometryCouplingScore(strikeDeg: number, azimuthDeg: number) {
+  // First-order orientation proxy only. A full dynamic-stress tensor and focal
+  // mechanism at the receiver would be required for a physical resolved stress.
+  const alignment = Math.abs(Math.cos((strikeDeg - azimuthDeg) * DEG));
+  return Math.round(45 + 50 * alignment);
+}
+
+function metadataSupportScore(kind: GlobalInteractionKind, context: ReceiverContext) {
+  if (kind === "plate-boundary") return context.boundaryType ? 88 : 58;
+  let score = context.slipType ? 74 : 54;
+  if (context.activityConfidence !== null) score += 10;
+  return Math.round(clamp(score, 45, 90));
+}
+
+export function tectonicSusceptibility(
+  kind: GlobalInteractionKind,
+  strikeDeg: number,
+  azimuthDeg: number,
+  context: ReceiverContext,
+) {
+  const components: TectonicSusceptibilityComponents = {
+    environmentPrior: tectonicEnvironmentPrior(kind, context),
+    geometryCoupling: geometryCouplingScore(strikeDeg, azimuthDeg),
+    metadataSupport: metadataSupportScore(kind, context),
+  };
+  const index = Math.round(clamp(
+    components.environmentPrior * 0.45
+      + components.geometryCoupling * 0.35
+      + components.metadataSupport * 0.20,
+    0,
+    100,
+  ));
+  return { index, components };
+}
+
+export function combineEnergyAndSusceptibility(energyArrivalIndex: number, susceptibilityIndex: number) {
+  // Both a meaningful perturbation and a susceptible receiver are required.
+  // The product is intentionally conservative and is not a calibrated probability.
+  return Math.round(clamp((energyArrivalIndex * susceptibilityIndex) / 100, 0, 100));
+}
+
+function interpretation(
+  kind: GlobalInteractionKind,
+  band: GlobalDistanceBand,
+  energyArrivalIndex: number,
+  susceptibilityIndex: number,
+  potentialResponseIndex: number,
+  hops: number | null,
+) {
   const subject = kind === "plate-boundary" ? "límite de placa" : "falla activa";
   const range = band === "teleseismic" ? "teleseísmica" : band === "regional" ? "regional" : "cercana";
   const connection = hops === null ? "" : ` Como contexto tectónico, la estructura está a ${hops} salto${hops === 1 ? "" : "s"} en la red de placas desde el límite fuente.`;
-  return `Respuesta dinámica ${range} relativa ${dynamicIndex}/100 sobre este ${subject}.${connection} La conectividad no modifica la propagación de la onda ni implica causalidad.`;
+  return `La perturbación de onda ${range} llega con índice relativo ${energyArrivalIndex}/100. El ${subject} tiene susceptibilidad tectónica proxy ${susceptibilityIndex}/100; combinados producen respuesta potencial ${potentialResponseIndex}/100.${connection} No es probabilidad de ruptura ni conocimiento del esfuerzo crítico real.`;
 }
 
 function sourceBoundaryFor(input: Required<TectonicSimulationInput>, platePaths: GlobeMapPath[], platePayload: unknown) {
@@ -237,15 +355,18 @@ function interactionForPath(
   path: GlobeMapPath,
   kind: GlobalInteractionKind,
   platePayload: unknown,
+  faultPayload: unknown,
   hopDistances: Map<string, number>,
 ): GlobalTectonicInteraction | null {
   if (path.points.length < 2) return null;
   const geometry = nearestGeometry({ lat: input.latitude, lng: input.longitude }, path);
   if (!Number.isFinite(geometry.distanceKm) || geometry.distanceKm > EARTH_CIRCUMFERENCE_KM / 2 + 100) return null;
-  const pair = kind === "plate-boundary" ? platePair(path, platePayload) : { plateA: null, plateB: null, boundaryType: null };
-  const connectivity = connectivityFor(pair.plateA, pair.plateB, hopDistances);
-  const dynamicIndex = dynamicWaveIndex(input, geometry.distanceKm, geometry.azimuthDeg);
-  const score = responseScore(dynamicIndex, geometry.strikeDeg, geometry.azimuthDeg);
+  const context = receiverContext(path, kind, platePayload, faultPayload);
+  const connectivity = connectivityFor(context.plateA, context.plateB, hopDistances);
+  const energyArrivalIndex = dynamicWaveIndex(input, geometry.distanceKm, geometry.azimuthDeg);
+  const susceptibility = tectonicSusceptibility(kind, geometry.strikeDeg, geometry.azimuthDeg, context);
+  const potentialResponseIndex = combineEnergyAndSusceptibility(energyArrivalIndex, susceptibility.index);
+  const band = distanceBand(geometry.distanceKm);
   return {
     id: `global:${path.id}`,
     kind,
@@ -253,24 +374,37 @@ function interactionForPath(
     points: path.points,
     closestPoint: geometry.closestPoint,
     distanceKm: Number(geometry.distanceKm.toFixed(1)),
-    distanceBand: distanceBand(geometry.distanceKm),
+    distanceBand: band,
     arrivalMinutes: Number((geometry.distanceKm / SURFACE_WAVE_SPEED_KM_S / 60).toFixed(1)),
     azimuthDeg: Number(geometry.azimuthDeg.toFixed(1)),
     strikeDeg: Number(geometry.strikeDeg.toFixed(1)),
-    dynamicIndex,
+    dynamicIndex: energyArrivalIndex,
+    energyArrivalIndex,
+    susceptibilityIndex: susceptibility.index,
+    susceptibilityComponents: susceptibility.components,
+    potentialResponseIndex,
     connectivityHops: connectivity.hops,
     connectivityScore: connectivity.score,
-    responseScore: score,
-    plateA: pair.plateA,
-    plateB: pair.plateB,
-    boundaryType: pair.boundaryType,
-    interpretation: interpretation(kind, distanceBand(geometry.distanceKm), dynamicIndex, connectivity.hops),
+    responseScore: potentialResponseIndex,
+    plateA: context.plateA,
+    plateB: context.plateB,
+    boundaryType: context.boundaryType,
+    slipType: context.slipType,
+    activityConfidence: context.activityConfidence,
+    interpretation: interpretation(
+      kind,
+      band,
+      energyArrivalIndex,
+      susceptibility.index,
+      potentialResponseIndex,
+      connectivity.hops,
+    ),
   };
 }
 
 function topByScore(items: GlobalTectonicInteraction[], limit: number) {
   return [...items]
-    .sort((a, b) => b.responseScore - a.responseScore || a.distanceKm - b.distanceKm)
+    .sort((a, b) => b.potentialResponseIndex - a.potentialResponseIndex || a.distanceKm - b.distanceKm)
     .slice(0, limit);
 }
 
@@ -301,7 +435,7 @@ function selectByBand(items: GlobalTectonicInteraction[]) {
   const regional = topByScore(items.filter((item) => item.distanceBand === "regional"), 24);
   const teleseismic = diverseTeleseismic(items, 40);
   return [...near, ...regional, ...teleseismic]
-    .sort((a, b) => b.responseScore - a.responseScore || a.distanceKm - b.distanceKm);
+    .sort((a, b) => b.potentialResponseIndex - a.potentialResponseIndex || a.distanceKm - b.distanceKm);
 }
 
 export function simulateGlobalTectonicResponse(
@@ -309,6 +443,7 @@ export function simulateGlobalTectonicResponse(
   platePaths: GlobeMapPath[],
   faultPaths: GlobeMapPath[],
   platePayload?: unknown,
+  faultPayload?: unknown,
 ): GlobalTectonicResponse {
   const sourceBoundary = sourceBoundaryFor(rawInput, platePaths, platePayload);
   const graph = buildPlateGraph(platePaths, platePayload);
@@ -316,11 +451,11 @@ export function simulateGlobalTectonicResponse(
   const hops = plateHopDistances(graph, sourcePlates);
 
   const plateInteractions = platePaths
-    .map((path) => interactionForPath(rawInput, path, "plate-boundary", platePayload, hops))
+    .map((path) => interactionForPath(rawInput, path, "plate-boundary", platePayload, faultPayload, hops))
     .filter((item): item is GlobalTectonicInteraction => Boolean(item));
 
   const faultInteractions = faultPaths
-    .map((path) => interactionForPath(rawInput, path, "active-fault", platePayload, hops))
+    .map((path) => interactionForPath(rawInput, path, "active-fault", platePayload, faultPayload, hops))
     .filter((item): item is GlobalTectonicInteraction => Boolean(item));
 
   const interactions = selectByBand([...plateInteractions, ...faultInteractions]);
@@ -334,17 +469,19 @@ export function simulateGlobalTectonicResponse(
       regional: interactions.filter((item) => item.distanceBand === "regional").length,
       teleseismic: interactions.filter((item) => item.distanceBand === "teleseismic").length,
       plateLinked: interactions.filter((item) => item.connectivityHops !== null && item.connectivityHops <= 3).length,
+      elevatedPotential: interactions.filter((item) => item.potentialResponseIndex >= 35).length,
     },
     model: {
       surfaceWaveSpeedKmS: SURFACE_WAVE_SPEED_KM_S,
       globalRangeKm: Math.round(EARTH_CIRCUMFERENCE_KM / 2),
-      description: "Dos escalas: Coulomb estático cerca de la ruptura y respuesta dinámica teleseísmica global. La propagación depende de distancia, radiación y geometría; la red de placas se conserva solo como contexto tectónico.",
+      description: "Tres capas separadas: energía de onda que llega al receptor, susceptibilidad tectónica proxy de la estructura y respuesta potencial combinada. La red de placas se conserva solo como contexto tectónico.",
     },
     warnings: [
-      "La capa global representa susceptibilidad a esfuerzo dinámico de ondas sísmicas; no es una transferencia estática de Coulomb a través de miles de kilómetros.",
-      "Las ondas atraviesan el interior y la superficie terrestre; los saltos de placa son contexto tectónico y no modifican el índice dinámico ni representan la ruta física de la energía.",
+      "Energía de llegada es un índice relativo de propagación, no una medición de esfuerzo dinámico; para eventos reales las formas de onda EarthScope siguen siendo la observación instrumental de referencia.",
+      "Susceptibilidad tectónica es un proxy de entorno, orientación y calidad de metadata. No conoce cuánto esfuerzo acumulado tiene realmente una falla, su presión de poros ni si está cerca de fallar.",
+      "Respuesta potencial = energía × susceptibilidad en una escala relativa 0–100. No es porcentaje de probabilidad de terremoto ni predicción determinista.",
+      "Las ondas atraviesan el interior y la superficie terrestre; los saltos de placa son contexto tectónico y no modifican la energía de llegada ni representan la ruta física de la onda.",
       "El tiempo de onda superficial es una referencia simplificada; cuando EarthScope está disponible, P y S usan su servicio de tiempos de viaje iasp91.",
-      "Sin formas de onda, estructura 3D, estado de esfuerzo local y presión de poros no puede estimarse una probabilidad física de disparo remoto.",
     ],
   };
 }
