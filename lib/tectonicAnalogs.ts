@@ -1,3 +1,4 @@
+import type { EarthScopeIntegration } from "@/lib/earthscopeIntegration";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import { haversineKm } from "@/lib/regions";
 import type { GlobalTectonicResponse } from "@/lib/tectonicGlobal";
@@ -40,6 +41,7 @@ export type TectonicSimulationWithAnalogs = TectonicSimulationResponse & {
   globalTectonics: GlobalTectonicResponse;
   historicalAnalogs: HistoricalAnalogEvent[];
   historicalCatalog: HistoricalAnalogCatalog;
+  earthScope: EarthScopeIntegration;
 };
 
 function clamp(value: number, minimum: number, maximum: number) {

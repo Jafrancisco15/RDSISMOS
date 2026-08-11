@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { EarthScopeTravelTime } from "@/lib/earthscopeIntegration";
 import type { EarthquakeEvent, EarthquakePage } from "@/lib/earthquakes/types";
 import type { TectonicSimulationWithAnalogs } from "@/lib/tectonicAnalogs";
 import type { GlobalDistanceBand } from "@/lib/tectonicGlobal";
@@ -104,6 +105,19 @@ function startDateFor(days: number) {
   return date.toISOString().slice(0, 10);
 }
 
+function closestTravelTime(distanceKm: number, samples: EarthScopeTravelTime[]) {
+  return samples.reduce<EarthScopeTravelTime | null>((best, sample) => {
+    if (!best) return sample;
+    return Math.abs(sample.distanceKm - distanceKm) < Math.abs(best.distanceKm - distanceKm)
+      ? sample
+      : best;
+  }, null);
+}
+
+function minutes(value: number | null) {
+  return value === null ? "—" : `${value.toFixed(value < 10 ? 1 : 0)} min`;
+}
+
 export function TectonicSimulator() {
   const [draft, setDraft] = useState<DraftInput>(INITIAL);
   const [simulation, setSimulation] = useState<TectonicSimulationWithAnalogs | null>(null);
@@ -115,13 +129,23 @@ export function TectonicSimulator() {
   const [recentError, setRecentError] = useState<string | null>(null);
   const [selectedRecent, setSelectedRecent] = useState<EarthquakeEvent | null>(null);
 
-  const run = useCallback(async (input: TectonicSimulationInput) => {
+  const run = useCallback(async (input: TectonicSimulationInput, sourceEvent?: EarthquakeEvent | null) => {
     setLoading(true);
     try {
+      const body = {
+        ...input,
+        sourceEvent: sourceEvent ? {
+          id: sourceEvent.externalId || sourceEvent.id,
+          timeUtc: sourceEvent.timeUtc,
+          place: sourceEvent.place,
+          sourceCatalog: sourceEvent.sourceCatalog,
+          sourceUrl: sourceEvent.sourceUrl,
+        } : undefined,
+      };
       const response = await fetch("/api/simulator/tectonic", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify(body),
         cache: "no-store",
       });
       const raw = await response.text();
@@ -151,7 +175,7 @@ export function TectonicSimulator() {
     };
     setSelectedRecent(event);
     setDraft(next);
-    void run(toInput(next));
+    void run(toInput(next), event);
   }, [run]);
 
   const loadRecent = useCallback(async (days: RecentDays, autoSelect = false) => {
@@ -216,7 +240,7 @@ export function TectonicSimulator() {
   }
 
   function simulate() {
-    void run(toInput(draft));
+    void run(toInput(draft), selectedRecent);
   }
 
   function pickLocation(latitude: number, longitude: number) {
@@ -240,23 +264,23 @@ export function TectonicSimulator() {
       <header className={styles.header}>
         <div>
           <div className={styles.brand}><span /> RDSISMOS · LABORATORIO FÍSICO</div>
-          <h1>Simulador global de interacción de placas y fallas</h1>
+          <h1>Simulador global de ondas, placas y fallas</h1>
           <p>
-            Selecciona un terremoto real reciente y observa dos escalas distintas: transferencia estática local cerca de la ruptura
-            y respuesta dinámica global de fallas y límites de placas al paso de las ondas sísmicas.
+            Selecciona un terremoto real reciente y separa tres fenómenos: transferencia estática de Coulomb cerca de la ruptura,
+            propagación de ondas por el planeta y contexto tectónico de las estructuras que reciben esas ondas.
           </p>
         </div>
         <div className={styles.modelBadge}>
-          <span>Modelo híbrido</span>
-          <strong>Local + global</strong>
-          <small>Coulomb estático · ondas teleseísmicas · red de placas</small>
+          <span>Modelo multicapas</span>
+          <strong>Coulomb + ondas + tectónica</strong>
+          <small>EarthScope NSF SAGE · USGS · GEM · PB2002</small>
         </div>
       </header>
 
       <section className={styles.notice}>
-        <strong>La diferencia clave:</strong> un evento lejano, por ejemplo en Tonga, no transmite un cambio estático de Coulomb hasta Perú como si las placas fueran piezas rígidas.
-        La interacción remota se representa mediante el paso de ondas sísmicas y la susceptibilidad de fallas/límites tectónicos a esos esfuerzos dinámicos.
-        El mapa también muestra cuántos saltos de conectividad tectónica separan cada límite del límite de placa fuente. Ninguna de estas capas equivale a una predicción de ruptura.
+        <strong>Separación física:</strong> las ondas P, S y superficiales atraviesan el interior y la superficie terrestre; no viajan siguiendo los bordes de las placas.
+        Los “saltos de placa” quedan únicamente como contexto tectónico. La respuesta dinámica compara cuánto esfuerzo transitorio podría recibir una estructura,
+        pero no constituye probabilidad de que esa falla vaya a romper.
       </section>
 
       <section className={styles.recentSection} aria-label="Sismos reales recientes para simular">
@@ -264,7 +288,7 @@ export function TectonicSimulator() {
           <div>
             <span>Sismos reales recientes · M5.9+</span>
             <h2>Escoge el evento fuente</h2>
-            <p>Al seleccionar uno se cargan automáticamente epicentro, magnitud y profundidad y se ejecuta la simulación local + global.</p>
+            <p>Epicentro, magnitud y profundidad se cargan automáticamente. Para eventos reales también intentamos incorporar metadatos y tiempos de viaje de EarthScope.</p>
           </div>
           <div className={styles.rangeButtons} aria-label="Rango de eventos recientes">
             {([7, 30, 90, 365] as RecentDays[]).map((days) => (
@@ -313,7 +337,7 @@ export function TectonicSimulator() {
           </div>
           <div>
             <strong>{selectedRecent.latitude.toFixed(3)}°, {selectedRecent.longitude.toFixed(3)}°</strong>
-            <small>Epicentro usado por ambos modelos</small>
+            <small>Hipocentro/epicentro de referencia para ondas y tectónica</small>
           </div>
         </section>
       )}
@@ -331,22 +355,10 @@ export function TectonicSimulator() {
             </button>
           </div>
           <div className={styles.formGrid}>
-            <label>
-              <span>Latitud</span>
-              <input type="number" min="-90" max="90" step="0.01" value={draft.latitude} onChange={(event) => update("latitude", event.target.value)} />
-            </label>
-            <label>
-              <span>Longitud</span>
-              <input type="number" min="-180" max="180" step="0.01" value={draft.longitude} onChange={(event) => update("longitude", event.target.value)} />
-            </label>
-            <label>
-              <span>Magnitud Mw</span>
-              <input type="number" min="4" max="9.5" step="0.1" value={draft.magnitude} onChange={(event) => update("magnitude", event.target.value)} />
-            </label>
-            <label>
-              <span>Profundidad km</span>
-              <input type="number" min="0" max="700" step="1" value={draft.depthKm} onChange={(event) => update("depthKm", event.target.value)} />
-            </label>
+            <label><span>Latitud</span><input type="number" min="-90" max="90" step="0.01" value={draft.latitude} onChange={(event) => update("latitude", event.target.value)} /></label>
+            <label><span>Longitud</span><input type="number" min="-180" max="180" step="0.01" value={draft.longitude} onChange={(event) => update("longitude", event.target.value)} /></label>
+            <label><span>Magnitud Mw</span><input type="number" min="4" max="9.5" step="0.1" value={draft.magnitude} onChange={(event) => update("magnitude", event.target.value)} /></label>
+            <label><span>Profundidad km</span><input type="number" min="0" max="700" step="1" value={draft.depthKm} onChange={(event) => update("depthKm", event.target.value)} /></label>
             <label>
               <span>Mecanismo</span>
               <select value={draft.mechanism} onChange={(event) => changeMechanism(event.target.value as TectonicMechanism)}>
@@ -355,22 +367,13 @@ export function TectonicSimulator() {
                 <option value="normal">Normal / extensión</option>
               </select>
             </label>
-            <label>
-              <span>Strike °</span>
-              <input type="number" min="0" max="359" step="1" value={draft.strikeDeg} onChange={(event) => update("strikeDeg", event.target.value)} />
-            </label>
-            <label>
-              <span>Dip °</span>
-              <input type="number" min="1" max="90" step="1" value={draft.dipDeg} onChange={(event) => update("dipDeg", event.target.value)} />
-            </label>
-            <label>
-              <span>Rake °</span>
-              <input type="number" min="-180" max="180" step="1" value={draft.rakeDeg} onChange={(event) => update("rakeDeg", event.target.value)} />
-            </label>
+            <label><span>Strike °</span><input type="number" min="0" max="359" step="1" value={draft.strikeDeg} onChange={(event) => update("strikeDeg", event.target.value)} /></label>
+            <label><span>Dip °</span><input type="number" min="1" max="90" step="1" value={draft.dipDeg} onChange={(event) => update("dipDeg", event.target.value)} /></label>
+            <label><span>Rake °</span><input type="number" min="-180" max="180" step="1" value={draft.rakeDeg} onChange={(event) => update("rakeDeg", event.target.value)} /></label>
           </div>
           <p className={styles.mapHint}>
             El catálogo reciente aporta epicentro, Mw y profundidad. Strike, dip y rake siguen siendo supuestos editables cuando no existe mecanismo focal disponible.
-            También puedes tocar el globo para mover el epicentro y convertir el escenario en manual.
+            Tocar el globo mueve el epicentro y convierte el escenario en manual.
           </p>
         </section>
       </details>
@@ -388,12 +391,12 @@ export function TectonicSimulator() {
             <article>
               <span>Alcance Coulomb local</span>
               <strong>{simulation.source.interactionRadiusKm.toLocaleString()} km</strong>
-              <small>Transferencia estática ~M₀/r³ · no es el alcance global</small>
+              <small>Transferencia estática ~M₀/r³ · no es alcance de las ondas</small>
             </article>
             <article>
-              <span>Respuesta dinámica global</span>
-              <strong>{simulation.globalTectonics.counts.teleseismic} teleseísmicas</strong>
-              <small>{simulation.globalTectonics.counts.regional} regionales · {simulation.globalTectonics.counts.plateLinked} conectadas por red de placas</small>
+              <span>EarthScope directo</span>
+              <strong>{simulation.earthScope.available ? `${simulation.earthScope.stations.length} estaciones` : "No disponible"}</strong>
+              <small>Tiempos P/S {simulation.earthScope.travelTimeModel} · metadata FDSN</small>
             </article>
             <article>
               <span>Análogos históricos</span>
@@ -405,14 +408,17 @@ export function TectonicSimulator() {
           <section className={styles.visualSection}>
             <div className={styles.visualHeader}>
               <div>
-                <span>Respuesta espacial multiescala</span>
-                <h2>Coulomb local + interacción dinámica global</h2>
+                <span>Propagación + respuesta</span>
+                <h2>Ondas por el planeta y estructuras que las reciben</h2>
               </div>
               <div className={styles.legend}>
                 <span><i className={styles.sourceDot} /> Fuente</span>
+                <span><i className={styles.wavePDot} /> P</span>
+                <span><i className={styles.waveSDot} /> S</span>
+                <span><i className={styles.waveSurfaceDot} /> Superficie</span>
+                <span><i className={styles.stationDot} /> EarthScope</span>
                 <span><i className={styles.promotedDot} /> Coulomb +</span>
                 <span><i className={styles.inhibitedDot} /> Coulomb −</span>
-                <span><i className={styles.analogDot} /> Histórico</span>
               </div>
             </div>
             <div className={styles.visualGrid}>
@@ -421,28 +427,32 @@ export function TectonicSimulator() {
               </div>
               <aside className={styles.sideList}>
                 <div className={styles.sideHead}>
-                  <div><span>Respuesta global remota</span><strong>{strongestGlobal.length}</strong></div>
-                  <small>{simulation.globalTectonics.sourceBoundary
-                    ? `Fuente tectónica: ${simulation.globalTectonics.sourceBoundary.name}`
-                    : "Límite fuente no resuelto"}</small>
+                  <div><span>Estructuras remotas</span><strong>{strongestGlobal.length}</strong></div>
+                  <small>La red de placas es contexto; no es la ruta de las ondas.</small>
                 </div>
-                {strongestGlobal.map((interaction) => (
-                  <article
-                    key={interaction.id}
-                    className={styles.interactionItem}
-                    style={{ borderLeftColor: globalBandColor(interaction.distanceBand) }}
-                  >
-                    <div className={styles.itemTop}>
-                      <strong>{interaction.name}</strong>
-                      <span>{interaction.responseScore}%</span>
-                    </div>
-                    <p>{distanceBandLabel(interaction.distanceBand)} · {interaction.distanceKm.toFixed(0)} km · llegada ~{interaction.arrivalMinutes.toFixed(0)} min</p>
-                    <small>
-                      índice dinámico {interaction.dynamicIndex}/100
-                      {interaction.connectivityHops === null ? " · sin ruta de placa" : ` · ${interaction.connectivityHops} saltos de placa`}
-                    </small>
-                  </article>
-                ))}
+                {strongestGlobal.map((interaction) => {
+                  const travel = closestTravelTime(interaction.distanceKm, simulation.earthScope.travelTimes);
+                  return (
+                    <article
+                      key={interaction.id}
+                      className={styles.interactionItem}
+                      style={{ borderLeftColor: globalBandColor(interaction.distanceBand) }}
+                    >
+                      <div className={styles.itemTop}>
+                        <strong>{interaction.name}</strong>
+                        <span>{interaction.responseScore}%</span>
+                      </div>
+                      <p>{distanceBandLabel(interaction.distanceBand)} · {interaction.distanceKm.toFixed(0)} km</p>
+                      <small>
+                        P {minutes(travel?.pMinutes ?? null)} · S {minutes(travel?.sMinutes ?? null)} · superficie ~{minutes(travel?.surfaceMinutes ?? interaction.arrivalMinutes)}
+                      </small>
+                      <small>
+                        índice dinámico {interaction.dynamicIndex}/100
+                        {interaction.connectivityHops === null ? " · contexto de placa no resuelto" : ` · ${interaction.connectivityHops} saltos tectónicos (contexto)`}
+                      </small>
+                    </article>
+                  );
+                })}
                 <div className={styles.sideHead} style={{ position: "static", marginTop: 8 }}>
                   <div><span>Coulomb local</span><strong>{simulation.interactions.length}</strong></div>
                   <small>{simulation.counts.faults} fallas · {simulation.counts.plateBoundaries} límites</small>
@@ -461,43 +471,97 @@ export function TectonicSimulator() {
             </div>
           </section>
 
+          <section className={`${styles.tableSection} ${styles.earthScopeSection}`}>
+            <div className={styles.tableHeader}>
+              <div>
+                <span>EarthScope NSF SAGE</span>
+                <h2>Observación instrumental y tiempos de viaje</h2>
+              </div>
+              <p>Las estaciones vienen del servicio FDSN de EarthScope. Los tiempos P/S se calculan directamente con su servicio traveltime usando el modelo iasp91.</p>
+            </div>
+
+            <div className={styles.earthScopeSummary}>
+              <article>
+                <span>Estaciones mostradas</span>
+                <strong>{simulation.earthScope.stations.length}</strong>
+                <small>Muestra espacial de metadata activa alrededor del evento.</small>
+              </article>
+              <article>
+                <span>Modelo de tiempos</span>
+                <strong>{simulation.earthScope.travelTimeModel}</strong>
+                <small>P y S EarthScope/TauP · superficie como referencia 3.6 km/s.</small>
+              </article>
+              <article>
+                <span>Producto EarthScope</span>
+                <strong>{simulation.earthScope.products.gmvUrl ? "GMV disponible" : simulation.earthScope.products.eventPageUrl ? "Página del evento" : "Sin producto localizado"}</strong>
+                <small>Los productos dependen de que EarthScope haya publicado el evento.</small>
+              </article>
+            </div>
+
+            {(simulation.earthScope.products.eventPageUrl || simulation.earthScope.products.gmvUrl || simulation.earthScope.products.dataAccessUrl) && (
+              <div className={styles.earthScopeLinks}>
+                {simulation.earthScope.products.eventPageUrl && <a href={simulation.earthScope.products.eventPageUrl} target="_blank" rel="noreferrer">Evento en EarthScope</a>}
+                {simulation.earthScope.products.gmvUrl && <a href={simulation.earthScope.products.gmvUrl} target="_blank" rel="noreferrer">Ground Motion Visualization</a>}
+                {simulation.earthScope.products.dataAccessUrl && <a href={simulation.earthScope.products.dataAccessUrl} target="_blank" rel="noreferrer">Datos GNSS/sísmicos EarthScope</a>}
+              </div>
+            )}
+
+            <div className={styles.tableScroll}>
+              <table>
+                <thead><tr><th>Distancia</th><th>Fase P</th><th>Fase S</th><th>Onda superficial</th><th>Fuente</th></tr></thead>
+                <tbody>
+                  {simulation.earthScope.travelTimes.slice(0, 24).map((sample) => (
+                    <tr key={`earthscope-time:${sample.distanceKm}`}>
+                      <td>{sample.distanceKm.toLocaleString()} km · {sample.distanceDeg.toFixed(1)}°</td>
+                      <td>{minutes(sample.pMinutes)}</td>
+                      <td>{minutes(sample.sMinutes)}</td>
+                      <td>~{minutes(sample.surfaceMinutes)}</td>
+                      <td>EarthScope traveltime / iasp91</td>
+                    </tr>
+                  ))}
+                  {!simulation.earthScope.travelTimes.length && <tr><td colSpan={5}>EarthScope no devolvió tiempos de viaje para este escenario.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            <p className={styles.mapHint}>Los puntos de estación en el globo son ubicaciones reales de metadata EarthScope; no se colorean rojo/azul como el GMV porque todavía no estamos descargando y procesando cada forma de onda. Si EarthScope publicó un GMV del evento, el enlace aparece arriba.</p>
+            {simulation.earthScope.warnings.length > 0 && <div className={styles.inlineWarning}>{simulation.earthScope.warnings.join(" · ")}</div>}
+          </section>
+
           <section className={styles.tableSection}>
             <div className={styles.tableHeader}>
               <div>
                 <span>Interacción mundial</span>
-                <h2>Respuesta dinámica y conectividad de placas</h2>
+                <h2>Respuesta dinámica y contexto de placas</h2>
               </div>
-              <p>Esta tabla sí incluye estructuras a miles de kilómetros. El índice dinámico es relativo y no debe leerse como probabilidad de terremoto.</p>
+              <p>La energía se propaga como ondas por la Tierra. La conectividad PB2002 se muestra solo para entender la relación tectónica de la estructura receptora.</p>
             </div>
             <div className={styles.tableScroll}>
               <table>
                 <thead>
                   <tr>
-                    <th>Estructura</th>
-                    <th>Escala</th>
-                    <th>Distancia</th>
-                    <th>Llegada ondas</th>
-                    <th>Índice dinámico</th>
-                    <th>Respuesta</th>
-                    <th>Ruta de placas</th>
-                    <th>Placas / contexto</th>
+                    <th>Estructura</th><th>Escala</th><th>Distancia</th><th>P EarthScope</th><th>S EarthScope</th><th>Superficie</th><th>Índice dinámico</th><th>Respuesta</th><th>Contexto de placas</th><th>Placas / límite</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {simulation.globalTectonics.interactions.map((interaction) => (
-                    <tr key={`global-row:${interaction.id}`}>
-                      <td><strong>{interaction.name}</strong></td>
-                      <td style={{ color: globalBandColor(interaction.distanceBand) }}>{distanceBandLabel(interaction.distanceBand)}</td>
-                      <td>{interaction.distanceKm.toFixed(0)} km</td>
-                      <td>~{interaction.arrivalMinutes.toFixed(1)} min</td>
-                      <td>{interaction.dynamicIndex}/100</td>
-                      <td>{interaction.responseScore}%</td>
-                      <td>{interaction.connectivityHops === null ? "—" : `${interaction.connectivityHops} saltos`}</td>
-                      <td>{interaction.plateA && interaction.plateB
-                        ? `${interaction.plateA} ↔ ${interaction.plateB}${interaction.boundaryType ? ` · ${interaction.boundaryType}` : ""}`
-                        : interaction.kind === "active-fault" ? "Falla activa GEM" : "PB2002"}</td>
-                    </tr>
-                  ))}
+                  {simulation.globalTectonics.interactions.map((interaction) => {
+                    const travel = closestTravelTime(interaction.distanceKm, simulation.earthScope.travelTimes);
+                    return (
+                      <tr key={`global-row:${interaction.id}`}>
+                        <td><strong>{interaction.name}</strong></td>
+                        <td style={{ color: globalBandColor(interaction.distanceBand) }}>{distanceBandLabel(interaction.distanceBand)}</td>
+                        <td>{interaction.distanceKm.toFixed(0)} km</td>
+                        <td>{minutes(travel?.pMinutes ?? null)}</td>
+                        <td>{minutes(travel?.sMinutes ?? null)}</td>
+                        <td>~{minutes(travel?.surfaceMinutes ?? interaction.arrivalMinutes)}</td>
+                        <td>{interaction.dynamicIndex}/100</td>
+                        <td>{interaction.responseScore}%</td>
+                        <td>{interaction.connectivityHops === null ? "—" : `${interaction.connectivityHops} saltos (solo contexto)`}</td>
+                        <td>{interaction.plateA && interaction.plateB
+                          ? `${interaction.plateA} ↔ ${interaction.plateB}${interaction.boundaryType ? ` · ${interaction.boundaryType}` : ""}`
+                          : interaction.kind === "active-fault" ? "Falla activa GEM" : "PB2002"}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -505,27 +569,12 @@ export function TectonicSimulator() {
 
           <section className={styles.tableSection}>
             <div className={styles.tableHeader}>
-              <div>
-                <span>Campo cercano</span>
-                <h2>Transferencia estática de Coulomb</h2>
-              </div>
+              <div><span>Campo cercano</span><h2>Transferencia estática de Coulomb</h2></div>
               <p>ΔCFS proxy conserva signo y escala relativa solo cerca/regionalmente; no se extrapola como cambio estático hasta el otro lado del planeta.</p>
             </div>
             <div className={styles.tableScroll}>
               <table>
-                <thead>
-                  <tr>
-                    <th>Estructura</th>
-                    <th>Tipo</th>
-                    <th>Distancia</th>
-                    <th>Strike receptor</th>
-                    <th>Dip / rake</th>
-                    <th>ΔCFS proxy</th>
-                    <th>Respuesta</th>
-                    <th>Calidad</th>
-                    <th>Contexto</th>
-                  </tr>
-                </thead>
+                <thead><tr><th>Estructura</th><th>Tipo</th><th>Distancia</th><th>Strike receptor</th><th>Dip / rake</th><th>ΔCFS proxy</th><th>Respuesta</th><th>Calidad</th><th>Contexto</th></tr></thead>
                 <tbody>
                   {simulation.interactions.map((interaction) => (
                     <tr key={`row:${interaction.id}`}>
@@ -550,10 +599,7 @@ export function TectonicSimulator() {
           {(simulation.historicalAnalogs?.length ?? 0) > 0 && (
             <section className={styles.tableSection}>
               <div className={styles.tableHeader}>
-                <div>
-                  <span>Casos comparables reales</span>
-                  <h2>Análogos históricos M5.9+</h2>
-                </div>
+                <div><span>Casos comparables reales</span><h2>Análogos históricos M5.9+</h2></div>
                 <p>Se ordenan por similitud de magnitud, profundidad y cercanía al entorno tectónico del evento fuente.</p>
               </div>
               <div className={styles.analogGrid}>
@@ -572,17 +618,18 @@ export function TectonicSimulator() {
           <section className={styles.scienceGrid}>
             <article>
               <span>Modelo multiescala</span>
-              <h2>{mechanismLabel(simulation.input.mechanism)} · límite fuente + red global</h2>
+              <h2>{mechanismLabel(simulation.input.mechanism)} · ondas + estructuras receptoras</h2>
               <ul>
                 <li>{simulation.globalTectonics.model.description}</li>
-                <li>Las ondas superficiales se visualizan globalmente con una velocidad representativa de {simulation.globalTectonics.model.surfaceWaveSpeedKmS.toFixed(1)} km/s para estimar tiempos de llegada, no para reconstruir una forma de onda real.</li>
-                <li>La red PB2002 se convierte en un grafo de placas: 0 saltos corresponde a una placa del límite fuente; 1, 2, 3… representan conectividad tectónica sucesiva.</li>
+                <li>Las llegadas P y S se consultan al servicio EarthScope traveltime con un modelo terrestre 1-D iasp91; la animación del globo está acelerada y no corre a escala temporal real.</li>
+                <li>Las ondas superficiales usan {simulation.globalTectonics.model.surfaceWaveSpeedKmS.toFixed(1)} km/s solo como referencia visual; no reconstruyen una forma de onda.</li>
+                <li>PB2002 se conserva como grafo para explicar qué placas bordean cada estructura. Ese número de saltos ya no aumenta ni disminuye la respuesta dinámica.</li>
                 {simulation.methodology.map((item) => <li key={item}>{item}</li>)}
               </ul>
             </article>
             <article>
               <span>Limitaciones científicas</span>
-              <h2>Interacción no significa causalidad</h2>
+              <h2>Propagación no significa disparo</h2>
               <ul>
                 {simulation.globalTectonics.warnings.map((item) => <li key={`global-${item}`}>{item}</li>)}
                 {simulation.warnings.map((item) => <li key={item}>{item}</li>)}
@@ -594,19 +641,12 @@ export function TectonicSimulator() {
             <span>Fundamento científico y geológico</span>
             <div>
               {simulation.sources.map((source) => (
-                <article key={source.label}>
-                  <strong>{source.label}</strong>
-                  <p>{source.citation}</p>
-                </article>
+                <article key={source.label}><strong>{source.label}</strong><p>{source.citation}</p></article>
               ))}
-              <article>
-                <strong>Hill & Prejean · USGS</strong>
-                <p>Dynamic triggering: esfuerzos transitorios de ondas sísmicas pueden disparar sismicidad a distancias superiores a 10,000 km bajo condiciones susceptibles.</p>
-              </article>
-              <article>
-                <strong>Velasco et al. (2008)</strong>
-                <p>Global ubiquity of dynamic earthquake triggering: evidencia de disparo remoto por ondas Rayleigh y Love de grandes terremotos.</p>
-              </article>
+              <article><strong>EarthScope NSF SAGE</strong><p>FDSN Station para metadata instrumental y IRISWS traveltime para tiempos de viaje P/S en modelos 1-D como iasp91.</p></article>
+              <article><strong>EarthScope GMV</strong><p>Las Ground Motion Visualizations muestran movimiento registrado por estaciones mientras las ondas viajan por el interior y la superficie terrestre.</p></article>
+              <article><strong>Hill & Prejean · USGS</strong><p>Dynamic triggering: esfuerzos transitorios de ondas sísmicas pueden disparar sismicidad remota bajo condiciones susceptibles.</p></article>
+              <article><strong>Velasco et al. (2008)</strong><p>Global ubiquity of dynamic earthquake triggering: evidencia de disparo remoto por ondas de grandes terremotos.</p></article>
             </div>
           </section>
         </>

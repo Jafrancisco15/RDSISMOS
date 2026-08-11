@@ -406,6 +406,10 @@
 .inhibitedDot { background: #38bdf8; }
 .neutralDot { background: #cbd5e1; }
 .analogDot { background: #f59e0b; }
+.wavePDot { background: #f8fafc; box-shadow: 0 0 0 2px rgba(248,250,252,.18); }
+.waveSDot { background: #22d3ee; box-shadow: 0 0 0 2px rgba(34,211,238,.18); }
+.waveSurfaceDot { background: #c084fc; box-shadow: 0 0 0 2px rgba(192,132,252,.18); }
+.stationDot { background: #e0f2fe; border: 1px solid #7dd3fc; }
 
 .visualGrid {
   display: grid;
@@ -484,6 +488,7 @@
 
 .interactionItem p,
 .interactionItem small {
+  display: block;
   margin: 4px 0 0;
   color: #91a4b2;
   font-size: .72rem;
@@ -529,6 +534,72 @@
 .tableScroll td:last-child {
   max-width: 330px;
   color: #91a4b2;
+}
+
+.earthScopeSection {
+  border-color: rgba(125, 211, 252, .28);
+  background: linear-gradient(135deg, rgba(56, 189, 248, .08), transparent 44%), rgba(13, 27, 38, .88);
+}
+
+.earthScopeSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.earthScopeSummary article {
+  border: 1px solid rgba(125, 211, 252, .18);
+  background: rgba(56, 189, 248, .05);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.earthScopeSummary span,
+.earthScopeSummary strong,
+.earthScopeSummary small {
+  display: block;
+}
+
+.earthScopeSummary span {
+  color: #91a4b2;
+  font-size: .7rem;
+}
+
+.earthScopeSummary strong {
+  margin: 5px 0 3px;
+  color: #e0f2fe;
+}
+
+.earthScopeSummary small {
+  color: #91a4b2;
+  font-size: .7rem;
+  line-height: 1.4;
+}
+
+.earthScopeLinks {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.earthScopeLinks a {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(125, 211, 252, .34);
+  border-radius: 999px;
+  background: rgba(56, 189, 248, .08);
+  color: #bae6fd;
+  padding: 8px 12px;
+  text-decoration: none;
+  font-size: .76rem;
+  font-weight: 700;
+}
+
+.earthScopeLinks a:hover {
+  border-color: rgba(125, 211, 252, .65);
+  background: rgba(56, 189, 248, .14);
 }
 
 .stressValue {
@@ -657,6 +728,7 @@
   .modelBadge { min-width: 0; text-align: left; }
   .formGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .earthScopeSummary { grid-template-columns: 1fr; }
   .scienceGrid { grid-template-columns: 1fr; }
   .sideList { grid-template-columns: 1fr; }
   .references > div { grid-template-columns: 1fr; }
