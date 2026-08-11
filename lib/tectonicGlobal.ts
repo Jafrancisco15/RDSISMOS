@@ -200,16 +200,18 @@ function connectivityFor(plateA: string | null, plateB: string | null, hops: Map
   };
 }
 
-function responseScore(dynamicIndex: number, connectivityScore: number, strikeDeg: number, azimuthDeg: number) {
+function responseScore(dynamicIndex: number, strikeDeg: number, azimuthDeg: number) {
+  // Plate-graph connectivity is context only. Seismic waves propagate through
+  // the Earth and do not gain amplitude because two plate boundaries are linked.
   const orientation = 0.55 + 0.45 * Math.abs(Math.cos((strikeDeg - azimuthDeg) * DEG));
-  return Math.round(clamp(dynamicIndex * orientation * (0.82 + 0.18 * connectivityScore / 100), 0, 100));
+  return Math.round(clamp(dynamicIndex * orientation, 0, 100));
 }
 
 function interpretation(kind: GlobalInteractionKind, band: GlobalDistanceBand, dynamicIndex: number, hops: number | null) {
   const subject = kind === "plate-boundary" ? "límite de placa" : "falla activa";
   const range = band === "teleseismic" ? "teleseísmica" : band === "regional" ? "regional" : "cercana";
-  const connection = hops === null ? "" : ` La estructura está a ${hops} salto${hops === 1 ? "" : "s"} en la red de placas desde el límite fuente.`;
-  return `Respuesta dinámica ${range} relativa ${dynamicIndex}/100 sobre este ${subject}.${connection} Es susceptibilidad física comparativa, no probabilidad de ruptura.`;
+  const connection = hops === null ? "" : ` Como contexto tectónico, la estructura está a ${hops} salto${hops === 1 ? "" : "s"} en la red de placas desde el límite fuente.`;
+  return `Respuesta dinámica ${range} relativa ${dynamicIndex}/100 sobre este ${subject}.${connection} La conectividad no modifica la propagación de la onda ni implica causalidad.`;
 }
 
 function sourceBoundaryFor(input: Required<TectonicSimulationInput>, platePaths: GlobeMapPath[], platePayload: unknown) {
@@ -243,7 +245,7 @@ function interactionForPath(
   const pair = kind === "plate-boundary" ? platePair(path, platePayload) : { plateA: null, plateB: null, boundaryType: null };
   const connectivity = connectivityFor(pair.plateA, pair.plateB, hopDistances);
   const dynamicIndex = dynamicWaveIndex(input, geometry.distanceKm, geometry.azimuthDeg);
-  const score = responseScore(dynamicIndex, connectivity.score, geometry.strikeDeg, geometry.azimuthDeg);
+  const score = responseScore(dynamicIndex, geometry.strikeDeg, geometry.azimuthDeg);
   return {
     id: `global:${path.id}`,
     kind,
@@ -336,12 +338,12 @@ export function simulateGlobalTectonicResponse(
     model: {
       surfaceWaveSpeedKmS: SURFACE_WAVE_SPEED_KM_S,
       globalRangeKm: Math.round(EARTH_CIRCUMFERENCE_KM / 2),
-      description: "Dos escalas: Coulomb estático cerca de la ruptura y respuesta dinámica teleseísmica global, modulada por geometría y conectividad de placas.",
+      description: "Dos escalas: Coulomb estático cerca de la ruptura y respuesta dinámica teleseísmica global. La propagación depende de distancia, radiación y geometría; la red de placas se conserva solo como contexto tectónico.",
     },
     warnings: [
       "La capa global representa susceptibilidad a esfuerzo dinámico de ondas sísmicas; no es una transferencia estática de Coulomb a través de miles de kilómetros.",
-      "La conectividad de placas indica relación tectónica topológica, no una cadena causal demostrada entre terremotos.",
-      "El tiempo de llegada usa una velocidad representativa de ondas superficiales y la animación del globo no está reproducida a escala temporal real.",
+      "Las ondas atraviesan el interior y la superficie terrestre; los saltos de placa son contexto tectónico y no modifican el índice dinámico ni representan la ruta física de la energía.",
+      "El tiempo de onda superficial es una referencia simplificada; cuando EarthScope está disponible, P y S usan su servicio de tiempos de viaje iasp91.",
       "Sin formas de onda, estructura 3D, estado de esfuerzo local y presión de poros no puede estimarse una probabilidad física de disparo remoto.",
     ],
   };
