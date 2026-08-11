@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
-import type { ScopeProjectionResponse, ScopeProjectionZone } from "@/lib/scopeProjection";
+import type { ScopeProjectionDestination, ScopeProjectionResponse } from "@/lib/scopeProjection";
 
 const EARTH_TEXTURE = "https://cdn.jsdelivr.net/npm/three-globe@2.45.2/example/img/earth-night.jpg";
 const DEGREE_KM = 111.2;
@@ -15,6 +15,29 @@ interface RenderPoint {
   radius: number;
   color: string;
   label: string;
+}
+
+interface RenderArc {
+  id: string;
+  startLat: number;
+  startLng: number;
+  endLat: number;
+  endLng: number;
+  color: string;
+  stroke: number;
+  dashLength: number;
+  dashGap: number;
+  label: string;
+}
+
+interface RenderRing {
+  id: string;
+  lat: number;
+  lng: number;
+  color: string;
+  maxRadius: number;
+  speed: number;
+  repeatPeriod: number;
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -30,30 +53,29 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#039;");
 }
 
-function scopeColor(index: number, alpha = 1) {
-  if (index >= 80) return `rgba(251,113,133,${alpha})`;
-  if (index >= 60) return `rgba(251,146,60,${alpha})`;
-  if (index >= 40) return `rgba(250,204,21,${alpha})`;
-  if (index >= 20) return `rgba(45,212,191,${alpha})`;
+function probabilityColor(probability: number, alpha = 1) {
+  if (probability >= 50) return `rgba(251,113,133,${alpha})`;
+  if (probability >= 25) return `rgba(251,146,60,${alpha})`;
+  if (probability >= 10) return `rgba(250,204,21,${alpha})`;
+  if (probability >= 3) return `rgba(45,212,191,${alpha})`;
   return `rgba(125,211,252,${alpha})`;
 }
 
-function minutes(value: number | null) {
-  if (value === null) return "—";
-  return `${value.toFixed(value < 10 ? 1 : 0)} min`;
+function pct(value: number) {
+  return `${value.toFixed(2)}%`;
 }
 
-function zoneLabel(zone: ScopeProjectionZone) {
-  return `<div class="globe-tooltip"><strong>Scope ${zone.scopeIndex}/100 · ${escapeHtml(zone.network)}.${escapeHtml(zone.station)}</strong><span>${escapeHtml(zone.siteName)}</span><small>PGV ${zone.pgvMmS.toExponential(2)} mm/s · cobertura ${zone.coveragePct}% · soporte ${zone.supportStations} estación(es)</small><small>P ${minutes(zone.pMinutes)} · S ${minutes(zone.sMinutes)} · radio visual ${zone.radiusKm} km</small><small>Respuesta dinámica observada; no es probabilidad de un nuevo terremoto.</small></div>`;
+function destinationLabel(destination: ScopeProjectionDestination) {
+  return `<div class="globe-tooltip"><strong>${escapeHtml(destination.name)} · ${pct(destination.probabilityPct)}</strong><span>Scope Projection</span><small>Base ${pct(destination.baselinePct)} · diferencia ${destination.liftPct >= 0 ? "+" : ""}${destination.liftPct.toFixed(2)} pp</small><small>EarthScope ${destination.earthScopeEvidencePct}% · ${destination.analogHits} análogo(s) con actividad posterior · ${destination.waveformConfirmedHits} con waveform confirmada</small><small>M${destination.magnitudeMin.toFixed(1)}–M${destination.magnitudeMax.toFixed(1)} · ventana hasta ${new Date(destination.surveillanceEnd).toLocaleDateString("es-DO", { timeZone: "UTC" })}</small><small>Recurrencia histórica ponderada; no certeza de ocurrencia.</small></div>`;
 }
 
 export function ScopeProjectionGlobe({ data }: { data: ScopeProjectionResponse }) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 960, height: 650 });
-  const [showMetadata, setShowMetadata] = useState(true);
-  const [showObserved, setShowObserved] = useState(true);
-  const [showZones, setShowZones] = useState(true);
+  const [showDestinations, setShowDestinations] = useState(true);
+  const [showAnalogs, setShowAnalogs] = useState(true);
+  const [showLinks, setShowLinks] = useState(true);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -82,47 +104,29 @@ export function ScopeProjectionGlobe({ data }: { data: ScopeProjectionResponse }
     }, 850);
   }, [data.generatedAt, data.source.latitude, data.source.longitude]);
 
-  const zoneHalos = useMemo<RenderPoint[]>(() => showZones
-    ? data.zones.map((zone) => ({
-        id: `zone:${zone.id}`,
-        lat: zone.latitude,
-        lng: zone.longitude,
-        altitude: 0.006,
-        radius: clamp(zone.radiusKm / DEGREE_KM, 0.55, 5.8),
-        color: scopeColor(zone.scopeIndex, 0.20),
-        label: zoneLabel(zone),
+  const destinationPoints = useMemo<RenderPoint[]>(() => showDestinations
+    ? data.destinations.slice(0, 24).map((destination) => ({
+        id: destination.id,
+        lat: destination.latitude,
+        lng: destination.longitude,
+        altitude: 0.055 + clamp(destination.probabilityPct / 100, 0, 1) * 0.15,
+        radius: 0.16 + clamp(destination.probabilityPct / 65, 0, 1) * 0.42,
+        color: probabilityColor(destination.probabilityPct, 1),
+        label: destinationLabel(destination),
       }))
-    : [], [data.zones, showZones]);
+    : [], [data.destinations, showDestinations]);
 
-  const metadataPoints = useMemo<RenderPoint[]>(() => showMetadata
-    ? data.stations.map((station) => ({
-        id: `metadata:${station.network}:${station.station}`,
-        lat: station.latitude,
-        lng: station.longitude,
-        altitude: 0.012,
-        radius: 0.055,
-        color: "rgba(125,211,252,.72)",
-        label: `<div class="globe-tooltip"><strong>EarthScope · ${escapeHtml(station.network)}.${escapeHtml(station.station)}</strong><span>${escapeHtml(station.siteName)}</span><small>${station.distanceKm.toFixed(0)} km del evento · metadata FDSN</small></div>`,
+  const analogPoints = useMemo<RenderPoint[]>(() => showAnalogs
+    ? data.analogs.map((analog) => ({
+        id: `analog:${analog.event.id}`,
+        lat: analog.event.latitude,
+        lng: analog.event.longitude,
+        altitude: 0.035 + clamp(analog.similarityPct / 100, 0, 1) * 0.08,
+        radius: 0.10 + clamp(analog.similarityPct / 100, 0, 1) * 0.22,
+        color: analog.waveformConfirmed ? "#f59e0b" : analog.earthScopeEvidencePct >= 35 ? "#fbbf24" : "rgba(203,213,225,.72)",
+        label: `<div class="globe-tooltip"><strong>Análogo histórico · M${analog.event.magnitude.toFixed(1)}</strong><span>${escapeHtml(analog.event.place)}</span><small>Similitud ${analog.similarityPct}% · evidencia EarthScope ${analog.earthScopeEvidencePct}%</small><small>${analog.stationCount} estaciones · ${analog.waveformConfirmed ? `waveform ${escapeHtml(analog.waveformStation ?? "confirmada")}` : analog.waveformChecked ? "waveform no confirmada" : "waveform no sondeada"}</small></div>`,
       }))
-    : [], [data.stations, showMetadata]);
-
-  const observedPoints = useMemo<RenderPoint[]>(() => showObserved
-    ? data.traces.map((trace) => {
-        const zone = data.zones.find((candidate) => candidate.network === trace.network && candidate.station === trace.station);
-        const quantitative = trace.quantitative && zone;
-        return {
-          id: `observed:${trace.network}:${trace.station}:${trace.channel}`,
-          lat: trace.latitude,
-          lng: trace.longitude,
-          altitude: quantitative ? 0.075 + zone.scopeIndex / 850 : 0.045,
-          radius: quantitative ? 0.12 + zone.scopeIndex / 260 : 0.11,
-          color: quantitative ? scopeColor(zone.scopeIndex, 1) : "rgba(216,180,254,.88)",
-          label: quantitative
-            ? zoneLabel(zone)
-            : `<div class="globe-tooltip"><strong>${escapeHtml(trace.network)}.${escapeHtml(trace.station)} · ${escapeHtml(trace.channel)}</strong><span>Traza EarthScope observada</span><small>${trace.maxAbs.toExponential(3)} ${escapeHtml(trace.units)} · ${escapeHtml(trace.calibration)}</small><small>No entra al Índice Scope cuantitativo porque la amplitud no es velocidad corregida comparable.</small></div>`,
-        };
-      })
-    : [], [data.traces, data.zones, showObserved]);
+    : [], [data.analogs, showAnalogs]);
 
   const sourcePoint = useMemo<RenderPoint>(() => ({
     id: "scope-source",
@@ -131,8 +135,35 @@ export function ScopeProjectionGlobe({ data }: { data: ScopeProjectionResponse }
     altitude: 0.16,
     radius: 0.52,
     color: "#facc15",
-    label: `<div class="globe-tooltip"><strong>Evento fuente · M${data.source.magnitude.toFixed(1)}</strong><span>${escapeHtml(data.source.place)}</span><small>${new Date(data.source.timeUtc).toLocaleString("es-DO", { timeZone: "UTC" })} UTC · ${data.source.depthKm.toFixed(0)} km</small></div>`,
+    label: `<div class="globe-tooltip"><strong>Evento precedente · M${data.source.magnitude.toFixed(1)}</strong><span>${escapeHtml(data.source.place)}</span><small>${new Date(data.source.time).toLocaleString("es-DO", { timeZone: "UTC" })} UTC · ${data.source.depthKm.toFixed(0)} km</small><small>Desde este evento se construyen los análogos históricos Scope.</small></div>`,
   }), [data.source]);
+
+  const arcs = useMemo<RenderArc[]>(() => showLinks
+    ? data.destinations.slice(0, 18).map((destination) => ({
+        id: `arc:${destination.id}`,
+        startLat: data.source.latitude,
+        startLng: data.source.longitude,
+        endLat: destination.latitude,
+        endLng: destination.longitude,
+        color: probabilityColor(destination.probabilityPct, 0.82),
+        stroke: 0.35 + clamp(destination.probabilityPct / 55, 0, 1) * 1.4,
+        dashLength: 0.055,
+        dashGap: 0.022,
+        label: destinationLabel(destination),
+      }))
+    : [], [data.destinations, data.source.latitude, data.source.longitude, showLinks]);
+
+  const rings = useMemo<RenderRing[]>(() => showDestinations
+    ? data.destinations.slice(0, 18).map((destination) => ({
+        id: `ring:${destination.id}`,
+        lat: destination.latitude,
+        lng: destination.longitude,
+        color: probabilityColor(destination.probabilityPct, 0.72),
+        maxRadius: clamp(destination.radiusKm / DEGREE_KM, 1.0, 10),
+        speed: 0.65 + clamp(destination.probabilityPct / 100, 0, 1) * 0.8,
+        repeatPeriod: 2_000 + Math.round((1 - clamp(destination.probabilityPct / 100, 0, 1)) * 1_800),
+      }))
+    : [], [data.destinations, showDestinations]);
 
   return (
     <div ref={containerRef} style={{ width: "100%", minHeight: 520, position: "relative" }}>
@@ -145,7 +176,7 @@ export function ScopeProjectionGlobe({ data }: { data: ScopeProjectionResponse }
         atmosphereColor="#69c7ff"
         atmosphereAltitude={0.18}
         showGraticules
-        pointsData={[...zoneHalos, ...metadataPoints, ...observedPoints, sourcePoint]}
+        pointsData={[sourcePoint, ...destinationPoints, ...analogPoints]}
         pointLat="lat"
         pointLng="lng"
         pointAltitude="altitude"
@@ -153,6 +184,24 @@ export function ScopeProjectionGlobe({ data }: { data: ScopeProjectionResponse }
         pointColor="color"
         pointLabel={(point) => String((point as RenderPoint).label)}
         pointsTransitionDuration={400}
+        arcsData={arcs}
+        arcStartLat="startLat"
+        arcStartLng="startLng"
+        arcEndLat="endLat"
+        arcEndLng="endLng"
+        arcColor="color"
+        arcStroke="stroke"
+        arcDashLength="dashLength"
+        arcDashGap="dashGap"
+        arcDashAnimateTime={2_400}
+        arcLabel={(arc) => String((arc as RenderArc).label)}
+        ringsData={rings}
+        ringLat="lat"
+        ringLng="lng"
+        ringColor={(ring: unknown) => [String((ring as RenderRing).color), "rgba(255,255,255,0)"]}
+        ringMaxRadius={(ring: unknown) => (ring as RenderRing).maxRadius}
+        ringPropagationSpeed={(ring: unknown) => (ring as RenderRing).speed}
+        ringRepeatPeriod={(ring: unknown) => (ring as RenderRing).repeatPeriod}
         enablePointerInteraction
       />
 
@@ -170,24 +219,24 @@ export function ScopeProjectionGlobe({ data }: { data: ScopeProjectionResponse }
         fontSize: 12,
         lineHeight: 1.5,
       }}>
-        <strong>Scope Projection · EarthScope</strong>
+        <strong>Scope Projection · ocurrencia histórica</strong>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 7 }}>
-          <button type="button" onClick={() => setShowZones((value) => !value)} style={{ opacity: showZones ? 1 : .5 }}>Zonas Scope</button>
-          <button type="button" onClick={() => setShowObserved((value) => !value)} style={{ opacity: showObserved ? 1 : .5 }}>Trazas observadas</button>
-          <button type="button" onClick={() => setShowMetadata((value) => !value)} style={{ opacity: showMetadata ? 1 : .5 }}>Estaciones FDSN</button>
+          <button type="button" onClick={() => setShowDestinations((value) => !value)} style={{ opacity: showDestinations ? 1 : .5 }}>Proyecciones</button>
+          <button type="button" onClick={() => setShowLinks((value) => !value)} style={{ opacity: showLinks ? 1 : .5 }}>Conexiones</button>
+          <button type="button" onClick={() => setShowAnalogs((value) => !value)} style={{ opacity: showAnalogs ? 1 : .5 }}>Análogos</button>
         </div>
         <div style={{ marginTop: 7, color: "#aebfca" }}>
-          <span style={{ color: "#fb7185" }}>● Scope alto</span> · <span style={{ color: "#facc15" }}>● intermedio</span> · <span style={{ color: "#7dd3fc" }}>● bajo</span><br />
-          <span style={{ color: "#d8b4fe" }}>● traza no comparable</span> · <span style={{ color: "#facc15" }}>● evento fuente</span>
+          <span style={{ color: "#fb7185" }}>● prob. alta</span> · <span style={{ color: "#facc15" }}>● intermedia</span> · <span style={{ color: "#7dd3fc" }}>● baja</span><br />
+          <span style={{ color: "#f59e0b" }}>● análogo con waveform EarthScope</span> · <span style={{ color: "#facc15" }}>● precedente</span>
         </div>
-        <div style={{ marginTop: 6, color: "#fde68a" }}>El halo representa soporte espacial aproximado de una observación instrumental, no una zona de ocurrencia futura.</div>
+        <div style={{ marginTop: 6, color: "#fde68a" }}>Las líneas indican asociación histórica del modelo; no muestran una ruta física de energía ni causalidad.</div>
       </div>
 
       <div style={{
         position: "absolute",
         right: 12,
         bottom: 12,
-        maxWidth: 370,
+        maxWidth: 380,
         padding: "9px 11px",
         border: "1px solid rgba(125,211,252,.28)",
         borderRadius: 12,
@@ -197,9 +246,9 @@ export function ScopeProjectionGlobe({ data }: { data: ScopeProjectionResponse }
         lineHeight: 1.45,
         pointerEvents: "none",
       }}>
-        <strong>{data.quantitativeTraceCount} estaciones cuantitativas</strong><br />
-        {data.observedTraceCount} trazas observadas · {data.stationMetadataCount} estaciones metadata<br />
-        <span style={{ color: "#aebfca" }}>P/S: EarthScope {data.travelTimeModel} · modelo {data.model}</span>
+        <strong>{data.destinations.length} destinos Scope</strong><br />
+        {data.analogsEvaluated} análogos · {data.earthScopeSupportedAnalogs} con soporte EarthScope<br />
+        <span style={{ color: "#aebfca" }}>Calidad de evidencia: {data.evidenceQualityPct}% · modelo {data.model}</span>
       </div>
     </div>
   );
