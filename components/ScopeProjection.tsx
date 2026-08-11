@@ -27,17 +27,12 @@ function startDateFor(days: number) {
   return date.toISOString().slice(0, 10);
 }
 
-function minutes(value: number | null) {
-  if (value === null) return "—";
-  return `${value.toFixed(value < 10 ? 1 : 0)} min`;
+function pct(value: number) {
+  return `${value.toFixed(2)}%`;
 }
 
-function indexLabel(value: number) {
-  if (value >= 80) return "Muy alta";
-  if (value >= 60) return "Alta";
-  if (value >= 40) return "Intermedia";
-  if (value >= 20) return "Baja";
-  return "Muy baja";
+function signedPct(value: number) {
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)} pp`;
 }
 
 async function readJson<T>(response: Response): Promise<T> {
@@ -74,6 +69,7 @@ export function ScopeProjection() {
             latitude: event.latitude,
             longitude: event.longitude,
             magnitude: event.magnitude,
+            magnitudeType: event.magnitudeType,
             depthKm: event.depthKm,
             place: event.place,
           },
@@ -121,8 +117,7 @@ export function ScopeProjection() {
     void loadRecent(90, true);
   }, [loadRecent]);
 
-  const strongestZone = projection?.zones[0] ?? null;
-  const strongestZones = useMemo(() => projection?.zones.slice(0, 8) ?? [], [projection]);
+  const topDestinations = useMemo(() => projection?.destinations.slice(0, 8) ?? [], [projection]);
 
   function changeRange(days: RecentDays) {
     setRecentDays(days);
@@ -136,29 +131,29 @@ export function ScopeProjection() {
           <div className={styles.brand}><span /> RDSISMOS · EARTHSCOPE LAB</div>
           <h1>Scope Projection</h1>
           <p>
-            Proyección instrumental 3D construida con estaciones y formas de onda de EarthScope NSF SAGE.
-            Separa lo que fue realmente observado de cualquier extrapolación espacial alrededor de las estaciones.
+            Proyección de ocurrencia posterior basada en la misma lógica histórica del Mapa 3D,
+            pero ponderando cada análogo por la evidencia observacional disponible en EarthScope.
           </p>
         </div>
         <div className={styles.modelBadge}>
-          <span>Fuente primaria</span>
-          <strong>EarthScope NSF SAGE</strong>
-          <small>FDSN Station · IRISWS Timeseries · Traveltime</small>
+          <span>Modelo independiente</span>
+          <strong>Historical + EarthScope</strong>
+          <small>USGS/NEIC eventos · EarthScope estaciones y archivo de formas de onda</small>
         </div>
       </header>
 
       <section className={styles.notice}>
-        <strong>Qué significa “proyección” aquí:</strong> Scope Projection no asigna probabilidad de un nuevo terremoto.
-        Proyecta espacialmente la <b>respuesta dinámica instrumental observada</b> alrededor de estaciones con velocidad físicamente comparable.
-        El Índice Scope 0–100 es relativo a las estaciones disponibles para el mismo evento.
+        <strong>Cómo leer Scope Projection:</strong> el porcentaje es recurrencia histórica ponderada.
+        EarthScope no sustituye el catálogo de terremotos: aporta qué tan bien observado estuvo cada análogo histórico
+        y modifica su peso. La cifra no es certeza de que ocurrirá un sismo.
       </section>
 
       <section className={styles.eventsSection}>
         <div className={styles.eventsHeader}>
           <div>
-            <span>Evento fuente real · M5.9+</span>
-            <h2>Selecciona un terremoto</h2>
-            <p>Al escogerlo, EarthScope se consulta directamente y se reconstruye una vista independiente de la proyección operacional de RDSISMOS.</p>
+            <span>Evento precedente real · M5.9+</span>
+            <h2>Selecciona el sismo que inicia la proyección</h2>
+            <p>El sistema busca análogos históricos comparables y observa qué países tuvieron actividad posterior dentro de la ventana calculada.</p>
           </div>
           <div className={styles.rangeButtons}>
             {([7, 30, 90, 365] as RecentDays[]).map((days) => (
@@ -198,98 +193,94 @@ export function ScopeProjection() {
       {selectedEvent && (
         <section className={styles.selectedSource}>
           <div>
-            <span>Fuente seleccionada</span>
+            <span>Evento precedente</span>
             <h2>M{selectedEvent.magnitude.toFixed(1)} · {selectedEvent.place}</h2>
             <p>{formatDate(selectedEvent.timeUtc, true)} UTC · profundidad {selectedEvent.depthKm.toFixed(1)} km</p>
           </div>
           <button type="button" onClick={() => void runProjection(selectedEvent)} disabled={loading}>
-            {loading ? "Consultando EarthScope…" : "Recalcular Scope"}
+            {loading ? "Evaluando historia + EarthScope…" : "Recalcular Scope"}
           </button>
         </section>
       )}
 
       {error && <div className={styles.error}>{error}</div>}
-      {loading && !projection && <div className={styles.loading}>Descargando metadata y formas de onda de EarthScope…</div>}
+      {loading && !projection && <div className={styles.loading}>Buscando análogos, controles y evidencia histórica EarthScope…</div>}
 
       {projection && (
         <>
           <section className={styles.metrics}>
             <article>
-              <span>Estaciones EarthScope</span>
-              <strong>{projection.stationMetadataCount}</strong>
-              <small>metadata FDSN disponible en la ventana del evento</small>
+              <span>Destinos con señal positiva</span>
+              <strong>{projection.destinations.length}</strong>
+              <small>Probabilidad Scope mayor que la línea base</small>
             </article>
             <article>
-              <span>Trazas observadas</span>
-              <strong>{projection.observedTraceCount}</strong>
-              <small>{projection.quantitativeTraceCount} comparables en velocidad</small>
+              <span>Análogos evaluados</span>
+              <strong>{projection.analogsEvaluated}</strong>
+              <small>{projection.analogsFound.toLocaleString()} candidatos históricos encontrados</small>
             </article>
             <article>
-              <span>Mayor Índice Scope</span>
-              <strong>{strongestZone ? `${strongestZone.scopeIndex}/100` : "—"}</strong>
-              <small>{strongestZone ? `${strongestZone.network}.${strongestZone.station} · ${indexLabel(strongestZone.scopeIndex)}` : "Sin velocidad comparable"}</small>
+              <span>Soporte EarthScope</span>
+              <strong>{projection.earthScopeSupportedAnalogs}/{projection.analogsEvaluated}</strong>
+              <small>{projection.waveformConfirmedAnalogs} con forma de onda confirmada en la muestra</small>
             </article>
             <article>
-              <span>PGV observado máximo</span>
-              <strong>{strongestZone ? `${strongestZone.pgvMmS.toExponential(2)} mm/s` : "—"}</strong>
-              <small>solo respuesta instrumental corregida</small>
+              <span>Calidad de evidencia Scope</span>
+              <strong>{projection.evidenceQualityPct}%</strong>
+              <small>calidad del conjunto; no probabilidad de ocurrencia</small>
             </article>
           </section>
 
           <section className={styles.visualSection}>
             <div className={styles.visualHeader}>
               <div>
-                <span>Mapa 3D instrumental</span>
-                <h2>Observación EarthScope → zonas Scope</h2>
+                <span>Mapa 3D de proyección</span>
+                <h2>Evento precedente → posibles destinos</h2>
               </div>
-              <p>{projection.zones.length} zona(s) cuantitativa(s) · P/S EarthScope {projection.travelTimeModel}</p>
+              <p>Ventana {projection.windowDays} días · M{projection.forecastMagnitudeMin.toFixed(1)}–M{projection.forecastMagnitudeMax.toFixed(1)}</p>
             </div>
             <div className={styles.visualGrid}>
-              <div className={styles.globeWrap}>
-                <ScopeProjectionGlobe data={projection} />
-              </div>
+              <div className={styles.globeWrap}><ScopeProjectionGlobe data={projection} /></div>
               <aside className={styles.sideList}>
                 <div className={styles.sideHead}>
-                  <span>Mayor respuesta observada</span>
-                  <strong>{strongestZones.length}</strong>
+                  <span>Mayor señal histórica Scope</span>
+                  <strong>{topDestinations.length}</strong>
                 </div>
-                {strongestZones.map((zone) => (
-                  <article key={zone.id}>
-                    <div><strong>{zone.network}.{zone.station}</strong><b>{zone.scopeIndex}/100</b></div>
-                    <span>{zone.siteName}</span>
-                    <small>PGV {zone.pgvMmS.toExponential(2)} mm/s · cobertura {zone.coveragePct}%</small>
-                    <small>P {minutes(zone.pMinutes)} · S {minutes(zone.sMinutes)} · {zone.distanceKm.toFixed(0)} km del evento</small>
+                {topDestinations.map((destination) => (
+                  <article key={destination.id}>
+                    <div><strong>{destination.name}</strong><b>{pct(destination.probabilityPct)}</b></div>
+                    <span>{signedPct(destination.liftPct)} sobre base {pct(destination.baselinePct)}</span>
+                    <small>EarthScope {destination.earthScopeEvidencePct}% · {destination.analogHits}/{projection.analogsEvaluated} análogos con hit</small>
+                    <small>M{destination.magnitudeMin.toFixed(1)}–M{destination.magnitudeMax.toFixed(1)} · hasta {formatDate(destination.surveillanceEnd)}</small>
                   </article>
                 ))}
-                {!strongestZones.length && <div className={styles.empty}>EarthScope no devolvió suficientes trazas de velocidad corregida para construir zonas cuantitativas.</div>}
+                {!topDestinations.length && <div className={styles.empty}>No aparece una señal positiva sobre la línea base después de ponderar la evidencia EarthScope.</div>}
               </aside>
             </div>
           </section>
 
           <section className={styles.tableSection}>
             <div className={styles.tableHeader}>
-              <div><span>Proyección instrumental</span><h2>Zonas Scope</h2></div>
-              <p>Ordenadas por respuesta relativa observada. El radio indica soporte espacial aproximado de la estación, no alcance de un próximo terremoto.</p>
+              <div><span>Proyección Scope</span><h2>Países proyectados</h2></div>
+              <p>Un país aparece una sola vez. Prob. y Base usan la misma ventana; Dif. es el exceso en puntos porcentuales.</p>
             </div>
             <div className={styles.tableScroll}>
               <table>
-                <thead>
-                  <tr><th>Estación</th><th>Índice Scope</th><th>PGV</th><th>Cobertura</th><th>Radio</th><th>Distancia</th><th>P</th><th>S</th></tr>
-                </thead>
+                <thead><tr><th>País</th><th>Prob. Scope</th><th>Base</th><th>Dif.</th><th>Evidencia ES</th><th>Hits</th><th>Magnitud</th><th>Ventana</th></tr></thead>
                 <tbody>
-                  {projection.zones.map((zone) => (
-                    <tr key={`row:${zone.id}`}>
-                      <td><strong>{zone.network}.{zone.station}</strong><small>{zone.siteName} · {zone.channel}</small></td>
-                      <td><strong>{zone.scopeIndex}/100</strong><small>{indexLabel(zone.scopeIndex)}</small></td>
-                      <td>{zone.pgvMmS.toExponential(3)} mm/s</td>
-                      <td>{zone.coveragePct}% · {zone.supportStations} soporte</td>
-                      <td>{zone.radiusKm} km</td>
-                      <td>{zone.distanceKm.toFixed(0)} km</td>
-                      <td>{minutes(zone.pMinutes)}</td>
-                      <td>{minutes(zone.sMinutes)}</td>
+                  {projection.destinations.map((destination) => (
+                    <tr key={`destination:${destination.id}`}>
+                      <td><strong>{destination.name}</strong><small>{destination.zoneNames.join(" · ") || destination.countryCode}</small></td>
+                      <td><strong>{pct(destination.probabilityPct)}</strong></td>
+                      <td>{pct(destination.baselinePct)}</td>
+                      <td>{signedPct(destination.liftPct)}</td>
+                      <td>{destination.earthScopeEvidencePct}%<small>{destination.waveformConfirmedHits} hit(s) con waveform confirmada</small></td>
+                      <td>{destination.analogHits}/{projection.analogsEvaluated}<small>control {destination.controlHits}</small></td>
+                      <td>M{destination.magnitudeMin.toFixed(1)}–M{destination.magnitudeMax.toFixed(1)}</td>
+                      <td>{formatDate(destination.surveillanceStart)} → {formatDate(destination.surveillanceEnd)}</td>
                     </tr>
                   ))}
-                  {!projection.zones.length && <tr><td colSpan={8}>Sin zonas cuantitativas para este evento.</td></tr>}
+                  {!projection.destinations.length && <tr><td colSpan={8}>Sin destinos con exceso positivo sobre la línea base.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -297,20 +288,21 @@ export function ScopeProjection() {
 
           <section className={styles.tableSection}>
             <div className={styles.tableHeader}>
-              <div><span>Auditoría de datos</span><h2>Trazas EarthScope utilizadas</h2></div>
-              <p>Las trazas sin velocidad corregida permanecen visibles, pero no participan en el Índice Scope.</p>
+              <div><span>Evidencia histórica</span><h2>Análogos + EarthScope</h2></div>
+              <p>EarthScope pondera la observabilidad de cada análogo; no decide por sí solo si hubo o no un terremoto posterior.</p>
             </div>
             <div className={styles.tableScroll}>
               <table>
-                <thead><tr><th>Estación</th><th>Canal</th><th>Máximo</th><th>Calibración</th><th>Uso cuantitativo</th></tr></thead>
+                <thead><tr><th>Análogo</th><th>Similitud</th><th>Evidencia EarthScope</th><th>Estaciones</th><th>Waveform</th><th>Países posteriores</th></tr></thead>
                 <tbody>
-                  {projection.traces.map((trace) => (
-                    <tr key={`trace:${trace.network}:${trace.station}:${trace.channel}`}>
-                      <td><strong>{trace.network}.{trace.station}</strong><small>{trace.siteName}</small></td>
-                      <td>{trace.channel}</td>
-                      <td>{trace.maxAbs.toExponential(3)} {trace.units}</td>
-                      <td>{trace.calibration === "response-corrected" ? "Respuesta corregida" : "Sensibilidad / fallback"}</td>
-                      <td>{trace.quantitative ? "Sí" : "No"}</td>
+                  {projection.analogs.map((analog) => (
+                    <tr key={`analog:${analog.event.id}`}>
+                      <td><strong>M{analog.event.magnitude.toFixed(1)} · {analog.event.place}</strong><small>{formatDate(analog.event.time)}</small></td>
+                      <td>{analog.similarityPct}%</td>
+                      <td><strong>{analog.earthScopeEvidencePct}%</strong><small>{analog.earthScopeStatus}</small></td>
+                      <td>{analog.stationCount}<small>{analog.azimuthSectors}/8 sectores · cercana {analog.nearestStationKm === null ? "—" : `${analog.nearestStationKm.toFixed(0)} km`}</small></td>
+                      <td>{analog.waveformConfirmed ? `Sí · ${analog.waveformStation}` : analog.waveformChecked ? "No confirmada" : "No sondeada"}</td>
+                      <td>{analog.hitCountryCodes.length ? analog.hitCountryCodes.join(", ") : "Ninguno"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -318,20 +310,9 @@ export function ScopeProjection() {
             </div>
           </section>
 
-          {(projection.products.eventPageUrl || projection.products.gmvUrl || projection.products.dataAccessUrl) && (
-            <section className={styles.products}>
-              <div><span>Productos EarthScope</span><h2>Datos relacionados con el evento</h2></div>
-              <div className={styles.productLinks}>
-                {projection.products.eventPageUrl && <a href={projection.products.eventPageUrl} target="_blank" rel="noreferrer">Evento en EarthScope</a>}
-                {projection.products.gmvUrl && <a href={projection.products.gmvUrl} target="_blank" rel="noreferrer">Ground Motion Visualization</a>}
-                {projection.products.dataAccessUrl && <a href={projection.products.dataAccessUrl} target="_blank" rel="noreferrer">Event Data Access</a>}
-              </div>
-            </section>
-          )}
-
-          {(projection.warnings.length > 0) && (
+          {projection.warnings.length > 0 && (
             <details className={styles.warnings}>
-              <summary>{projection.warnings.length} avisos de cobertura/datos</summary>
+              <summary>{projection.warnings.length} aviso(s) metodológico(s)</summary>
               <ul>{projection.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
             </details>
           )}
@@ -344,9 +325,15 @@ export function ScopeProjection() {
             </article>
             <article>
               <span>Limitaciones</span>
-              <h2>Qué no significa esta vista</h2>
+              <h2>Qué no significa</h2>
               <ul>{projection.limitations.map((item) => <li key={item}>{item}</li>)}</ul>
             </article>
+          </section>
+
+          <section className={styles.notice}>
+            <strong>Fuentes:</strong> {projection.providers.eventCatalog} aporta el catálogo de ocurrencias históricas;
+            {" "}{projection.providers.historicalObservation} aporta cobertura instrumental y archivo de formas de onda.
+            {" "}{projection.providers.note}
           </section>
         </>
       )}

@@ -1,68 +1,76 @@
+import type { ScopeHistoricalEvidence } from "@/lib/scopeHistoricalEvidence";
 import type {
-  EarthScopeIntegration,
-  EarthScopeProducts,
-  EarthScopeStation,
-  EarthScopeTravelTime,
-} from "@/lib/earthscopeIntegration";
-import { closestEarthScopeTravelTime } from "@/lib/earthscopeIntegration";
-import type {
-  EarthScopeObservedTrace,
-  EarthScopeObservedWaveforms,
-  EarthScopeWaveformSource,
-} from "@/lib/earthscopeWaveforms";
-import { haversineKm } from "@/lib/regions";
+  HistoricalMigrationCapsule,
+  HistoricalMigrationDestination,
+  SeismicEvent,
+} from "@/lib/types";
 
-export interface ScopeProjectionZone {
-  id: string;
-  network: string;
-  station: string;
-  channel: string;
-  siteName: string;
-  latitude: number;
-  longitude: number;
-  distanceKm: number;
-  radiusKm: number;
-  pgvMps: number;
-  pgvMmS: number;
-  scopeIndex: number;
-  coveragePct: number;
-  supportStations: number;
-  pMinutes: number | null;
-  sMinutes: number | null;
-  surfaceMinutes: number | null;
-  calibration: EarthScopeObservedTrace["calibration"];
-  interpretation: string;
+export interface ScopeProjectionAnalog {
+  event: SeismicEvent;
+  similarityPct: number;
+  earthScopeEvidencePct: number;
+  earthScopeStatus: ScopeHistoricalEvidence["status"];
+  stationCount: number;
+  azimuthSectors: number;
+  nearestStationKm: number | null;
+  waveformChecked: boolean;
+  waveformConfirmed: boolean;
+  waveformStation: string | null;
+  weightedSimilarity: number;
+  hitCountryCodes: string[];
+  controlHitCountryCodes: string[];
+  strongestFollower: SeismicEvent | null;
+  note: string;
 }
 
-export interface ScopeProjectionTraceSummary {
-  network: string;
-  station: string;
-  channel: string;
-  siteName: string;
+export interface ScopeProjectionDestination {
+  id: string;
+  countryCode: string;
+  name: string;
+  zoneNames: string[];
   latitude: number;
   longitude: number;
-  distanceKm: number;
-  maxAbs: number;
-  units: string;
-  calibration: EarthScopeObservedTrace["calibration"];
-  quantitative: boolean;
+  radiusKm: number;
+  probabilityPct: number;
+  baselinePct: number;
+  liftPct: number;
+  analogHits: number;
+  controlHits: number;
+  earthScopeEvidencePct: number;
+  waveformConfirmedHits: number;
+  medianLeadDays: number | null;
+  strongestObservedMagnitude: number | null;
+  surveillanceStart: string;
+  surveillanceEnd: string;
+  magnitudeMin: number;
+  magnitudeMax: number;
 }
 
 export interface ScopeProjectionResponse {
-  provider: "EarthScope NSF SAGE";
-  model: "scope-projection-v1";
+  model: "scope-projection-v2";
   generatedAt: string;
-  source: EarthScopeWaveformSource;
-  available: boolean;
-  stationMetadataCount: number;
-  observedTraceCount: number;
-  quantitativeTraceCount: number;
-  stations: EarthScopeStation[];
-  traces: ScopeProjectionTraceSummary[];
-  zones: ScopeProjectionZone[];
-  travelTimes: EarthScopeTravelTime[];
-  travelTimeModel: "iasp91";
-  products: EarthScopeProducts;
+  source: SeismicEvent;
+  targetCountry: HistoricalMigrationCapsule["targetCountry"];
+  providers: {
+    eventCatalog: "USGS/NEIC";
+    historicalObservation: "EarthScope NSF SAGE";
+    note: string;
+  };
+  historyStart: string;
+  historyEnd: string;
+  sourceRadiusKm: number;
+  analogMagnitudeMin: number;
+  analogMagnitudeMax: number;
+  analogsFound: number;
+  analogsEvaluated: number;
+  windowDays: number;
+  forecastMagnitudeMin: number;
+  forecastMagnitudeMax: number;
+  evidenceQualityPct: number;
+  earthScopeSupportedAnalogs: number;
+  waveformConfirmedAnalogs: number;
+  destinations: ScopeProjectionDestination[];
+  analogs: ScopeProjectionAnalog[];
   warnings: string[];
   methodology: string[];
   limitations: string[];
@@ -72,133 +80,199 @@ function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
 
-function percentile(values: number[], fraction: number) {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * fraction)));
-  return sorted[index] ?? 0;
+function round2(value: number) {
+  return Math.round(value * 100) / 100;
 }
 
-function isVelocityTrace(trace: EarthScopeObservedTrace) {
-  const units = trace.units.trim().toLowerCase().replaceAll(" ", "");
-  return trace.calibration === "response-corrected"
-    && (units === "m/s" || units === "m/sec" || units === "m/s^1")
-    && Number.isFinite(trace.maxAbs)
-    && trace.maxAbs > 0;
+function countryCodeFromKey(value: string) {
+  const clean = value.trim();
+  if (!clean) return "";
+  const parts = clean.split(":");
+  return (parts[parts.length - 1] ?? clean).toUpperCase();
 }
 
-function zoneRadiusKm(trace: EarthScopeObservedTrace, quantitative: EarthScopeObservedTrace[]) {
-  const otherDistances = quantitative
-    .filter((candidate) => candidate.network !== trace.network || candidate.station !== trace.station)
-    .map((candidate) => haversineKm(trace.latitude, trace.longitude, candidate.latitude, candidate.longitude))
-    .filter((distance) => Number.isFinite(distance) && distance > 0)
-    .sort((a, b) => a - b);
-  const nearest = otherDistances[0];
-  if (!Number.isFinite(nearest)) return 220;
-  return Math.round(clamp(nearest * 0.42, 120, 650));
+function normalizedCodes(values: string[] | undefined) {
+  return [...new Set((values ?? []).map(countryCodeFromKey).filter(Boolean))];
 }
 
-function supportCount(trace: EarthScopeObservedTrace, quantitative: EarthScopeObservedTrace[]) {
-  return quantitative.filter((candidate) => (
-    haversineKm(trace.latitude, trace.longitude, candidate.latitude, candidate.longitude) <= 1_200
-  )).length;
+function representativeDestination(items: HistoricalMigrationDestination[]) {
+  return [...items].sort((a, b) => (
+    (b.analogHits ?? 0) - (a.analogHits ?? 0)
+    || (b.liftPct ?? 0) - (a.liftPct ?? 0)
+    || b.recurrencePct - a.recurrencePct
+  ))[0];
 }
 
-function scopeIndexFor(value: number, logLow: number, logHigh: number, count: number) {
-  if (count <= 1 || Math.abs(logHigh - logLow) < 1e-9) return 50;
-  const normalized = (Math.log10(value) - logLow) / (logHigh - logLow);
-  return Math.round(100 * clamp(normalized, 0, 1));
+function weightedAverage(
+  rows: Array<{ value: number; weight: number }>,
+  fallback = 0,
+) {
+  const totalWeight = rows.reduce((sum, row) => sum + row.weight, 0);
+  if (totalWeight <= 0) return fallback;
+  return rows.reduce((sum, row) => sum + row.value * row.weight, 0) / totalWeight;
 }
 
 export function buildScopeProjection(
-  source: EarthScopeWaveformSource,
-  earthScope: EarthScopeIntegration,
-  observed: EarthScopeObservedWaveforms,
+  capsule: HistoricalMigrationCapsule,
+  evidence: ScopeHistoricalEvidence[],
 ): ScopeProjectionResponse {
-  const quantitative = observed.traces.filter(isVelocityTrace);
-  const logValues = quantitative.map((trace) => Math.log10(trace.maxAbs));
-  const logLow = percentile(logValues, 0.10);
-  const logHigh = percentile(logValues, 0.90);
-
-  const zones = quantitative.map((trace): ScopeProjectionZone => {
-    const supportStations = supportCount(trace, quantitative);
-    const coveragePct = Math.round(clamp(35 + Math.max(0, supportStations - 1) * 15, 35, 95));
-    const travel = closestEarthScopeTravelTime(trace.distanceKm, earthScope.travelTimes);
-    const scopeIndex = scopeIndexFor(trace.maxAbs, logLow, logHigh, quantitative.length);
-    const radiusKm = zoneRadiusKm(trace, quantitative);
-    return {
-      id: `scope:${trace.network}:${trace.station}:${trace.channel}`,
-      network: trace.network,
-      station: trace.station,
-      channel: trace.channel,
-      siteName: trace.siteName,
-      latitude: trace.latitude,
-      longitude: trace.longitude,
-      distanceKm: trace.distanceKm,
-      radiusKm,
-      pgvMps: trace.maxAbs,
-      pgvMmS: trace.maxAbs * 1_000,
-      scopeIndex,
-      coveragePct,
-      supportStations,
-      pMinutes: travel?.pMinutes ?? null,
-      sMinutes: travel?.sMinutes ?? null,
-      surfaceMinutes: travel?.surfaceMinutes ?? null,
-      calibration: trace.calibration,
-      interpretation: `Respuesta dinámica instrumental relativa ${scopeIndex}/100 alrededor de ${trace.network}.${trace.station}. El radio de ${radiusKm} km representa soporte espacial aproximado de la observación, no una zona donde se prediga un terremoto.`,
+  const evidenceById = new Map(evidence.map((item) => [item.analogEventId, item]));
+  const analogs: ScopeProjectionAnalog[] = capsule.analogs.map((analog) => {
+    const scopeEvidence = evidenceById.get(analog.analogEvent.id) ?? {
+      analogEventId: analog.analogEvent.id,
+      stationCount: 0,
+      azimuthSectors: 0,
+      nearestStationKm: null,
+      waveformChecked: false,
+      waveformConfirmed: false,
+      waveformStation: null,
+      evidencePct: 0,
+      weightFactor: 0.35,
+      status: "limited" as const,
+      note: "Sin verificación EarthScope disponible para este análogo.",
     };
-  }).sort((a, b) => b.scopeIndex - a.scopeIndex || b.pgvMps - a.pgvMps);
+    const similarityWeight = clamp(analog.similarityPct / 100, 0.01, 1);
+    return {
+      event: analog.analogEvent,
+      similarityPct: analog.similarityPct,
+      earthScopeEvidencePct: scopeEvidence.evidencePct,
+      earthScopeStatus: scopeEvidence.status,
+      stationCount: scopeEvidence.stationCount,
+      azimuthSectors: scopeEvidence.azimuthSectors,
+      nearestStationKm: scopeEvidence.nearestStationKm,
+      waveformChecked: scopeEvidence.waveformChecked,
+      waveformConfirmed: scopeEvidence.waveformConfirmed,
+      waveformStation: scopeEvidence.waveformStation,
+      weightedSimilarity: similarityWeight * scopeEvidence.weightFactor,
+      hitCountryCodes: normalizedCodes(analog.hitCountryCodes),
+      controlHitCountryCodes: normalizedCodes(analog.controlHitCountryCodes),
+      strongestFollower: analog.strongestFollower,
+      note: scopeEvidence.note,
+    };
+  });
 
-  const traces = observed.traces.map((trace): ScopeProjectionTraceSummary => ({
-    network: trace.network,
-    station: trace.station,
-    channel: trace.channel,
-    siteName: trace.siteName,
-    latitude: trace.latitude,
-    longitude: trace.longitude,
-    distanceKm: trace.distanceKm,
-    maxAbs: trace.maxAbs,
-    units: trace.units,
-    calibration: trace.calibration,
-    quantitative: isVelocityTrace(trace),
-  }));
-
-  const warnings = [...earthScope.warnings, ...observed.warnings];
-  if (observed.traces.length > quantitative.length) {
-    warnings.push(`${observed.traces.length - quantitative.length} traza(s) EarthScope se muestran como observación pero fueron excluidas del índice cuantitativo porque no tenían velocidad con respuesta instrumental corregida.`);
+  const totalWeight = analogs.reduce((sum, analog) => sum + analog.weightedSimilarity, 0);
+  const grouped = new Map<string, HistoricalMigrationDestination[]>();
+  for (const destination of capsule.destinations) {
+    const countryCode = (destination.countryCode ?? "").toUpperCase();
+    if (!countryCode) continue;
+    grouped.set(countryCode, [...(grouped.get(countryCode) ?? []), destination]);
   }
-  if (quantitative.length < 3) {
-    warnings.push("Hay menos de tres estaciones con velocidad físicamente comparable; la cobertura espacial de Scope Projection es limitada para este evento.");
+
+  const destinations: ScopeProjectionDestination[] = [];
+  for (const [countryCode, candidates] of grouped) {
+    const representative = representativeDestination(candidates);
+    if (!representative) continue;
+    const hitAnalogs = analogs.filter((analog) => analog.hitCountryCodes.includes(countryCode));
+    const controlAnalogs = analogs.filter((analog) => analog.controlHitCountryCodes.includes(countryCode));
+    if (!hitAnalogs.length || totalWeight <= 0) continue;
+
+    const weightedHits = hitAnalogs.reduce((sum, analog) => sum + analog.weightedSimilarity, 0);
+    const weightedControlHits = controlAnalogs.reduce((sum, analog) => sum + analog.weightedSimilarity, 0);
+    const probabilityPct = round2(weightedHits / totalWeight * 100);
+    const baselinePct = round2(weightedControlHits / totalWeight * 100);
+    const liftPct = round2(probabilityPct - baselinePct);
+    if (probabilityPct <= 0 || liftPct <= 0) continue;
+
+    const earthScopeEvidencePct = Math.round(weightedAverage(
+      hitAnalogs.map((analog) => ({ value: analog.earthScopeEvidencePct, weight: Math.max(0.01, analog.similarityPct / 100) })),
+      0,
+    ));
+    const zoneNames = [...new Set(candidates.map((item) => item.zoneName).filter((value): value is string => Boolean(value)))];
+    const surveillanceStart = representative.surveillanceStart ?? capsule.sourceEvent.time;
+    const surveillanceEnd = representative.surveillanceEnd
+      ?? new Date(Date.parse(capsule.sourceEvent.time) + capsule.windowDays * 86_400_000).toISOString();
+
+    destinations.push({
+      id: `scope-country:${countryCode}:${capsule.sourceEvent.id}`,
+      countryCode,
+      name: representative.name,
+      zoneNames,
+      latitude: representative.latitude,
+      longitude: representative.longitude,
+      radiusKm: representative.radiusKm,
+      probabilityPct,
+      baselinePct,
+      liftPct,
+      analogHits: hitAnalogs.length,
+      controlHits: controlAnalogs.length,
+      earthScopeEvidencePct,
+      waveformConfirmedHits: hitAnalogs.filter((analog) => analog.waveformConfirmed).length,
+      medianLeadDays: representative.medianLeadDays,
+      strongestObservedMagnitude: representative.strongestObservedMagnitude,
+      surveillanceStart,
+      surveillanceEnd,
+      magnitudeMin: representative.magnitudeMin ?? capsule.forecastMagnitudeMin,
+      magnitudeMax: representative.magnitudeMax ?? capsule.forecastMagnitudeMax,
+    });
+  }
+
+  destinations.sort((a, b) => (
+    b.liftPct - a.liftPct
+    || b.probabilityPct - a.probabilityPct
+    || b.earthScopeEvidencePct - a.earthScopeEvidencePct
+  ));
+
+  const averageSimilarity = analogs.length
+    ? analogs.reduce((sum, analog) => sum + analog.similarityPct, 0) / analogs.length
+    : 0;
+  const averageScopeEvidence = analogs.length
+    ? analogs.reduce((sum, analog) => sum + analog.earthScopeEvidencePct, 0) / analogs.length
+    : 0;
+  const evidenceQualityPct = Math.round(clamp(
+    12 + analogs.length * 3.8 + averageSimilarity * 0.24 + averageScopeEvidence * 0.24,
+    20,
+    90,
+  ));
+  const earthScopeSupportedAnalogs = analogs.filter((analog) => analog.earthScopeEvidencePct >= 35).length;
+  const waveformConfirmedAnalogs = analogs.filter((analog) => analog.waveformConfirmed).length;
+  const warnings: string[] = [];
+  if (earthScopeSupportedAnalogs < 3) {
+    warnings.push("EarthScope aporta cobertura histórica limitada para varios análogos; la proyección conserva esos casos con peso reducido en lugar de descartarlos.");
+  }
+  if (!destinations.length) {
+    warnings.push("Los análogos evaluados no producen destinos con exceso positivo sobre la línea base después de ponderar la evidencia EarthScope.");
   }
 
   return {
-    provider: "EarthScope NSF SAGE",
-    model: "scope-projection-v1",
+    model: "scope-projection-v2",
     generatedAt: new Date().toISOString(),
-    source,
-    available: earthScope.stations.length > 0 || observed.traces.length > 0,
-    stationMetadataCount: earthScope.stations.length,
-    observedTraceCount: observed.traces.length,
-    quantitativeTraceCount: quantitative.length,
-    stations: earthScope.stations,
-    traces,
-    zones,
-    travelTimes: earthScope.travelTimes,
-    travelTimeModel: earthScope.travelTimeModel,
-    products: earthScope.products,
-    warnings: warnings.slice(0, 24),
+    source: capsule.sourceEvent,
+    targetCountry: capsule.targetCountry,
+    providers: {
+      eventCatalog: "USGS/NEIC",
+      historicalObservation: "EarthScope NSF SAGE",
+      note: "EarthScope retiró su servicio FDSN Event en 2026; RDSISMOS usa el catálogo NEIC/USGS para la ocurrencia histórica y el archivo EarthScope para ponderar qué tan bien observado estuvo cada análogo.",
+    },
+    historyStart: capsule.historyStart,
+    historyEnd: capsule.historyEnd,
+    sourceRadiusKm: capsule.sourceRadiusKm,
+    analogMagnitudeMin: capsule.analogMagnitudeMin,
+    analogMagnitudeMax: capsule.analogMagnitudeMax,
+    analogsFound: capsule.analogsFound,
+    analogsEvaluated: analogs.length,
+    windowDays: capsule.windowDays,
+    forecastMagnitudeMin: capsule.forecastMagnitudeMin,
+    forecastMagnitudeMax: capsule.forecastMagnitudeMax,
+    evidenceQualityPct,
+    earthScopeSupportedAnalogs,
+    waveformConfirmedAnalogs,
+    destinations,
+    analogs,
+    warnings,
     methodology: [
-      "EarthScope FDSN Station aporta ubicación y metadata de estaciones activas en la ventana del evento.",
-      "EarthScope IRISWS Timeseries aporta formas de onda observadas. Solo las trazas corregidas por respuesta instrumental y convertidas a velocidad se comparan cuantitativamente.",
-      "El PGV observado se compara en escala logarítmica entre las estaciones disponibles del mismo evento para obtener el Índice Scope 0–100.",
-      "El radio de cada zona depende del espaciamiento entre estaciones con datos comparables y se limita para evitar extrapolaciones continentales sin soporte instrumental.",
-      `Las llegadas P/S de referencia provienen de EarthScope traveltime con ${earthScope.travelTimeModel}.`,
+      `Se buscan análogos históricos del evento fuente con la misma lógica del Mapa 3D: hasta ${capsule.analogsEvaluated} análogos independientes dentro de ${capsule.sourceRadiusKm.toLocaleString()} km y M${capsule.analogMagnitudeMin.toFixed(1)}–M${capsule.analogMagnitudeMax.toFixed(1)}.`,
+      `Para cada análogo se compara una ventana posterior de ${capsule.windowDays} días con una ventana de control anterior de igual duración.`,
+      "La ocurrencia de eventos posteriores proviene del catálogo USGS/NEIC. Cada análogo recibe además un peso de observabilidad EarthScope basado en estaciones activas, cobertura azimutal y, para una muestra prioritaria, confirmación de forma de onda archivada.",
+      "Probabilidad Scope = suma de similitud × peso EarthScope de los análogos que tuvieron actividad posterior en el país / suma total de pesos de los análogos.",
+      "Base Scope usa la misma fórmula en las ventanas de control. Solo se muestran destinos con Probabilidad Scope mayor que la Base Scope.",
+      "Un mismo país se consolida una sola vez aunque pertenezca a varias zonas sísmicas internas.",
     ],
     limitations: [
-      "Scope Projection representa respuesta dinámica observada y su soporte espacial; no es una probabilidad de un terremoto futuro.",
-      "El Índice Scope es relativo al conjunto de estaciones disponibles para el evento y no debe compararse como una escala absoluta entre terremotos diferentes.",
-      "La cobertura EarthScope no es uniforme globalmente y una zona sin estación no significa ausencia de movimiento.",
-      "El radio visual no sustituye una simulación 3D de propagación, un GMPE, ShakeMap ni un cálculo de esfuerzo dinámico sobre un plano de falla específico.",
+      "La Probabilidad Scope es recurrencia histórica ponderada, no una certeza ni una probabilidad física determinista de ruptura.",
+      "EarthScope no mantiene actualmente un catálogo global de eventos FDSN; su papel aquí es aportar evidencia observacional histórica del archivo de estaciones y formas de onda.",
+      "La red EarthScope fue más escasa en décadas antiguas y en algunas regiones; por eso la falta de cobertura reduce peso pero no convierte un análogo en falso.",
+      "Una forma de onda registrada demuestra observabilidad instrumental del análogo, no causalidad entre el evento fuente y un terremoto posterior distante.",
     ],
   };
 }
