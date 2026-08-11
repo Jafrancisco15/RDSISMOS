@@ -49,16 +49,6 @@ interface RenderRing {
   repeatPeriod: number;
 }
 
-interface RenderArc {
-  id: string;
-  startLat: number;
-  startLng: number;
-  endLat: number;
-  endLng: number;
-  color: string;
-  altitude: number;
-}
-
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
 }
@@ -124,9 +114,9 @@ function pathLabel(path: RenderPath) {
   }
   if (path.layer === "dynamic") {
     const hopText = path.connectivityHops === null
-      ? "sin ruta de placa resuelta"
+      ? "conectividad tectónica no resuelta"
       : `${path.connectivityHops} salto${path.connectivityHops === 1 ? "" : "s"} en red de placas`;
-    return `<div class="globe-tooltip"><strong>${escapeHtml(path.name)}</strong><span>Respuesta dinámica global · ${escapeHtml(path.state)}</span><small>índice ${path.dynamicIndex}/100 · respuesta ${path.responseScore}% · ${path.distanceKm.toFixed(0)} km · ~${path.arrivalMinutes.toFixed(0)} min · ${hopText}</small></div>`;
+    return `<div class="globe-tooltip"><strong>${escapeHtml(path.name)}</strong><span>Estructura receptora · respuesta dinámica ${escapeHtml(path.state)}</span><small>índice ${path.dynamicIndex}/100 · respuesta ${path.responseScore}% · ${path.distanceKm.toFixed(0)} km · superficie ~${path.arrivalMinutes.toFixed(0)} min</small><small>${hopText}. La onda no viaja siguiendo esta línea.</small></div>`;
   }
   const state = path.state === "promoted"
     ? "favorecido"
@@ -150,12 +140,15 @@ export function TectonicSimulatorGlobe({
   const [size, setSize] = useState({ width: 920, height: 650 });
   const [showStatic, setShowStatic] = useState(true);
   const [showGlobal, setShowGlobal] = useState(true);
+  const [showWaves, setShowWaves] = useState(true);
+  const [showStations, setShowStations] = useState(true);
   const [showAnalogs, setShowAnalogs] = useState(true);
   const enriched = simulation as TectonicSimulationResponse & Partial<TectonicSimulationWithAnalogs>;
   const historicalAnalogs = enriched.historicalAnalogs ?? [];
   const historicalCatalog = enriched.historicalCatalog ?? null;
   const globalTectonics = enriched.globalTectonics ?? null;
   const globalInteractions = globalTectonics?.interactions ?? [];
+  const earthScope = enriched.earthScope ?? null;
 
   useEffect(() => {
     const element = containerRef.current;
@@ -180,9 +173,9 @@ export function TectonicSimulatorGlobe({
     globeRef.current?.pointOfView({
       lat: simulation.input.latitude,
       lng: simulation.input.longitude,
-      altitude: showGlobal ? 2.25 : simulation.source.interactionRadiusKm > 1_500 ? 2.0 : 1.45,
+      altitude: showGlobal || showWaves ? 2.25 : simulation.source.interactionRadiusKm > 1_500 ? 2.0 : 1.45,
     }, 850);
-  }, [showGlobal, simulation.generatedAt, simulation.input.latitude, simulation.input.longitude, simulation.source.interactionRadiusKm]);
+  }, [showGlobal, showWaves, simulation.generatedAt, simulation.input.latitude, simulation.input.longitude, simulation.source.interactionRadiusKm]);
 
   const paths = useMemo<RenderPath[]>(() => {
     const staticPaths: RenderPath[] = showStatic
@@ -284,9 +277,21 @@ export function TectonicSimulatorGlobe({
         altitude: 0.075 + clamp(interaction.responseScore / 100, 0, 1) * 0.12,
         radius: 0.11 + clamp(interaction.responseScore / 100, 0, 1) * 0.33,
         color: dynamicColor(interaction),
-        label: `<div class="globe-tooltip"><strong>${escapeHtml(interaction.name)}</strong><span>Interacción global · ${interaction.distanceBand === "teleseismic" ? "teleseísmica" : interaction.distanceBand}</span><small>respuesta ${interaction.responseScore}% · índice dinámico ${interaction.dynamicIndex}/100 · ${interaction.distanceKm.toFixed(0)} km · llegada ~${interaction.arrivalMinutes.toFixed(0)} min</small><small>${interaction.connectivityHops === null ? "Conectividad de placa no resuelta" : `${interaction.connectivityHops} salto${interaction.connectivityHops === 1 ? "" : "s"} desde la placa fuente`}</small></div>`,
+        label: `<div class="globe-tooltip"><strong>${escapeHtml(interaction.name)}</strong><span>Estructura receptora · ${interaction.distanceBand === "teleseismic" ? "teleseísmica" : interaction.distanceBand}</span><small>respuesta ${interaction.responseScore}% · índice dinámico ${interaction.dynamicIndex}/100 · ${interaction.distanceKm.toFixed(0)} km</small><small>${interaction.connectivityHops === null ? "Conectividad tectónica no resuelta" : `${interaction.connectivityHops} salto${interaction.connectivityHops === 1 ? "" : "s"} de placa como contexto, no ruta de onda`}</small></div>`,
       }))
     : [], [globalInteractions, showGlobal]);
+
+  const stationPoints = useMemo<RenderPoint[]>(() => showStations
+    ? (earthScope?.stations ?? []).map((station) => ({
+        id: `earthscope-station:${station.network}:${station.station}`,
+        lat: station.latitude,
+        lng: station.longitude,
+        altitude: 0.018,
+        radius: 0.085,
+        color: "#e0f2fe",
+        label: `<div class="globe-tooltip"><strong>EarthScope · ${escapeHtml(station.network)}.${escapeHtml(station.station)}</strong><span>${escapeHtml(station.siteName)}</span><small>${station.distanceKm.toFixed(0)} km del epicentro · estación/metadata FDSN</small><small>El punto muestra ubicación de estación, no amplitud instantánea de la forma de onda.</small></div>`,
+      }))
+    : [], [earthScope?.stations, showStations]);
 
   const analogPoints = useMemo<RenderPoint[]>(() => showAnalogs
     ? historicalAnalogs.map((analog) => ({
@@ -308,56 +313,48 @@ export function TectonicSimulatorGlobe({
     radius: 0.5,
     color: "#facc15",
     label: sourceEvent
-      ? `<div class="globe-tooltip"><strong>Evento real seleccionado · M${sourceEvent.magnitude.toFixed(1)}</strong><span>${escapeHtml(sourceEvent.place)}</span><small>${formatHistoricalDate(sourceEvent.timeUtc)} · ${sourceEvent.depthKm.toFixed(0)} km · ${escapeHtml(sourceEvent.sourceCatalog)}</small><small>Desde aquí se calculan Coulomb local + respuesta dinámica global.</small></div>`
+      ? `<div class="globe-tooltip"><strong>Evento real seleccionado · M${sourceEvent.magnitude.toFixed(1)}</strong><span>${escapeHtml(sourceEvent.place)}</span><small>${formatHistoricalDate(sourceEvent.timeUtc)} · ${sourceEvent.depthKm.toFixed(0)} km · ${escapeHtml(sourceEvent.sourceCatalog)}</small><small>Desde aquí se calculan Coulomb local, propagación de ondas y respuesta de estructuras.</small></div>`
       : `<div class="globe-tooltip"><strong>Escenario manual · Mw ${simulation.input.magnitude.toFixed(1)}</strong><span>${simulation.input.depthKm.toFixed(0)} km · ${simulation.input.mechanism}</span><small>Strike ${simulation.input.strikeDeg.toFixed(0)}° · dip ${simulation.input.dipDeg.toFixed(0)}° · rake ${simulation.input.rakeDeg.toFixed(0)}°</small></div>`,
   }), [simulation, sourceEvent]);
 
-  const arcs = useMemo<RenderArc[]>(() => {
-    const staticArcs: RenderArc[] = showStatic
-      ? simulation.interactions.slice(0, 16).map((interaction) => ({
-          id: `static-arc:${interaction.id}`,
-          startLat: simulation.input.latitude,
-          startLng: simulation.input.longitude,
-          endLat: interaction.closestPoint.lat,
-          endLng: interaction.closestPoint.lng,
-          color: stressColor(interaction.stressState),
-          altitude: 0.12 + clamp(interaction.distanceKm / 2_500, 0, 1) * 0.18,
-        }))
-      : [];
-    const remote = globalInteractions
-      .filter((interaction) => interaction.distanceBand !== "near")
-      .sort((a, b) => b.responseScore - a.responseScore)
-      .slice(0, 22);
-    const globalArcs: RenderArc[] = showGlobal
-      ? remote.map((interaction) => ({
-          id: `global-arc:${interaction.id}`,
-          startLat: simulation.input.latitude,
-          startLng: simulation.input.longitude,
-          endLat: interaction.closestPoint.lat,
-          endLng: interaction.closestPoint.lng,
-          color: dynamicColor(interaction),
-          altitude: 0.22 + clamp(interaction.distanceKm / 20_000, 0, 1) * 0.65,
-        }))
-      : [];
-    return [...staticArcs, ...globalArcs];
-  }, [globalInteractions, showGlobal, showStatic, simulation]);
-
   const rings = useMemo<RenderRing[]>(() => {
     const ringsResult: RenderRing[] = [];
-    if (showGlobal) {
-      ringsResult.push({
-        id: "global-surface-wave",
-        lat: simulation.input.latitude,
-        lng: simulation.input.longitude,
-        color: "#c084fc",
-        maxRadius: 175,
-        speed: 4.2,
-        repeatPeriod: 5_200,
-      });
+    if (showWaves) {
+      // Accelerated visual wave fronts. Accurate reference arrival times are
+      // shown separately from EarthScope's iasp91 travel-time service.
+      ringsResult.push(
+        {
+          id: "wave-p",
+          lat: simulation.input.latitude,
+          lng: simulation.input.longitude,
+          color: "#f8fafc",
+          maxRadius: 175,
+          speed: 8.4,
+          repeatPeriod: 6_700,
+        },
+        {
+          id: "wave-s",
+          lat: simulation.input.latitude,
+          lng: simulation.input.longitude,
+          color: "#22d3ee",
+          maxRadius: 175,
+          speed: 5.1,
+          repeatPeriod: 8_200,
+        },
+        {
+          id: "wave-surface",
+          lat: simulation.input.latitude,
+          lng: simulation.input.longitude,
+          color: "#c084fc",
+          maxRadius: 175,
+          speed: 3.3,
+          repeatPeriod: 9_700,
+        },
+      );
     }
     if (showStatic) {
       ringsResult.push({
-        id: "static-source-wave",
+        id: "static-source-range",
         lat: simulation.input.latitude,
         lng: simulation.input.longitude,
         color: "#facc15",
@@ -381,7 +378,7 @@ export function TectonicSimulatorGlobe({
         }));
     }
     return ringsResult;
-  }, [globalInteractions, showGlobal, showStatic, simulation]);
+  }, [globalInteractions, showGlobal, showStatic, showWaves, simulation]);
 
   return (
     <div ref={containerRef} style={{ width: "100%", minHeight: 520, position: "relative" }}>
@@ -406,7 +403,7 @@ export function TectonicSimulatorGlobe({
         pathDashAnimateTime={0}
         pathLabel={(path) => pathLabel(path as RenderPath)}
         pathTransitionDuration={350}
-        pointsData={[sourcePoint, ...staticReceivers, ...globalReceivers, ...analogPoints]}
+        pointsData={[sourcePoint, ...staticReceivers, ...globalReceivers, ...stationPoints, ...analogPoints]}
         pointLat="lat"
         pointLng="lng"
         pointAltitude="altitude"
@@ -414,17 +411,6 @@ export function TectonicSimulatorGlobe({
         pointColor="color"
         pointLabel={(point) => String((point as RenderPoint).label)}
         pointsTransitionDuration={450}
-        arcsData={arcs}
-        arcStartLat="startLat"
-        arcStartLng="startLng"
-        arcEndLat="endLat"
-        arcEndLng="endLng"
-        arcAltitude="altitude"
-        arcColor="color"
-        arcStroke={0.38}
-        arcDashLength={0.38}
-        arcDashGap={0.2}
-        arcDashAnimateTime={2_100}
         ringsData={rings}
         ringLat="lat"
         ringLng="lng"
@@ -440,7 +426,7 @@ export function TectonicSimulatorGlobe({
         position: "absolute",
         left: 12,
         top: 12,
-        maxWidth: 430,
+        maxWidth: 460,
         padding: "10px 12px",
         border: "1px solid rgba(148,163,184,.24)",
         borderRadius: 12,
@@ -450,41 +436,44 @@ export function TectonicSimulatorGlobe({
         fontSize: 12,
         lineHeight: 1.5,
       }}>
-        <strong>Capas de interacción</strong>
+        <strong>Capas del simulador</strong>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 7 }}>
+          <button type="button" onClick={() => setShowWaves((value) => !value)} style={{ opacity: showWaves ? 1 : .5 }}>Ondas P/S/superficie</button>
+          <button type="button" onClick={() => setShowStations((value) => !value)} style={{ opacity: showStations ? 1 : .5 }}>Estaciones EarthScope</button>
           <button type="button" onClick={() => setShowStatic((value) => !value)} style={{ opacity: showStatic ? 1 : .5 }}>Coulomb local</button>
-          <button type="button" onClick={() => setShowGlobal((value) => !value)} style={{ opacity: showGlobal ? 1 : .5 }}>Dinámica global</button>
+          <button type="button" onClick={() => setShowGlobal((value) => !value)} style={{ opacity: showGlobal ? 1 : .5 }}>Estructuras receptoras</button>
           <button type="button" onClick={() => setShowAnalogs((value) => !value)} style={{ opacity: showAnalogs ? 1 : .5 }}>Históricos</button>
         </div>
         <div style={{ marginTop: 7, color: "#aebfca" }}>
-          <span style={{ color: "#fb7185" }}>● estático favorecido</span> · <span style={{ color: "#38bdf8" }}>● sombra</span><br />
-          <span style={{ color: "#a3e635" }}>● dinámica cercana</span> · <span style={{ color: "#2dd4bf" }}>● regional</span> · <span style={{ color: "#c084fc" }}>● teleseísmica</span><br />
-          <span style={{ color: "#f59e0b" }}>● análogo histórico real M5.9+</span>
+          <span style={{ color: "#f8fafc" }}>● frente P</span> · <span style={{ color: "#22d3ee" }}>● frente S</span> · <span style={{ color: "#c084fc" }}>● superficie</span><br />
+          <span style={{ color: "#e0f2fe" }}>● estación EarthScope</span> · <span style={{ color: "#facc15" }}>● fuente / Coulomb local</span><br />
+          <span style={{ color: "#fb7185" }}>● estático favorecido</span> · <span style={{ color: "#38bdf8" }}>● sombra</span> · <span style={{ color: "#f59e0b" }}>● histórico M5.9+</span>
         </div>
+        <div style={{ marginTop: 6, color: "#fde68a" }}>Animación de ondas acelerada; tiempos físicos de referencia: EarthScope iasp91.</div>
       </div>
 
       <div style={{
         position: "absolute",
         right: 12,
         bottom: 12,
-        maxWidth: 380,
+        maxWidth: 400,
         padding: "9px 11px",
-        border: "1px solid rgba(192,132,252,.32)",
+        border: "1px solid rgba(125,211,252,.32)",
         borderRadius: 12,
         background: "rgba(7,16,24,.86)",
-        color: "#ddd6fe",
+        color: "#dbeafe",
         fontSize: 12,
         lineHeight: 1.45,
         pointerEvents: "none",
       }}>
-        <strong>Interacción global</strong><br />
-        {globalTectonics
-          ? `${globalTectonics.counts.teleseismic} respuestas teleseísmicas · ${globalTectonics.counts.plateLinked} conectadas ≤3 saltos de placa`
-          : "Calculando red global…"}
+        <strong>Ondas + tectónica</strong><br />
+        {earthScope?.available
+          ? `${earthScope.stations.length} estaciones EarthScope · tiempos P/S ${earthScope.travelTimeModel}`
+          : "EarthScope no disponible para este escenario; se mantiene la simulación física local."}
         <br />
         <span style={{ color: "#aebfca" }}>
           {globalTectonics?.sourceBoundary
-            ? `Límite fuente más cercano: ${globalTectonics.sourceBoundary.name}`
+            ? `Contexto: ${globalTectonics.sourceBoundary.name}`
             : "Sin límite fuente resuelto"}
         </span><br />
         <span style={{ color: "#fde68a" }}>{historicalAnalogs.length} análogos reales · {historicalCatalog?.provider ?? "USGS"}</span>
