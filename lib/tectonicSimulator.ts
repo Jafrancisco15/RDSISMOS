@@ -226,7 +226,7 @@ function receiverGeometry(
     mechanism: inferred,
     dipDeg: metadata.dipDeg ?? defaultDipForMechanism(inferred),
     rakeDeg: metadata.rakeDeg ?? defaultRakeForMechanism(inferred),
-    metadataKnown: kind === "active-fault" && metadata.dipDeg !== null && metadata.rakeDeg !== null,
+    metadataKnown: kind === "active-fault" && metadata.dipDeg != null && metadata.rakeDeg != null,
   };
 }
 
