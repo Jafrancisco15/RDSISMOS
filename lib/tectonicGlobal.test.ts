@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { GlobeMapPath } from "./globeLayers";
-import { simulateGlobalTectonicResponse } from "./tectonicGlobal";
+import {
+  combineEnergyAndSusceptibility,
+  simulateGlobalTectonicResponse,
+} from "./tectonicGlobal";
 
 const platePaths: GlobeMapPath[] = [
   {
@@ -49,7 +52,9 @@ test("global simulator preserves teleseismic structures instead of applying the 
   assert.ok(peru);
   assert.equal(peru?.distanceBand, "teleseismic");
   assert.ok((peru?.distanceKm ?? 0) > 5_000);
-  assert.ok((peru?.dynamicIndex ?? 0) > 0);
+  assert.ok((peru?.energyArrivalIndex ?? 0) > 0);
+  assert.ok((peru?.susceptibilityIndex ?? 0) > 0);
+  assert.equal(peru?.responseScore, peru?.potentialResponseIndex);
 });
 
 test("plate graph reports a finite tectonic-context route to a linked remote boundary", () => {
@@ -60,7 +65,7 @@ test("plate graph reports a finite tectonic-context route to a linked remote bou
   assert.ok(result.counts.teleseismic >= 1);
 });
 
-test("plate-hop connectivity is context only and does not amplify dynamic response", () => {
+test("plate-hop connectivity is context only and does not amplify wave energy or potential response", () => {
   const linked = simulateGlobalTectonicResponse(source, platePaths, [], platePayload);
   const disconnectedPayload = {
     features: [
@@ -74,6 +79,44 @@ test("plate-hop connectivity is context only and does not amplify dynamic respon
   const disconnectedPeru = disconnected.interactions.find((item) => item.name === "Peru-Chile trench");
   assert.ok(linkedPeru && disconnectedPeru);
   assert.notEqual(linkedPeru.connectivityHops, disconnectedPeru.connectivityHops);
-  assert.equal(linkedPeru.dynamicIndex, disconnectedPeru.dynamicIndex);
-  assert.equal(linkedPeru.responseScore, disconnectedPeru.responseScore);
+  assert.equal(linkedPeru.energyArrivalIndex, disconnectedPeru.energyArrivalIndex);
+  assert.equal(linkedPeru.susceptibilityIndex, disconnectedPeru.susceptibilityIndex);
+  assert.equal(linkedPeru.potentialResponseIndex, disconnectedPeru.potentialResponseIndex);
+});
+
+test("potential response requires both arriving energy and a susceptible receiver", () => {
+  assert.equal(combineEnergyAndSusceptibility(80, 80), 64);
+  assert.equal(combineEnergyAndSusceptibility(80, 20), 16);
+  assert.equal(combineEnergyAndSusceptibility(20, 80), 16);
+  assert.equal(combineEnergyAndSusceptibility(0, 100), 0);
+});
+
+test("tectonic environment changes susceptibility without changing incoming wave energy", () => {
+  const sameGeometryPaths: GlobeMapPath[] = [
+    {
+      id: "plate-boundary:0:0:0",
+      kind: "plate-boundary",
+      name: "Extensional receiver",
+      points: [{ lat: -10, lng: -120 }, { lat: -8, lng: -119 }],
+    },
+    {
+      id: "plate-boundary:1:0:0",
+      kind: "plate-boundary",
+      name: "Compressional receiver",
+      points: [{ lat: -10, lng: -120 }, { lat: -8, lng: -119 }],
+    },
+  ];
+  const payload = {
+    features: [
+      { properties: { PlateA: "AA", PlateB: "BB", Type: "ridge" } },
+      { properties: { PlateA: "CC", PlateB: "DD", Type: "subduction" } },
+    ],
+  };
+  const result = simulateGlobalTectonicResponse(source, sameGeometryPaths, [], payload);
+  const extensional = result.interactions.find((item) => item.name === "Extensional receiver");
+  const compressional = result.interactions.find((item) => item.name === "Compressional receiver");
+  assert.ok(extensional && compressional);
+  assert.equal(extensional.energyArrivalIndex, compressional.energyArrivalIndex);
+  assert.ok(extensional.susceptibilityIndex > compressional.susceptibilityIndex);
+  assert.ok(extensional.potentialResponseIndex > compressional.potentialResponseIndex);
 });
