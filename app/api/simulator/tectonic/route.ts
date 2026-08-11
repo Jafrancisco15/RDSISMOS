@@ -167,6 +167,7 @@ export async function POST(request: NextRequest) {
       platePaths,
       faultPaths,
       platePayload,
+      faultPayload,
     );
     const analogRadiusKm = historicalAnalogRadiusKm(result.source.interactionRadiusKm);
     const historicalAnalogs = rankHistoricalAnalogs(

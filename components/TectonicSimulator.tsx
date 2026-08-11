@@ -224,6 +224,22 @@ export function TectonicSimulator() {
       .slice(0, 8) ?? [],
     [simulation],
   );
+  const highestEnergy = useMemo(
+    () => simulation?.globalTectonics.interactions.reduce((best, item) => (
+      !best || item.energyArrivalIndex > best.energyArrivalIndex ? item : best
+    ), simulation.globalTectonics.interactions[0] ?? null) ?? null,
+    [simulation],
+  );
+  const highestSusceptibility = useMemo(
+    () => simulation?.globalTectonics.interactions.reduce((best, item) => (
+      !best || item.susceptibilityIndex > best.susceptibilityIndex ? item : best
+    ), simulation.globalTectonics.interactions[0] ?? null) ?? null,
+    [simulation],
+  );
+  const highestPotential = useMemo(
+    () => simulation?.globalTectonics.interactions[0] ?? null,
+    [simulation],
+  );
 
   function update<K extends keyof DraftInput>(key: K, value: DraftInput[K]) {
     if (["latitude", "longitude", "magnitude", "depthKm"].includes(key)) setSelectedRecent(null);
@@ -266,21 +282,20 @@ export function TectonicSimulator() {
           <div className={styles.brand}><span /> RDSISMOS · LABORATORIO FÍSICO</div>
           <h1>Simulador global de ondas, placas y fallas</h1>
           <p>
-            Selecciona un terremoto real reciente y separa tres fenómenos: transferencia estática de Coulomb cerca de la ruptura,
-            propagación de ondas por el planeta y contexto tectónico de las estructuras que reciben esas ondas.
+            Selecciona un terremoto real reciente y separa cuatro fenómenos: transferencia estática de Coulomb cerca de la ruptura,
+            energía de las ondas que llega a cada estructura, susceptibilidad tectónica del receptor y respuesta potencial al combinar ambas.
           </p>
         </div>
         <div className={styles.modelBadge}>
           <span>Modelo multicapas</span>
-          <strong>Coulomb + ondas + tectónica</strong>
+          <strong>Coulomb + ondas + susceptibilidad</strong>
           <small>EarthScope NSF SAGE · USGS · GEM · PB2002</small>
         </div>
       </header>
 
       <section className={styles.notice}>
-        <strong>Separación física:</strong> las ondas P, S y superficiales atraviesan el interior y la superficie terrestre; no viajan siguiendo los bordes de las placas.
-        Los “saltos de placa” quedan únicamente como contexto tectónico. La respuesta dinámica compara cuánto esfuerzo transitorio podría recibir una estructura,
-        pero no constituye probabilidad de que esa falla vaya a romper.
+        <strong>Separación física:</strong> que una onda llegue a una falla no significa que la falla responda. La capa de energía estima la perturbación que alcanza el receptor;
+        la susceptibilidad es un proxy independiente de entorno tectónico, orientación y metadata; la respuesta potencial combina ambos. Ninguno de esos índices es probabilidad de ruptura.
       </section>
 
       <section className={styles.recentSection} aria-label="Sismos reales recientes para simular">
@@ -405,11 +420,34 @@ export function TectonicSimulator() {
             </article>
           </section>
 
+          <section className={styles.metrics} aria-label="Tres capas de respuesta dinámica">
+            <article>
+              <span>1 · Energía de llegada</span>
+              <strong>{highestEnergy ? `${highestEnergy.energyArrivalIndex}/100` : "—"}</strong>
+              <small>{highestEnergy ? `${highestEnergy.name} · perturbación relativa de onda` : "Sin receptor resuelto"}</small>
+            </article>
+            <article>
+              <span>2 · Susceptibilidad tectónica</span>
+              <strong>{highestSusceptibility ? `${highestSusceptibility.susceptibilityIndex}/100` : "—"}</strong>
+              <small>{highestSusceptibility ? `${highestSusceptibility.name} · proxy del receptor` : "Sin receptor resuelto"}</small>
+            </article>
+            <article>
+              <span>3 · Respuesta potencial</span>
+              <strong>{highestPotential ? `${highestPotential.potentialResponseIndex}/100` : "—"}</strong>
+              <small>{highestPotential ? `${highestPotential.name} · energía × susceptibilidad` : "Sin receptor resuelto"}</small>
+            </article>
+            <article>
+              <span>Potencial elevado</span>
+              <strong>{simulation.globalTectonics.counts.elevatedPotential}</strong>
+              <small>Estructuras ≥35/100; no significa 35% de probabilidad</small>
+            </article>
+          </section>
+
           <section className={styles.visualSection}>
             <div className={styles.visualHeader}>
               <div>
-                <span>Propagación + respuesta</span>
-                <h2>Ondas por el planeta y estructuras que las reciben</h2>
+                <span>Propagación + receptor + respuesta</span>
+                <h2>La onda llega; la estructura decide cuánto podría responder</h2>
               </div>
               <div className={styles.legend}>
                 <span><i className={styles.sourceDot} /> Fuente</span>
@@ -428,7 +466,7 @@ export function TectonicSimulator() {
               <aside className={styles.sideList}>
                 <div className={styles.sideHead}>
                   <div><span>Estructuras remotas</span><strong>{strongestGlobal.length}</strong></div>
-                  <small>La red de placas es contexto; no es la ruta de las ondas.</small>
+                  <small>Ordenadas por respuesta potencial, no por conectividad de placas.</small>
                 </div>
                 {strongestGlobal.map((interaction) => {
                   const travel = closestTravelTime(interaction.distanceKm, simulation.earthScope.travelTimes);
@@ -440,15 +478,20 @@ export function TectonicSimulator() {
                     >
                       <div className={styles.itemTop}>
                         <strong>{interaction.name}</strong>
-                        <span>{interaction.responseScore}%</span>
+                        <span>{interaction.potentialResponseIndex}/100</span>
                       </div>
                       <p>{distanceBandLabel(interaction.distanceBand)} · {interaction.distanceKm.toFixed(0)} km</p>
                       <small>
                         P {minutes(travel?.pMinutes ?? null)} · S {minutes(travel?.sMinutes ?? null)} · superficie ~{minutes(travel?.surfaceMinutes ?? interaction.arrivalMinutes)}
                       </small>
                       <small>
-                        índice dinámico {interaction.dynamicIndex}/100
-                        {interaction.connectivityHops === null ? " · contexto de placa no resuelto" : ` · ${interaction.connectivityHops} saltos tectónicos (contexto)`}
+                        Energía {interaction.energyArrivalIndex}/100 · susceptibilidad {interaction.susceptibilityIndex}/100 · potencial {interaction.potentialResponseIndex}/100
+                      </small>
+                      <small>
+                        Entorno {interaction.susceptibilityComponents.environmentPrior}/100 · geometría {interaction.susceptibilityComponents.geometryCoupling}/100 · soporte metadata {interaction.susceptibilityComponents.metadataSupport}/100
+                      </small>
+                      <small>
+                        {interaction.connectivityHops === null ? "Contexto de placa no resuelto" : `${interaction.connectivityHops} saltos tectónicos (solo contexto)`}
                       </small>
                     </article>
                   );
@@ -523,7 +566,7 @@ export function TectonicSimulator() {
                 </tbody>
               </table>
             </div>
-            <p className={styles.mapHint}>Los puntos de estación en el globo son ubicaciones reales de metadata EarthScope; no se colorean rojo/azul como el GMV porque todavía no estamos descargando y procesando cada forma de onda. Si EarthScope publicó un GMV del evento, el enlace aparece arriba.</p>
+            <p className={styles.mapHint}>Los puntos de estación en el globo son ubicaciones reales de metadata EarthScope. En modo OBSERVADO el globo puede descargar formas de onda reales cuando están disponibles.</p>
             {simulation.earthScope.warnings.length > 0 && <div className={styles.inlineWarning}>{simulation.earthScope.warnings.join(" · ")}</div>}
           </section>
 
@@ -531,15 +574,15 @@ export function TectonicSimulator() {
             <div className={styles.tableHeader}>
               <div>
                 <span>Interacción mundial</span>
-                <h2>Respuesta dinámica y contexto de placas</h2>
+                <h2>Energía de onda → susceptibilidad → respuesta potencial</h2>
               </div>
-              <p>La energía se propaga como ondas por la Tierra. La conectividad PB2002 se muestra solo para entender la relación tectónica de la estructura receptora.</p>
+              <p>La energía se propaga por la Tierra independientemente de los bordes de placa. La susceptibilidad pertenece al receptor y no representa su esfuerzo acumulado real.</p>
             </div>
             <div className={styles.tableScroll}>
               <table>
                 <thead>
                   <tr>
-                    <th>Estructura</th><th>Escala</th><th>Distancia</th><th>P EarthScope</th><th>S EarthScope</th><th>Superficie</th><th>Índice dinámico</th><th>Respuesta</th><th>Contexto de placas</th><th>Placas / límite</th>
+                    <th>Estructura</th><th>Escala</th><th>Distancia</th><th>P EarthScope</th><th>S EarthScope</th><th>Superficie</th><th>Energía llegada</th><th>Susceptibilidad</th><th>Respuesta potencial</th><th>Base susceptibilidad</th><th>Contexto de placas</th><th>Tipo receptor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -553,18 +596,23 @@ export function TectonicSimulator() {
                         <td>{minutes(travel?.pMinutes ?? null)}</td>
                         <td>{minutes(travel?.sMinutes ?? null)}</td>
                         <td>~{minutes(travel?.surfaceMinutes ?? interaction.arrivalMinutes)}</td>
-                        <td>{interaction.dynamicIndex}/100</td>
-                        <td>{interaction.responseScore}%</td>
+                        <td>{interaction.energyArrivalIndex}/100</td>
+                        <td>{interaction.susceptibilityIndex}/100</td>
+                        <td><strong>{interaction.potentialResponseIndex}/100</strong></td>
+                        <td>entorno {interaction.susceptibilityComponents.environmentPrior} · geometría {interaction.susceptibilityComponents.geometryCoupling} · metadata {interaction.susceptibilityComponents.metadataSupport}</td>
                         <td>{interaction.connectivityHops === null ? "—" : `${interaction.connectivityHops} saltos (solo contexto)`}</td>
                         <td>{interaction.plateA && interaction.plateB
                           ? `${interaction.plateA} ↔ ${interaction.plateB}${interaction.boundaryType ? ` · ${interaction.boundaryType}` : ""}`
-                          : interaction.kind === "active-fault" ? "Falla activa GEM" : "PB2002"}</td>
+                          : interaction.kind === "active-fault"
+                            ? `${interaction.slipType || "Falla activa GEM"}${interaction.activityConfidence !== null && interaction.activityConfidence !== undefined ? " · metadata actividad" : ""}`
+                            : "PB2002"}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
             </div>
+            <p className={styles.mapHint}>Respuesta potencial = energía de llegada × susceptibilidad tectónica proxy. Un 40/100 no significa 40% de probabilidad de terremoto; solo compara estructuras dentro de este escenario.</p>
           </section>
 
           <section className={styles.tableSection}>
@@ -618,12 +666,15 @@ export function TectonicSimulator() {
           <section className={styles.scienceGrid}>
             <article>
               <span>Modelo multiescala</span>
-              <h2>{mechanismLabel(simulation.input.mechanism)} · ondas + estructuras receptoras</h2>
+              <h2>{mechanismLabel(simulation.input.mechanism)} · ondas + receptor + respuesta</h2>
               <ul>
                 <li>{simulation.globalTectonics.model.description}</li>
+                <li>La energía de llegada usa magnitud, distancia, profundidad y radiación como proxy relativo. Para eventos reales, las formas de onda EarthScope son la observación instrumental y no se sustituyen por este índice.</li>
+                <li>La susceptibilidad usa un prior amplio de ambiente tectónico, acoplamiento geométrico y soporte de metadata GEM/PB2002. No conoce el estado crítico real de la falla.</li>
+                <li>La respuesta potencial multiplica energía × susceptibilidad, por lo que una onda fuerte sobre un receptor poco susceptible o una onda débil sobre uno susceptible siguen produciendo un valor moderado/bajo.</li>
                 <li>Las llegadas P y S se consultan al servicio EarthScope traveltime con un modelo terrestre 1-D iasp91; la animación del globo está acelerada y no corre a escala temporal real.</li>
                 <li>Las ondas superficiales usan {simulation.globalTectonics.model.surfaceWaveSpeedKmS.toFixed(1)} km/s solo como referencia visual; no reconstruyen una forma de onda.</li>
-                <li>PB2002 se conserva como grafo para explicar qué placas bordean cada estructura. Ese número de saltos ya no aumenta ni disminuye la respuesta dinámica.</li>
+                <li>PB2002 se conserva como grafo para explicar qué placas bordean cada estructura. Ese número de saltos no aumenta ni disminuye la energía ni la respuesta potencial.</li>
                 {simulation.methodology.map((item) => <li key={item}>{item}</li>)}
               </ul>
             </article>
@@ -645,7 +696,8 @@ export function TectonicSimulator() {
               ))}
               <article><strong>EarthScope NSF SAGE</strong><p>FDSN Station para metadata instrumental y IRISWS traveltime para tiempos de viaje P/S en modelos 1-D como iasp91.</p></article>
               <article><strong>EarthScope GMV</strong><p>Las Ground Motion Visualizations muestran movimiento registrado por estaciones mientras las ondas viajan por el interior y la superficie terrestre.</p></article>
-              <article><strong>Hill & Prejean · USGS</strong><p>Dynamic triggering: esfuerzos transitorios de ondas sísmicas pueden disparar sismicidad remota bajo condiciones susceptibles.</p></article>
+              <article><strong>Hill & Prejean · USGS</strong><p>Dynamic triggering: esfuerzos transitorios de ondas sísmicas pueden disparar sismicidad remota bajo condiciones susceptibles; el entorno tectónico y los fluidos pueden influir.</p></article>
+              <article><strong>Hill (2008) · USGS</strong><p>La orientación y el régimen tectónico afectan cómo un receptor responde al esfuerzo dinámico; no existe un umbral universal que permita conocer la ruptura.</p></article>
               <article><strong>Velasco et al. (2008)</strong><p>Global ubiquity of dynamic earthquake triggering: evidencia de disparo remoto por ondas de grandes terremotos.</p></article>
             </div>
           </section>
