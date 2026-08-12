@@ -55,10 +55,18 @@ function dateTime(value: string | null | undefined) {
 export function LearningStatusPanel() {
   const [status, setStatus] = useState<LearningStatus | null>(null);
   const [loading, setLoading] = useState(true);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (showLoading = false) => {
+    if (showLoading) setLoading(true);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 12_000);
+
     try {
-      const response = await fetch(`/api/migration/learning/status?_=${Date.now()}`, { cache: "no-store" });
+      const response = await fetch(`/api/migration/learning/status?_=${Date.now()}`, {
+        cache: "no-store",
+        signal: controller.signal,
+      });
       const text = await response.text();
       let payload: LearningStatus;
       try {
@@ -66,31 +74,34 @@ export function LearningStatusPanel() {
       } catch {
         throw new Error(`Estado del pipeline devolvió HTTP ${response.status}: ${text.slice(0, 180) || "respuesta vacía"}`);
       }
+
+      // A structured degraded response is still useful. Keep its real counters
+      // instead of replacing them with fabricated zeros.
       setStatus(payload);
+      if (!response.ok) {
+        setRequestError(payload.message ?? `El estado de la memoria respondió HTTP ${response.status}.`);
+      } else {
+        setRequestError(null);
+      }
     } catch (error) {
-      setStatus({
-        databaseConfigured: true,
-        databaseConnected: false,
-        migrationPending: false,
-        modelVersion: "migration-country-v2",
-        capsulesTotal: 0,
-        capsulesActive: 0,
-        capsulesDue: 0,
-        capsulesEvaluated: 0,
-        predictionsTotal: 0,
-        outcomesTotal: 0,
-        latestMetrics: null,
-        message: error instanceof Error ? error.message : "No fue posible consultar el aprendizaje.",
-      });
+      const message = error instanceof DOMException && error.name === "AbortError"
+        ? "La consulta de estado tardó demasiado. La última lectura válida se conserva."
+        : error instanceof Error
+          ? error.message
+          : "No fue posible consultar el aprendizaje.";
+      setRequestError(message);
+      // Deliberately preserve the last valid snapshot. A network failure does
+      // not mean that Supabase contains zero capsules.
     } finally {
+      window.clearTimeout(timeout);
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-    const interval = window.setInterval(() => void load(), 60_000);
-    const listener = () => void load();
+    void load(true);
+    const interval = window.setInterval(() => void load(false), 60_000);
+    const listener = () => void load(false);
     window.addEventListener("rdsismos-learning-updated", listener);
     return () => {
       window.clearInterval(interval);
@@ -102,28 +113,41 @@ export function LearningStatusPanel() {
     ? "connected"
     : status?.migrationPending
       ? "pending"
-      : "disconnected";
-  const connectionLabel = loading
+      : !status && requestError
+        ? "pending"
+        : "disconnected";
+
+  const connectionLabel = loading && !status
     ? "Comprobando…"
     : status?.databaseConnected
       ? "Supabase conectado"
       : status?.migrationPending
         ? "Migración pendiente"
-        : "Base no disponible";
+        : !status && requestError
+          ? "Estado no disponible"
+          : "Base no disponible";
 
   return (
     <section className="panel learning-status-panel">
       <div className="section-heading compact">
         <div>
-          <span className="eyebrow">Memoria del modelo</span>
-          <h2>Aprendizaje y evaluación</h2>
+          <span className="eyebrow">Memoria histórica del modelo</span>
+          <h2>Persistencia y evaluación</h2>
         </div>
         <span className={`learning-db-badge ${connectionClass}`}>
           {connectionLabel}
         </span>
       </div>
 
-      {status?.message && !status.databaseConnected && (
+      {requestError && (
+        <p className="learning-status-message">
+          Consulta temporal: {requestError}{" "}
+          <button type="button" onClick={() => void load(true)} disabled={loading}>
+            {loading ? "Reintentando…" : "Reintentar"}
+          </button>
+        </p>
+      )}
+      {status?.message && !status.databaseConnected && status.message !== requestError && (
         <p className="learning-status-message">{status.message}</p>
       )}
       {status?.schedulerWarning && (
@@ -134,41 +158,41 @@ export function LearningStatusPanel() {
       )}
 
       <div className="learning-status-grid">
-        <div><span>Cápsulas guardadas</span><strong>{status?.capsulesTotal ?? 0}</strong></div>
-        <div><span>En vigilancia</span><strong>{status?.capsulesActive ?? 0}</strong></div>
-        <div><span>Pendientes de evaluar</span><strong>{status?.capsulesDue ?? 0}</strong></div>
-        <div><span>Evaluadas</span><strong>{status?.capsulesEvaluated ?? 0}</strong></div>
-        <div><span>Predicciones nacionales</span><strong>{status?.predictionsTotal ?? 0}</strong></div>
-        <div><span>Resultados observados</span><strong>{status?.outcomesTotal ?? 0}</strong></div>
+        <div><span>Cápsulas guardadas</span><strong>{status?.capsulesTotal ?? "—"}</strong></div>
+        <div><span>En vigilancia</span><strong>{status?.capsulesActive ?? "—"}</strong></div>
+        <div><span>Pendientes de evaluar</span><strong>{status?.capsulesDue ?? "—"}</strong></div>
+        <div><span>Evaluadas</span><strong>{status?.capsulesEvaluated ?? "—"}</strong></div>
+        <div><span>Predicciones nacionales</span><strong>{status?.predictionsTotal ?? "—"}</strong></div>
+        <div><span>Resultados observados</span><strong>{status?.outcomesTotal ?? "—"}</strong></div>
       </div>
 
       <div className="learning-metrics-row">
         <div>
           <span>Último evento fuente en memoria</span>
-          <strong>{dateTime(status?.pipeline?.latestSourceTime)}</strong>
+          <strong>{status ? dateTime(status.pipeline?.latestSourceTime) : "—"}</strong>
         </div>
         <div>
           <span>Última cápsula creada</span>
-          <strong>{dateTime(status?.pipeline?.latestCapsuleCreatedAt)}</strong>
+          <strong>{status ? dateTime(status.pipeline?.latestCapsuleCreatedAt) : "—"}</strong>
         </div>
         <div>
           <span>Último resultado evaluado</span>
-          <strong>{dateTime(status?.pipeline?.latestOutcomeEvaluatedAt)}</strong>
+          <strong>{status ? dateTime(status.pipeline?.latestOutcomeEvaluatedAt) : "—"}</strong>
         </div>
         <div>
           <span>Generación automática</span>
-          <strong>{status?.generationCronSchedule ?? "45 2 * * *"}</strong>
+          <strong>{status?.generationCronSchedule ?? (status ? "30 14 * * *" : "—")}</strong>
         </div>
       </div>
 
       <div className="learning-metrics-row">
         <div>
           <span>Versión activa</span>
-          <strong>{status?.modelVersion ?? "migration-country-v2"}</strong>
+          <strong>{status?.modelVersion ?? "—"}</strong>
         </div>
         <div>
           <span>Brier Score</span>
-          <strong>{status?.latestMetrics ? status.latestMetrics.brierScore.toFixed(3) : "Sin muestra"}</strong>
+          <strong>{status?.latestMetrics ? status.latestMetrics.brierScore.toFixed(3) : status ? "Sin muestra" : "—"}</strong>
         </div>
         <div>
           <span>Probabilidad media</span>
@@ -181,7 +205,7 @@ export function LearningStatusPanel() {
       </div>
 
       <p className="learning-status-footnote">
-        La generación automática busca cada día eventos fuente nuevos de los últimos 14 días y guarda la proyección antes de conocer el resultado. Después, el evaluador revisa las ventanas activas y vencidas. Las fechas de arriba permiten comprobar si la escritura y evaluación siguen vivas.
+        Este panel describe únicamente la memoria histórica persistente. Si la consulta falla temporalmente, se conserva la última lectura válida y se muestran guiones cuando todavía no existe una lectura; nunca se sustituyen datos desconocidos por ceros. La vista ETAS principal funciona de forma independiente de esta memoria.
       </p>
     </section>
   );
