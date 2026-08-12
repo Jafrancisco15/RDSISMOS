@@ -1,10 +1,11 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { loadProjectionBacklogState } from "@/lib/learning/reconcile";
 import { getLearningStatus } from "@/lib/learning/store";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 30;
 
 function isMissingLearningSchema(message?: string) {
   if (!message) return false;
@@ -17,17 +18,20 @@ function isoOrNull(value: unknown) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function unavailablePipeline(error: string | null = null) {
+  return {
+    latestCapsuleCreatedAt: null,
+    latestSourceTime: null,
+    latestOutcomeEvaluatedAt: null,
+    latestPredictionUpdatedAt: null,
+    error,
+  };
+}
+
 async function loadPipelineFreshness() {
   const sql = getDb();
-  if (!sql) {
-    return {
-      latestCapsuleCreatedAt: null,
-      latestSourceTime: null,
-      latestOutcomeEvaluatedAt: null,
-      latestPredictionUpdatedAt: null,
-      error: "DATABASE_URL no está configurada.",
-    };
-  }
+  if (!sql) return unavailablePipeline("DATABASE_URL no está configurada.");
+
   try {
     const [row] = await sql`
       SELECT
@@ -44,27 +48,21 @@ async function loadPipelineFreshness() {
       error: null,
     };
   } catch (error) {
-    return {
-      latestCapsuleCreatedAt: null,
-      latestSourceTime: null,
-      latestOutcomeEvaluatedAt: null,
-      latestPredictionUpdatedAt: null,
-      error: error instanceof Error ? error.message : "No fue posible consultar la frescura del pipeline.",
-    };
+    return unavailablePipeline(
+      error instanceof Error ? error.message : "No fue posible consultar la frescura del pipeline.",
+    );
   }
 }
 
-export async function GET() {
-  const [status, pipeline, reconciliation] = await Promise.all([
-    getLearningStatus(),
-    loadPipelineFreshness(),
-    loadProjectionBacklogState().catch(() => ({
-      dueCapsules: 0,
-      duePredictions: 0,
-      legacyOutcomesPendingAudit: 0,
-      oldestDueAt: null,
-    })),
-  ]);
+export async function GET(request: NextRequest) {
+  // First obtain the compact learning snapshot. If the database is already
+  // unavailable, do not immediately open a second connection attempt just to
+  // ask for freshness: that used to multiply latency during transient outages.
+  const status = await getLearningStatus();
+  const pipeline = status.databaseConnected
+    ? await loadPipelineFreshness()
+    : unavailablePipeline(status.message ?? null);
+
   const migrationPending = isMissingLearningSchema(status.message ?? pipeline.error ?? undefined);
   const cronSecretConfigured = Boolean(process.env.CRON_SECRET?.trim());
   const scheduler = {
@@ -72,11 +70,24 @@ export async function GET() {
     evaluationCronSchedule: "0 15 * * *",
     reconciliationCronSchedule: "15 17 * * *",
   };
+
+  // The backlog query scans predictions/outcomes and is not needed by the
+  // normal UI status badge. Keep it available explicitly for diagnostics.
+  const includeBacklog = request.nextUrl.searchParams.get("includeBacklog") === "1";
+  const reconciliation = includeBacklog && status.databaseConnected
+    ? await loadProjectionBacklogState().catch(() => ({
+        dueCapsules: 0,
+        duePredictions: 0,
+        legacyOutcomesPendingAudit: 0,
+        oldestDueAt: null,
+      }))
+    : undefined;
+
   const response = migrationPending
     ? {
         ...status,
         pipeline,
-        reconciliation,
+        ...(reconciliation ? { reconciliation } : {}),
         migrationPending: true,
         cronSecretConfigured,
         ...scheduler,
@@ -86,7 +97,7 @@ export async function GET() {
     : {
         ...status,
         pipeline,
-        reconciliation,
+        ...(reconciliation ? { reconciliation } : {}),
         migrationPending: false,
         cronSecretConfigured,
         ...scheduler,
@@ -95,8 +106,12 @@ export async function GET() {
           : "CRON_SECRET no está configurado. Las llamadas nativas de Vercel usan un fallback limitado; conviene configurar el secreto en Production.",
       };
 
+  // This is a diagnostic/status endpoint. A disconnected database is valid
+  // status information, not an HTTP transport failure. Consumers inspect the
+  // databaseConnected field instead of turning a degraded state into a generic
+  // fetch error.
   return NextResponse.json(response, {
-    status: status.databaseConnected || !status.databaseConfigured || migrationPending ? 200 : 503,
+    status: 200,
     headers: { "Cache-Control": "no-store, max-age=0" },
   });
 }
