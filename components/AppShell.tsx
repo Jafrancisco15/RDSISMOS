@@ -7,6 +7,7 @@ import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashb
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { RecentFulfilledProjections } from "./RecentFulfilledProjections";
+import { ScopeActiveCountrySearch } from "./ScopeActiveCountrySearch";
 import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { TectonicSimulator } from "./TectonicSimulator";
@@ -35,7 +36,12 @@ export function AppShell() {
         </>
       )}
 
-      {tab === "scope" && <ScopeProjection />}
+      {tab === "scope" && (
+        <>
+          <ScopeProjection />
+          <ScopeActiveCountrySearch />
+        </>
+      )}
 
       {tab === "projection" && (
         <>
