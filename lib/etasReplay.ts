@@ -63,6 +63,7 @@ export interface EtasReplayResult {
   magnitudeMin: number;
   magnitudeMax: number;
   maxDays: number;
+  sourceAgeDays: number;
   emitted: boolean;
 }
 
@@ -75,7 +76,9 @@ export function replayEtasProbability(
   source: SeismicEvent,
   issuanceContextEvents: SeismicEvent[],
   target: CountryTarget,
+  issuedAt = new Date(source.time),
 ): EtasReplayResult {
+  const sourceAgeDays = Math.max(0, (issuedAt.getTime() - Date.parse(source.time)) / DAY_MS);
   if (!etasSourceCanAffectTarget(source, target)) {
     return {
       probabilityPct: 0,
@@ -84,6 +87,7 @@ export function replayEtasProbability(
       magnitudeMin: 0,
       magnitudeMax: 0,
       maxDays: 0,
+      sourceAgeDays,
       emitted: false,
     };
   }
@@ -105,7 +109,14 @@ export function replayEtasProbability(
   const magnitudeMax = Number(Math.min(8.8, source.magnitude + 0.4).toFixed(1));
   const productivity = BASE_PARAMETERS.productivityK
     * Math.exp(BASE_PARAMETERS.productivityAlpha * (source.magnitude - magnitudeCompleteness));
-  const temporalWeight = integratedOmori(0, maxDays, BASE_PARAMETERS.omoriC, BASE_PARAMETERS.omoriP);
+  // This mirrors the current operational ETAS implementation exactly: it
+  // integrates from the source age at issuance for another maxDays interval.
+  const temporalWeight = integratedOmori(
+    sourceAgeDays,
+    sourceAgeDays + maxDays,
+    BASE_PARAMETERS.omoriC,
+    BASE_PARAMETERS.omoriP,
+  );
   const outsideDistance = Math.max(0, distanceToTarget - target.radiusKm);
   const spatialWeight = Math.pow(
     1 + outsideDistance / (projectedRadiusKm + 80),
@@ -125,6 +136,7 @@ export function replayEtasProbability(
     magnitudeMin,
     magnitudeMax,
     maxDays,
+    sourceAgeDays: Number(sourceAgeDays.toFixed(3)),
     emitted: true,
   };
 }
