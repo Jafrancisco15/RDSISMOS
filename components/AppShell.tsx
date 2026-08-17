@@ -14,7 +14,7 @@ import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "heatmap" | "scope" | "projection" | "validation" | "history" | "events" | "simulator";
+type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "simulator";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -24,11 +24,11 @@ export function AppShell() {
     <>
       <nav className="main-tabs" aria-label="Navegación principal">
         <button className={tab === "globe" ? "active" : ""} onClick={() => setTab("globe")}>Mapa 3D</button>
-        <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Heatmap Histórico</button>
         <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>ETAS Projection</button>
         <button className={tab === "validation" ? "active" : ""} onClick={() => setTab("validation")}>Auto-Validación</button>
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
+        <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
         <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
       </nav>
@@ -39,8 +39,6 @@ export function AppShell() {
           <RecentFulfilledProjections />
         </>
       )}
-
-      {tab === "heatmap" && <HistoricalHeatmap />}
 
       {tab === "scope" && (
         <>
@@ -84,6 +82,7 @@ export function AppShell() {
 
       {tab === "validation" && <AutoValidationPanel />}
       {tab === "history" && <ProjectionHistoryPanel />}
+      {tab === "heatmap" && <HistoricalHeatmap />}
       {tab === "events" && <EarthquakeEventsDashboard />}
       {tab === "simulator" && <TectonicSimulator />}
     </>

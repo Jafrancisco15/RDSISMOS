@@ -24,7 +24,6 @@
 }
 
 .eyebrow,
-.controls > div > span,
 .explanation article > span {
   color: #7dd3fc;
   text-transform: uppercase;
@@ -59,6 +58,7 @@
   color: #f8fafc;
 }
 
+.preloadPanel,
 .timelinePanel,
 .controls,
 .legendPanel,
@@ -73,8 +73,54 @@
   border-radius: 18px;
 }
 
-.timelinePanel {
+.preloadPanel {
   margin-top: 18px;
+  padding: 13px 16px;
+  display: grid;
+  grid-template-columns: minmax(190px, .55fr) minmax(220px, 1fr);
+  gap: 7px 16px;
+  align-items: center;
+  background: linear-gradient(135deg, rgba(34, 211, 238, .06), transparent 55%), rgba(9, 22, 33, .9);
+}
+
+.preloadPanel > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.preloadPanel strong {
+  color: #bae6fd;
+  font-size: .82rem;
+}
+
+.preloadPanel span,
+.preloadPanel small {
+  color: #91a4b2;
+  font-size: .69rem;
+  line-height: 1.4;
+}
+
+.preloadPanel small {
+  grid-column: 1 / -1;
+}
+
+.preloadTrack {
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(148, 163, 184, .12);
+}
+
+.preloadTrack i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2563eb, #22d3ee, #22c55e);
+  transition: width .35s ease;
+}
+
+.timelinePanel {
+  margin-top: 12px;
   padding: 18px 20px 14px;
   background: linear-gradient(135deg, rgba(59, 130, 246, .08), transparent 52%), rgba(9, 22, 33, .9);
 }
@@ -86,8 +132,7 @@
   align-items: center;
 }
 
-.timelineTop button,
-.buttonGroup button {
+.timelineTop button {
   border: 1px solid rgba(125, 211, 252, .28);
   background: rgba(56, 189, 248, .065);
   color: #dbeafe;
@@ -96,14 +141,12 @@
   font-weight: 800;
 }
 
-.timelineTop button:hover,
-.buttonGroup button:hover {
+.timelineTop button:hover {
   border-color: rgba(125, 211, 252, .62);
   background: rgba(56, 189, 248, .14);
 }
 
-.timelineTop .playing,
-.buttonGroup .active {
+.timelineTop .playing {
   border-color: rgba(56, 189, 248, .8);
   background: rgba(56, 189, 248, .2);
   color: #fff;
@@ -136,12 +179,7 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 15px 22px;
-}
-
-.controls > div {
-  display: grid;
-  gap: 7px;
+  gap: 10px 14px;
 }
 
 .controls label {
@@ -163,17 +201,6 @@
   color: #fef3c7;
   border-color: rgba(250, 204, 21, .5);
   background: rgba(250, 204, 21, .09);
-}
-
-.buttonGroup {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.buttonGroup button {
-  padding: 7px 10px;
-  font-size: .74rem;
 }
 
 .legendPanel {
@@ -210,6 +237,7 @@
 
 .legendBlue { background: #2563eb; color: #2563eb; }
 .legendCyan { background: #22d3ee; color: #22d3ee; }
+.legendGreen { background: #22c55e; color: #22c55e; }
 .legendYellow { background: #facc15; color: #facc15; }
 .legendOrange { background: #f97316; color: #f97316; }
 .legendRed { background: #ef4444; color: #ef4444; }
@@ -381,6 +409,8 @@
 @media (max-width: 900px) {
   .header { display: grid; }
   .yearBadge { min-width: 0; text-align: left; }
+  .preloadPanel { grid-template-columns: 1fr; }
+  .preloadPanel small { grid-column: auto; }
   .timelineTop { grid-template-columns: 1fr; }
   .timelineTop button { width: 100%; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
