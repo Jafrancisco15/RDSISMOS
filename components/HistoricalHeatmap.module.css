@@ -1,0 +1,325 @@
+.page {
+  width: min(1500px, calc(100% - 28px));
+  margin: 22px auto 52px;
+  color: #e8f1f5;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  gap: 22px;
+  align-items: flex-start;
+}
+
+.header h1 {
+  margin: 5px 0 7px;
+  font-size: clamp(2rem, 4vw, 3.35rem);
+}
+
+.header p {
+  max-width: 850px;
+  margin: 0;
+  color: #9fb0bc;
+  line-height: 1.65;
+}
+
+.eyebrow,
+.controls > div > span,
+.explanation article > span {
+  color: #7dd3fc;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: .68rem;
+  font-weight: 850;
+}
+
+.yearBadge {
+  min-width: 250px;
+  padding: 14px 17px;
+  border-radius: 18px;
+  border: 1px solid rgba(125, 211, 252, .3);
+  background: linear-gradient(145deg, rgba(56, 189, 248, .1), rgba(6, 18, 28, .86));
+  text-align: right;
+}
+
+.yearBadge span,
+.yearBadge strong,
+.yearBadge small {
+  display: block;
+}
+
+.yearBadge span,
+.yearBadge small {
+  color: #91a4b2;
+}
+
+.yearBadge strong {
+  margin: 3px 0;
+  font-size: 2.2rem;
+  color: #f8fafc;
+}
+
+.timelinePanel,
+.controls,
+.legendPanel,
+.globeStage,
+.metrics article,
+.notice,
+.explanation article,
+.error {
+  border: 1px solid rgba(148, 163, 184, .19);
+  background: rgba(9, 22, 33, .9);
+  border-radius: 18px;
+}
+
+.timelinePanel {
+  margin-top: 18px;
+  padding: 18px 20px 14px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, .08), transparent 52%), rgba(9, 22, 33, .9);
+}
+
+.timelineTop {
+  display: grid;
+  grid-template-columns: 190px 1fr 190px;
+  gap: 15px;
+  align-items: center;
+}
+
+.timelineTop button,
+.buttonGroup button {
+  border: 1px solid rgba(125, 211, 252, .28);
+  background: rgba(56, 189, 248, .065);
+  color: #dbeafe;
+  border-radius: 999px;
+  padding: 9px 13px;
+  font-weight: 800;
+}
+
+.timelineTop button:hover,
+.buttonGroup button:hover {
+  border-color: rgba(125, 211, 252, .62);
+  background: rgba(56, 189, 248, .14);
+}
+
+.timelineTop .playing,
+.buttonGroup .active {
+  border-color: rgba(56, 189, 248, .8);
+  background: rgba(56, 189, 248, .2);
+  color: #fff;
+}
+
+.currentYear {
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+
+.yearSlider {
+  width: 100%;
+  margin: 16px 0 5px;
+  accent-color: #38bdf8;
+  cursor: ew-resize;
+}
+
+.yearTicks {
+  display: flex;
+  justify-content: space-between;
+  color: #708494;
+  font-size: .68rem;
+}
+
+.controls {
+  margin-top: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 15px 22px;
+}
+
+.controls > div {
+  display: grid;
+  gap: 7px;
+}
+
+.controls label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #cbd5e1;
+  font-size: .78rem;
+}
+
+.buttonGroup {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.buttonGroup button {
+  padding: 7px 10px;
+  font-size: .74rem;
+}
+
+.legendPanel {
+  margin-top: 12px;
+  padding: 11px 15px;
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  flex-wrap: wrap;
+  color: #b8c4ce;
+  font-size: .72rem;
+}
+
+.legendPanel > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legendPanel p {
+  margin: 0 0 0 auto;
+  max-width: 520px;
+  color: #91a4b2;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.legendPanel span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: 0 0 12px currentColor;
+}
+
+.legendBlue { background: #2563eb; color: #2563eb; }
+.legendCyan { background: #22d3ee; color: #22d3ee; }
+.legendYellow { background: #facc15; color: #facc15; }
+.legendOrange { background: #f97316; color: #f97316; }
+.legendRed { background: #ef4444; color: #ef4444; }
+
+.globeStage {
+  position: relative;
+  overflow: hidden;
+  margin-top: 12px;
+  min-height: 540px;
+  background: radial-gradient(circle at 50% 40%, rgba(56, 189, 248, .08), transparent 50%), #050b11;
+}
+
+.globeLoading,
+.loadingOverlay {
+  min-height: 540px;
+  display: grid;
+  place-items: center;
+  color: #bae6fd;
+}
+
+.loadingOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  min-height: 0;
+  background: rgba(3, 10, 16, .58);
+  backdrop-filter: blur(3px);
+  pointer-events: none;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.metrics article {
+  padding: 14px 15px;
+}
+
+.metrics span,
+.metrics strong,
+.metrics small {
+  display: block;
+}
+
+.metrics span {
+  color: #91a4b2;
+  font-size: .7rem;
+}
+
+.metrics strong {
+  margin: 5px 0 3px;
+  font-size: 1.35rem;
+}
+
+.metrics small {
+  color: #91a4b2;
+  font-size: .7rem;
+  line-height: 1.4;
+}
+
+.notice,
+.error {
+  margin-top: 12px;
+  padding: 14px 16px;
+  color: #cbd5e1;
+  line-height: 1.55;
+}
+
+.notice {
+  border-color: rgba(250, 204, 21, .26);
+  background: rgba(250, 204, 21, .055);
+}
+
+.notice strong {
+  color: #fde68a;
+}
+
+.error {
+  border-color: rgba(248, 113, 113, .32);
+  background: rgba(248, 113, 113, .07);
+  color: #fecaca;
+}
+
+.explanation {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.explanation article {
+  padding: 17px;
+}
+
+.explanation h2 {
+  margin: 5px 0 6px;
+  font-size: 1rem;
+}
+
+.explanation p {
+  margin: 0;
+  color: #91a4b2;
+  line-height: 1.55;
+  font-size: .78rem;
+}
+
+@media (max-width: 900px) {
+  .header { display: grid; }
+  .yearBadge { min-width: 0; text-align: left; }
+  .timelineTop { grid-template-columns: 1fr; }
+  .timelineTop button { width: 100%; }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .legendPanel p { margin-left: 0; text-align: left; width: 100%; }
+}
+
+@media (max-width: 600px) {
+  .page { width: min(100% - 16px, 1500px); }
+  .metrics,
+  .explanation { grid-template-columns: 1fr; }
+  .controls { align-items: flex-start; }
+  .controls label { width: 100%; }
+  .yearTicks span:nth-child(2),
+  .yearTicks span:nth-child(4) { display: none; }
+}

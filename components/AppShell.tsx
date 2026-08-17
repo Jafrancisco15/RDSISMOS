@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { AutoValidationPanel } from "./AutoValidationPanel";
+import { HistoricalHeatmap } from "./HistoricalHeatmap";
 import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
@@ -13,7 +14,7 @@ import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "events" | "simulator";
+type AppTab = "globe" | "heatmap" | "scope" | "projection" | "validation" | "history" | "events" | "simulator";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -23,6 +24,7 @@ export function AppShell() {
     <>
       <nav className="main-tabs" aria-label="Navegación principal">
         <button className={tab === "globe" ? "active" : ""} onClick={() => setTab("globe")}>Mapa 3D</button>
+        <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Heatmap Histórico</button>
         <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>ETAS Projection</button>
         <button className={tab === "validation" ? "active" : ""} onClick={() => setTab("validation")}>Auto-Validación</button>
@@ -37,6 +39,8 @@ export function AppShell() {
           <RecentFulfilledProjections />
         </>
       )}
+
+      {tab === "heatmap" && <HistoricalHeatmap />}
 
       {tab === "scope" && (
         <>
