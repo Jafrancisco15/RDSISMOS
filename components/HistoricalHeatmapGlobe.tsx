@@ -343,7 +343,7 @@ export function HistoricalHeatmapGlobe({
         atmosphereAltitude={0.16}
         showGraticules
         polygonsData={polygons}
-        polygonGeoJsonGeometry={(polygon: object) => (polygon as SurfacePolygon).geometry}
+        polygonGeoJsonGeometry={(polygon: object) => (polygon as SurfacePolygon).geometry as any}
         polygonAltitude={(polygon: object) => (polygon as SurfacePolygon).kind === "plate" ? 0.002 : 0.011}
         polygonCapColor={(polygon: object) => {
           const item = polygon as SurfacePolygon;
