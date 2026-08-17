@@ -9,7 +9,7 @@ import type {
   PlateBoundaryClass,
 } from "@/lib/globeLayers";
 import type { HistoricalHeatmapCell } from "@/lib/historicalHeatmap";
-import styles from "./HistoricalHeatmap.module.css";
+import styles from "./HistoricalHeatmapMap2D.module.css";
 
 type Position = [number, number];
 
@@ -297,14 +297,24 @@ export function HistoricalHeatmapMap2D({
   }, [cells, layers, showCountryNames, showFaults, showPlateAreas, showPlateBoundaries, showPlateNames]);
 
   return (
-    <div className={styles.map2dCanvasWrap}>
-      <canvas
-        ref={canvasRef}
-        width={WIDTH}
-        height={HEIGHT}
-        className={styles.map2dCanvas}
-        aria-label="Mapa 2D mundial de calor sísmico histórico con placas, fronteras y fallas"
-      />
-    </div>
+    <section className={styles.section}>
+      <header className={styles.header}>
+        <div>
+          <span>Vista cartográfica sincronizada</span>
+          <h2>Mapa 2D global</h2>
+        </div>
+        <p>El mismo año y las mismas capas del globo 3D, proyectados en formato equirectangular. Fronteras, límites de placas y fallas se dibujan siempre por encima del calor.</p>
+      </header>
+      <div className={styles.canvasWrap}>
+        <canvas
+          ref={canvasRef}
+          width={WIDTH}
+          height={HEIGHT}
+          className={styles.canvas}
+          aria-label="Mapa 2D mundial de calor sísmico histórico con placas, fronteras y fallas"
+        />
+      </div>
+      <p className={styles.note}>La proyección equirectangular conserva latitud/longitud pero exagera las áreas cerca de los polos; la ubicación de las capas sísmicas y tectónicas se mantiene georreferenciada.</p>
+    </section>
   );
 }
