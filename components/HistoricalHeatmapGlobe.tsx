@@ -32,27 +32,42 @@ interface GlobeLabel {
   kind: "country" | "plate";
 }
 
-interface HeatPolygon {
-  kind: "heat";
-  id: string;
-  geometry: { type: "Polygon"; coordinates: number[][][] };
-  cell: HistoricalHeatmapCell;
-}
-
 interface PlatePolygon {
-  kind: "plate";
   id: string;
   geometry: NonNullable<GlobeTectonicPlate["geometry"]>;
   plate: GlobeTectonicPlate;
   color: string;
 }
 
-type SurfacePolygon = HeatPolygon | PlatePolygon;
+interface HeatPoint {
+  latitude: number;
+  longitude: number;
+  weight: number;
+}
+
+interface HeatBand {
+  id: string;
+  label: string;
+  color: string;
+  minMagnitude: number;
+  maxMagnitude: number | null;
+  altitude: number;
+  points: HeatPoint[];
+}
 
 const PLATE_PALETTE = [
   "#2563eb", "#7c3aed", "#0891b2", "#059669", "#65a30d", "#ca8a04",
   "#ea580c", "#dc2626", "#db2777", "#9333ea", "#0d9488", "#4f46e5",
 ];
+
+const HEAT_BAND_DEFINITIONS = [
+  { id: "m3", label: "M≤3", color: "#2563eb", minMagnitude: -Infinity, maxMagnitude: 3, altitude: 0.009 },
+  { id: "m3-4", label: "M3–4", color: "#22d3ee", minMagnitude: 3, maxMagnitude: 4, altitude: 0.010 },
+  { id: "m4-5", label: "M4–5", color: "#22c55e", minMagnitude: 4, maxMagnitude: 5, altitude: 0.011 },
+  { id: "m5-6", label: "M5–6", color: "#facc15", minMagnitude: 5, maxMagnitude: 6, altitude: 0.012 },
+  { id: "m6-7", label: "M6–7", color: "#f97316", minMagnitude: 6, maxMagnitude: 7, altitude: 0.013 },
+  { id: "m7", label: "M7+", color: "#ef4444", minMagnitude: 7, maxMagnitude: null, altitude: 0.014 },
+] as const;
 
 const PLATE_BOUNDARY_COLORS: Record<PlateBoundaryClass, string> = {
   SUB: "#ef4444",
@@ -87,59 +102,15 @@ function parseHexColor(value: string) {
   };
 }
 
-function mixColor(a: string, b: string, progress: number) {
-  const left = parseHexColor(a);
-  const right = parseHexColor(b);
-  const t = clamp(progress, 0, 1);
-  return {
-    red: Math.round(left.red + (right.red - left.red) * t),
-    green: Math.round(left.green + (right.green - left.green) * t),
-    blue: Math.round(left.blue + (right.blue - left.blue) * t),
-  };
-}
-
-function magnitudeRgb(magnitude: number) {
-  const stops = [
-    { magnitude: 2.5, color: "#1d4ed8" },
-    { magnitude: 3, color: "#2563eb" },
-    { magnitude: 4, color: "#22d3ee" },
-    { magnitude: 5, color: "#22c55e" },
-    { magnitude: 6, color: "#facc15" },
-    { magnitude: 7, color: "#ef4444" },
-    { magnitude: 9, color: "#991b1b" },
-  ];
-  if (magnitude <= stops[0].magnitude) return parseHexColor(stops[0].color);
-  for (let index = 1; index < stops.length; index += 1) {
-    const right = stops[index];
-    const left = stops[index - 1];
-    if (magnitude <= right.magnitude) {
-      return mixColor(left.color, right.color, (magnitude - left.magnitude) / (right.magnitude - left.magnitude));
-    }
-  }
-  return parseHexColor(stops.at(-1)?.color ?? "#991b1b");
-}
-
-function heatCellColor(cell: HistoricalHeatmapCell) {
-  const rgb = magnitudeRgb(cell.maximumMagnitude);
-  const density = clamp(Math.log10(cell.eventCount + 1) / 1.7, 0, 1);
-  const alpha = clamp(0.28 + density * 0.5, 0.28, 0.84);
-  return `rgba(${rgb.red},${rgb.green},${rgb.blue},${alpha.toFixed(3)})`;
-}
-
-function heatCellSideColor(cell: HistoricalHeatmapCell) {
-  const rgb = magnitudeRgb(cell.maximumMagnitude);
-  return `rgba(${rgb.red},${rgb.green},${rgb.blue},0.08)`;
+function rgba(hex: string, alpha: number) {
+  const rgb = parseHexColor(hex);
+  return `rgba(${rgb.red},${rgb.green},${rgb.blue},${alpha})`;
 }
 
 function plateColor(code: string) {
   let hash = 0;
   for (let index = 0; index < code.length; index += 1) hash = (hash * 31 + code.charCodeAt(index)) >>> 0;
   return PLATE_PALETTE[hash % PLATE_PALETTE.length];
-}
-
-function rgba(hex: string, alpha: number) {
-  const rgb = parseHexColor(hex);
-  return `rgba(${rgb.red},${rgb.green},${rgb.blue},${alpha})`;
 }
 
 function boundaryColor(boundaryClass: PlateBoundaryClass | undefined) {
@@ -174,24 +145,41 @@ function pathLabel(path: RenderPath, plateNames: Map<string, string>) {
   return `<div class="globe-tooltip"><strong>Frontera internacional</strong><span>${escapeHtml(path.name)}</span></div>`;
 }
 
-function polygonLabel(polygon: SurfacePolygon) {
-  if (polygon.kind === "plate") {
-    return `<div class="globe-tooltip"><strong>Placa tectónica · ${escapeHtml(polygon.plate.name)}</strong><span>Código PB2002: ${escapeHtml(polygon.plate.code)}</span><small>Área tectónica PB2002 coloreada de forma distintiva.</small></div>`;
-  }
-  const cell = polygon.cell;
-  return `<div class="globe-tooltip"><strong>Superficie sísmica · M${cell.maximumMagnitude.toFixed(1)} máx.</strong><span>${cell.eventCount.toLocaleString()} eventos · media M${cell.averageMagnitude.toFixed(2)}</span><small>Profundidad media ${cell.averageDepthKm.toFixed(0)} km · celda 1.5° · USGS ComCat</small></div>`;
+function plateLabel(polygon: PlatePolygon) {
+  return `<div class="globe-tooltip"><strong>Placa tectónica · ${escapeHtml(polygon.plate.name)}</strong><span>Código PB2002: ${escapeHtml(polygon.plate.code)}</span><small>Área tectónica PB2002. El color es contextual y no representa riesgo.</small></div>`;
 }
 
-function cellGeometry(cell: HistoricalHeatmapCell): HeatPolygon["geometry"] {
-  return {
-    type: "Polygon",
-    coordinates: [[
-      [cell.minLongitude, cell.minLatitude],
-      [cell.maxLongitude, cell.minLatitude],
-      [cell.maxLongitude, cell.maxLatitude],
-      [cell.minLongitude, cell.maxLatitude],
-      [cell.minLongitude, cell.minLatitude],
-    ]],
+function bandForMagnitude(magnitude: number) {
+  return HEAT_BAND_DEFINITIONS.find((band) => (
+    magnitude > band.minMagnitude
+    && (band.maxMagnitude === null || magnitude <= band.maxMagnitude)
+  )) ?? HEAT_BAND_DEFINITIONS[0];
+}
+
+function buildHeatBands(cells: HistoricalHeatmapCell[]): HeatBand[] {
+  const buckets = new Map<string, HeatPoint[]>();
+  HEAT_BAND_DEFINITIONS.forEach((band) => buckets.set(band.id, []));
+
+  for (const cell of cells) {
+    const band = bandForMagnitude(cell.maximumMagnitude);
+    buckets.get(band.id)?.push({
+      latitude: (cell.minLatitude + cell.maxLatitude) / 2,
+      longitude: (cell.minLongitude + cell.maxLongitude) / 2,
+      weight: 1 + Math.log2(Math.max(1, cell.eventCount)),
+    });
+  }
+
+  return HEAT_BAND_DEFINITIONS
+    .map((band) => ({ ...band, points: buckets.get(band.id) ?? [] }))
+    .filter((band) => band.points.length > 0);
+}
+
+function heatColorInterpolator(band: HeatBand) {
+  const rgb = parseHexColor(band.color);
+  return (value: number) => {
+    const normalized = clamp(value, 0, 1.35);
+    const alpha = clamp(0.05 + normalized * 0.72, 0.04, 0.86);
+    return `rgba(${rgb.red},${rgb.green},${rgb.blue},${alpha.toFixed(3)})`;
   };
 }
 
@@ -253,7 +241,7 @@ export function HistoricalHeatmapGlobe({
   }, [requestedLayerSet]);
 
   useEffect(() => {
-    globeRef.current?.pointOfView({ lat: 12, lng: -20, altitude: 2.05 }, 800);
+    globeRef.current?.pointOfView({ lat: 12, lng: -20, altitude: 2.05 }, 0);
   }, []);
 
   useEffect(() => {
@@ -298,26 +286,18 @@ export function HistoricalHeatmapGlobe({
     return [...countries, ...boundaries, ...faults];
   }, [layers, showFaults, showPlateBoundaries]);
 
-  const polygons = useMemo<SurfacePolygon[]>(() => {
-    const plateAreas: PlatePolygon[] = showPlateAreas
-      ? (layers?.tectonicPlates ?? [])
-        .filter((plate): plate is GlobeTectonicPlate & { geometry: NonNullable<GlobeTectonicPlate["geometry"]> } => Boolean(plate.geometry))
-        .map((plate) => ({
-          kind: "plate",
-          id: `plate-area:${plate.code}`,
-          geometry: plate.geometry,
-          plate,
-          color: plateColor(plate.code),
-        }))
-      : [];
-    const heatAreas: HeatPolygon[] = cells.map((cell) => ({
-      kind: "heat",
-      id: `heat:${cell.id}`,
-      geometry: cellGeometry(cell),
-      cell,
-    }));
-    return [...plateAreas, ...heatAreas];
-  }, [cells, layers, showPlateAreas]);
+  const platePolygons = useMemo<PlatePolygon[]>(() => showPlateAreas
+    ? (layers?.tectonicPlates ?? [])
+      .filter((plate): plate is GlobeTectonicPlate & { geometry: NonNullable<GlobeTectonicPlate["geometry"]> } => Boolean(plate.geometry))
+      .map((plate) => ({
+        id: `plate-area:${plate.code}`,
+        geometry: plate.geometry,
+        plate,
+        color: plateColor(plate.code),
+      }))
+    : [], [layers, showPlateAreas]);
+
+  const heatBands = useMemo(() => buildHeatBands(cells), [cells]);
 
   const labels = useMemo<GlobeLabel[]>(() => {
     const countries: GlobeLabel[] = showCountryNames ? COUNTRIES.map((country) => ({
@@ -352,23 +332,25 @@ export function HistoricalHeatmapGlobe({
         atmosphereColor="#69c7ff"
         atmosphereAltitude={0.16}
         showGraticules
-        polygonsData={polygons}
-        polygonGeoJsonGeometry={(polygon: object) => (polygon as SurfacePolygon).geometry as any}
-        polygonAltitude={(polygon: object) => (polygon as SurfacePolygon).kind === "plate" ? 0.002 : 0.011}
-        polygonCapColor={(polygon: object) => {
-          const item = polygon as SurfacePolygon;
-          return item.kind === "plate" ? rgba(item.color, 0.13) : heatCellColor(item.cell);
-        }}
-        polygonSideColor={(polygon: object) => {
-          const item = polygon as SurfacePolygon;
-          return item.kind === "plate" ? rgba(item.color, 0.035) : heatCellSideColor(item.cell);
-        }}
-        polygonStrokeColor={(polygon: object) => {
-          const item = polygon as SurfacePolygon;
-          return item.kind === "plate" ? rgba(item.color, 0.28) : "rgba(255,255,255,0.025)";
-        }}
-        polygonLabel={(polygon: object) => polygonLabel(polygon as SurfacePolygon)}
+        polygonsData={platePolygons}
+        polygonGeoJsonGeometry={(polygon: object) => (polygon as PlatePolygon).geometry as any}
+        polygonAltitude={0.002}
+        polygonCapColor={(polygon: object) => rgba((polygon as PlatePolygon).color, 0.12)}
+        polygonSideColor={(polygon: object) => rgba((polygon as PlatePolygon).color, 0.025)}
+        polygonStrokeColor={(polygon: object) => rgba((polygon as PlatePolygon).color, 0.24)}
+        polygonLabel={(polygon: object) => plateLabel(polygon as PlatePolygon)}
         polygonsTransitionDuration={0}
+        heatmapsData={heatBands}
+        heatmapPoints="points"
+        heatmapPointLat="latitude"
+        heatmapPointLng="longitude"
+        heatmapPointWeight="weight"
+        heatmapBandwidth={1.55}
+        heatmapColorFn={(heatmap: object) => heatColorInterpolator(heatmap as HeatBand)}
+        heatmapColorSaturation={0.9}
+        heatmapBaseAltitude={(heatmap: object) => (heatmap as HeatBand).altitude}
+        heatmapTopAltitude={(heatmap: object) => (heatmap as HeatBand).altitude}
+        heatmapsTransitionDuration={0}
         pathsData={geographicPaths}
         pathPoints="points"
         pathPointLat="lat"
