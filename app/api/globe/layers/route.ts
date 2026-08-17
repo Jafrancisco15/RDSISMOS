@@ -4,6 +4,8 @@ import {
   normalizeGeoJsonPaths,
   normalizeTectonicPlateLabels,
   type GlobeMapLayersResponse,
+  type GlobeTectonicPlate,
+  type GlobeTectonicPlateGeometry,
 } from "@/lib/globeLayers";
 
 export const runtime = "nodejs";
@@ -100,6 +102,63 @@ function requestedLayers(request: NextRequest) {
   return new Set<LayerKey>(values.length ? values : ALL_LAYERS);
 }
 
+function validPosition(value: unknown): value is number[] {
+  return Array.isArray(value)
+    && value.length >= 2
+    && Number.isFinite(Number(value[0]))
+    && Number.isFinite(Number(value[1]));
+}
+
+function simplifyRing(value: unknown, maximum = 160) {
+  if (!Array.isArray(value)) return [] as number[][];
+  const ring = value
+    .filter(validPosition)
+    .map((position) => [Number(position[0]), Number(position[1])]);
+  if (ring.length < 4) return [] as number[][];
+  const first = ring[0];
+  const last = ring.at(-1) as number[];
+  const closed = first[0] === last[0] && first[1] === last[1];
+  const source = closed ? ring.slice(0, -1) : ring;
+  if (source.length <= maximum - 1) return [...source, [...source[0]]];
+  const sampled: number[][] = [];
+  const target = maximum - 1;
+  for (let index = 0; index < target; index += 1) {
+    const sourceIndex = Math.round((index * (source.length - 1)) / Math.max(1, target - 1));
+    const point = source[sourceIndex];
+    const previous = sampled.at(-1);
+    if (!previous || previous[0] !== point[0] || previous[1] !== point[1]) sampled.push(point);
+  }
+  if (sampled.length < 3) return [] as number[][];
+  sampled.push([...sampled[0]]);
+  return sampled;
+}
+
+function simplifyPlateGeometry(geometry: GlobeTectonicPlateGeometry | undefined): GlobeTectonicPlateGeometry | undefined {
+  if (!geometry || !Array.isArray(geometry.coordinates)) return undefined;
+  if (geometry.type === "Polygon") {
+    const rings = geometry.coordinates
+      .filter(Array.isArray)
+      .map((ring) => simplifyRing(ring))
+      .filter((ring) => ring.length >= 4);
+    return rings.length ? { type: "Polygon", coordinates: rings } : undefined;
+  }
+  const polygons = geometry.coordinates
+    .filter(Array.isArray)
+    .map((polygon) => (polygon as unknown[])
+      .filter(Array.isArray)
+      .map((ring) => simplifyRing(ring))
+      .filter((ring) => ring.length >= 4))
+    .filter((polygon) => polygon.length > 0);
+  return polygons.length ? { type: "MultiPolygon", coordinates: polygons } : undefined;
+}
+
+function simplifyPlate(plate: GlobeTectonicPlate): GlobeTectonicPlate {
+  return {
+    ...plate,
+    geometry: simplifyPlateGeometry(plate.geometry),
+  };
+}
+
 export async function GET(request: NextRequest) {
   const include = requestedLayers(request);
   const needBoundaries = include.has("boundaries");
@@ -142,7 +201,7 @@ export async function GET(request: NextRequest) {
     generatedAt: new Date().toISOString(),
     plateBoundaries: needBoundaries ? (typedBoundaries.length ? typedBoundaries : fallbackBoundaries) : [],
     tectonicPlates: needPlates && plateAreasResult.status === "fulfilled"
-      ? normalizeTectonicPlateLabels(plateAreasResult.value)
+      ? normalizeTectonicPlateLabels(plateAreasResult.value).map(simplifyPlate)
       : [],
     activeFaults: needFaults && faultsResult.status === "fulfilled"
       ? normalizeGeoJsonPaths(faultsResult.value, "active-fault", {
