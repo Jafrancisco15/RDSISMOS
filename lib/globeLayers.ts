@@ -23,11 +23,17 @@ export interface GlobeMapPath {
   catalogId?: string;
 }
 
+export interface GlobeTectonicPlateGeometry {
+  type: "Polygon" | "MultiPolygon";
+  coordinates: unknown;
+}
+
 export interface GlobeTectonicPlate {
   code: string;
   name: string;
   latitude: number;
   longitude: number;
+  geometry?: GlobeTectonicPlateGeometry;
 }
 
 export interface GlobeMapLayersResponse {
@@ -329,6 +335,12 @@ function sphericalMean(points: GlobeMapPoint[]) {
   return { latitude, longitude };
 }
 
+function normalizedPlateGeometry(geometry: GeoJsonGeometry | null | undefined): GlobeTectonicPlateGeometry | undefined {
+  if (!geometry?.coordinates) return undefined;
+  if (geometry.type !== "Polygon" && geometry.type !== "MultiPolygon") return undefined;
+  return { type: geometry.type, coordinates: geometry.coordinates };
+}
+
 export function normalizeTectonicPlateLabels(payload: unknown): GlobeTectonicPlate[] {
   const collection = payload && typeof payload === "object"
     ? payload as GeoJsonFeatureCollection
@@ -343,7 +355,12 @@ export function normalizeTectonicPlateLabels(payload: unknown): GlobeTectonicPla
     const center = sphericalMean(positionsFromGeometry(feature.geometry));
     if (!center) return;
     used.add(code);
-    plates.push({ code, name, ...center });
+    plates.push({
+      code,
+      name,
+      ...center,
+      geometry: normalizedPlateGeometry(feature.geometry),
+    });
   });
 
   return plates.sort((a, b) => a.name.localeCompare(b.name));
