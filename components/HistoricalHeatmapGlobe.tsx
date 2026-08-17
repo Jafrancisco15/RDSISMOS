@@ -230,17 +230,27 @@ export function HistoricalHeatmapGlobe({
     return () => observer.disconnect();
   }, []);
 
+  const requestedLayerSet = useMemo(() => {
+    const requested = ["countries"];
+    if (showPlateAreas || showPlateNames) requested.push("plates");
+    if (showPlateBoundaries) requested.push("boundaries");
+    if (showFaults) requested.push("faults");
+    return requested.join(",");
+  }, [showFaults, showPlateAreas, showPlateBoundaries, showPlateNames]);
+
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/globe/layers", { cache: "force-cache", signal: controller.signal })
+    fetch(`/api/globe/layers?include=${requestedLayerSet}`, { cache: "force-cache", signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.json() as Promise<GlobeMapLayersResponse>;
       })
       .then(setLayers)
-      .catch(() => undefined);
+      .catch((loadError) => {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+      });
     return () => controller.abort();
-  }, []);
+  }, [requestedLayerSet]);
 
   useEffect(() => {
     globeRef.current?.pointOfView({ lat: 12, lng: -20, altitude: 2.05 }, 800);
@@ -358,7 +368,7 @@ export function HistoricalHeatmapGlobe({
           return item.kind === "plate" ? rgba(item.color, 0.28) : "rgba(255,255,255,0.025)";
         }}
         polygonLabel={(polygon: object) => polygonLabel(polygon as SurfacePolygon)}
-        polygonsTransitionDuration={420}
+        polygonsTransitionDuration={0}
         pathsData={geographicPaths}
         pathPoints="points"
         pathPointLat="lat"
@@ -370,7 +380,7 @@ export function HistoricalHeatmapGlobe({
         pathDashGap="dashGap"
         pathDashAnimateTime={0}
         pathLabel={(path: object) => pathLabel(path as RenderPath, plateNames)}
-        pathTransitionDuration={220}
+        pathTransitionDuration={0}
         labelsData={labels}
         labelLat="latitude"
         labelLng="longitude"
@@ -380,7 +390,7 @@ export function HistoricalHeatmapGlobe({
         labelSize="size"
         labelIncludeDot={false}
         labelResolution={2}
-        labelsTransitionDuration={250}
+        labelsTransitionDuration={0}
         enablePointerInteraction
       />
     </div>
