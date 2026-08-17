@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   CARIBBEAN_PRIORITY_BOUNDS,
   normalizeGeoJsonPaths,
+  normalizeTectonicPlateLabels,
   type GlobeMapLayersResponse,
 } from "@/lib/globeLayers";
 
@@ -14,9 +15,17 @@ const SOURCES = {
     label: "PB2002 · Peter Bird",
     url: "https://raw.githubusercontent.com/fraxen/tectonicplates/master/GeoJSON/PB2002_boundaries.json",
   },
+  plateAreas: {
+    label: "PB2002 placas · Peter Bird",
+    url: "https://raw.githubusercontent.com/fraxen/tectonicplates/master/GeoJSON/PB2002_plates.json",
+  },
+  plateBoundaryTypes: {
+    label: "PB2002 steps · clasificación cinemática",
+    url: "https://services5.arcgis.com/RbjlVNAtGGPx1hPV/ArcGIS/rest/services/heighttsunami/FeatureServer/8/query",
+  },
   activeFaults: {
     label: "GEM Global Active Faults Database",
-    url: "https://raw.githubusercontent.com/cossatot/gem-global-active-faults/master/geojson/gem_active_faults.geojson",
+    url: "https://raw.githubusercontent.com/GEMScienceTools/gem-global-active-faults/master/geojson/gem_active_faults.geojson",
   },
   countryBorders: {
     label: "Natural Earth · Admin 0 · 1:110m",
@@ -28,12 +37,49 @@ async function fetchGeoJson(url: string) {
   const response = await fetch(url, {
     headers: {
       Accept: "application/geo+json, application/json",
-      "User-Agent": "RDSISMOS/0.5 geological-globe",
+      "User-Agent": "RDSISMOS/0.6 geological-globe",
     },
     next: { revalidate },
   });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json() as Promise<unknown>;
+}
+
+interface ArcGisFeatureCollection {
+  type?: string;
+  features?: unknown[];
+}
+
+async function fetchTypedPlateSteps() {
+  const pageSize = 1_000;
+  const offsets = [0, 1_000, 2_000, 3_000, 4_000, 5_000, 6_000];
+  const pages = await Promise.all(offsets.map(async (offset) => {
+    const params = new URLSearchParams({
+      where: "1=1",
+      outFields: "OBJECTID,PLATEBOUND,BOUNDCONT,STEPCLASS",
+      outSR: "4326",
+      f: "geojson",
+      resultOffset: String(offset),
+      resultRecordCount: String(pageSize),
+      orderByFields: "OBJECTID ASC",
+      returnZ: "false",
+      returnM: "false",
+    });
+    const response = await fetch(`${SOURCES.plateBoundaryTypes.url}?${params}`, {
+      headers: {
+        Accept: "application/geo+json, application/json",
+        "User-Agent": "RDSISMOS/0.6 PB2002-typed-steps",
+      },
+      next: { revalidate },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json() as Promise<ArcGisFeatureCollection>;
+  }));
+
+  return {
+    type: "FeatureCollection",
+    features: pages.flatMap((page) => page.features ?? []),
+  };
 }
 
 function warningFor(name: string, result: PromiseSettledResult<unknown>) {
@@ -43,29 +89,46 @@ function warningFor(name: string, result: PromiseSettledResult<unknown>) {
 
 export async function GET() {
   const results = await Promise.allSettled([
+    fetchTypedPlateSteps(),
     fetchGeoJson(SOURCES.plateBoundaries.url),
+    fetchGeoJson(SOURCES.plateAreas.url),
     fetchGeoJson(SOURCES.activeFaults.url),
     fetchGeoJson(SOURCES.countryBorders.url),
   ]);
-  const [platesResult, faultsResult, countriesResult] = results;
+  const [typedStepsResult, boundariesResult, plateAreasResult, faultsResult, countriesResult] = results;
+
+  const typedBoundaries = typedStepsResult.status === "fulfilled"
+    ? normalizeGeoJsonPaths(typedStepsResult.value, "plate-boundary", {
+        maxPointsPerPath: 4,
+        maxPaths: 6_200,
+      })
+    : [];
+  const fallbackBoundaries = boundariesResult.status === "fulfilled"
+    ? normalizeGeoJsonPaths(boundariesResult.value, "plate-boundary", {
+        maxPointsPerPath: 72,
+        maxPaths: 1_200,
+      })
+    : [];
+
   const warnings = [
-    warningFor("Límites de placas", platesResult),
+    warningFor("Tipos de límites PB2002", typedStepsResult),
+    typedBoundaries.length ? null : "Tipos de límites PB2002 no disponibles; se usa la geometría general sin clasificación.",
+    warningFor("Límites de placas", boundariesResult),
+    warningFor("Nombres de placas", plateAreasResult),
     warningFor("Fallas activas", faultsResult),
     warningFor("Fronteras de países", countriesResult),
   ].filter((value): value is string => Boolean(value));
 
   const payload: GlobeMapLayersResponse = {
     generatedAt: new Date().toISOString(),
-    plateBoundaries: platesResult.status === "fulfilled"
-      ? normalizeGeoJsonPaths(platesResult.value, "plate-boundary", {
-          maxPointsPerPath: 72,
-          maxPaths: 1_200,
-        })
+    plateBoundaries: typedBoundaries.length ? typedBoundaries : fallbackBoundaries,
+    tectonicPlates: plateAreasResult.status === "fulfilled"
+      ? normalizeTectonicPlateLabels(plateAreasResult.value)
       : [],
     activeFaults: faultsResult.status === "fulfilled"
       ? normalizeGeoJsonPaths(faultsResult.value, "active-fault", {
           maxPointsPerPath: 28,
-          maxPaths: 2_200,
+          maxPaths: 2_400,
           priorityBounds: CARIBBEAN_PRIORITY_BOUNDS,
         })
       : [],
@@ -78,6 +141,8 @@ export async function GET() {
     warnings,
     sources: {
       plateBoundaries: SOURCES.plateBoundaries.label,
+      plateAreas: SOURCES.plateAreas.label,
+      plateBoundaryTypes: SOURCES.plateBoundaryTypes.label,
       activeFaults: SOURCES.activeFaults.label,
       countryBorders: SOURCES.countryBorders.label,
     },

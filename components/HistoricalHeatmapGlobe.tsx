@@ -3,7 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import { COUNTRIES } from "@/lib/countries";
-import type { GlobeMapLayersResponse, GlobeMapPath, GlobeMapPoint } from "@/lib/globeLayers";
+import type {
+  GlobeMapLayersResponse,
+  GlobeMapPath,
+  GlobeMapPoint,
+  PlateBoundaryClass,
+} from "@/lib/globeLayers";
 import type { HistoricalHeatmapEvent } from "@/lib/historicalHeatmap";
 import { visualMagnitudeWeight } from "@/lib/historicalHeatmap";
 
@@ -15,11 +20,23 @@ interface RenderPath extends Omit<GlobeMapPath, "points"> {
   points: Array<GlobeMapPoint & { altitude: number }>;
   color: string;
   stroke: number;
+  dashLength: number;
+  dashGap: number;
 }
 
 interface HeatDataset {
   id: string;
   points: HistoricalHeatmapEvent[];
+}
+
+interface GlobeLabel {
+  id: string;
+  latitude: number;
+  longitude: number;
+  text: string;
+  size: number;
+  color: string;
+  kind: "country" | "plate";
 }
 
 function clamp(value: number, minimum: number, maximum: number) {
@@ -53,6 +70,30 @@ function magnitudeColor(magnitude: number) {
   return "#60a5fa";
 }
 
+const PLATE_BOUNDARY_COLORS: Record<PlateBoundaryClass, string> = {
+  SUB: "#ef4444",
+  OSR: "#22d3ee",
+  OTF: "#f59e0b",
+  OCB: "#f97316",
+  CRB: "#38bdf8",
+  CTF: "#a78bfa",
+  CCB: "#fb7185",
+  UNKNOWN: "#94a3b8",
+};
+
+function boundaryColor(boundaryClass: PlateBoundaryClass | undefined) {
+  return PLATE_BOUNDARY_COLORS[boundaryClass ?? "UNKNOWN"];
+}
+
+function faultColor(type: string | undefined) {
+  const value = (type ?? "").toLowerCase();
+  if (value.includes("normal") || value.includes("extens")) return "#38bdf8";
+  if (value.includes("reverse") || value.includes("thrust") || value.includes("compress")) return "#fb7185";
+  if (value.includes("dextral") || value.includes("sinistral") || value.includes("strike")) return "#c084fc";
+  if (value.includes("oblique")) return "#f59e0b";
+  return "#f472b6";
+}
+
 function pointLabel(event: HistoricalHeatmapEvent) {
   const date = new Intl.DateTimeFormat("es-DO", {
     dateStyle: "medium",
@@ -62,17 +103,42 @@ function pointLabel(event: HistoricalHeatmapEvent) {
   return `<div class="globe-tooltip"><strong>M${event.magnitude.toFixed(1)} · ${escapeHtml(event.place)}</strong><span>${date} UTC</span><small>Profundidad ${event.depthKm.toFixed(1)} km · USGS ComCat</small></div>`;
 }
 
+function pathLabel(path: RenderPath, plateNames: Map<string, string>) {
+  if (path.kind === "plate-boundary") {
+    const plateA = path.plateA ? plateNames.get(path.plateA) ?? path.plateA : null;
+    const plateB = path.plateB ? plateNames.get(path.plateB) ?? path.plateB : null;
+    const plates = [plateA, plateB].filter(Boolean).join(" ↔ ");
+    return `<div class="globe-tooltip"><strong>${escapeHtml(path.boundaryType ?? "Límite de placa")}</strong><span>${escapeHtml(plates || path.name)}</span><small>Clase PB2002: ${escapeHtml(path.boundaryClass ?? "UNKNOWN")} · pasa el cursor por otros tramos: el tipo puede cambiar a lo largo del mismo borde.</small></div>`;
+  }
+  if (path.kind === "active-fault") {
+    const details = [
+      path.faultType ? `Tipo: ${escapeHtml(path.faultType)}` : "Tipo cinemático no disponible",
+      path.dip ? `Dip: ${escapeHtml(path.dip)}` : null,
+      path.dipDirection ? `Dirección: ${escapeHtml(path.dipDirection)}` : null,
+      path.slipRate ? `Tasa: ${escapeHtml(path.slipRate)}` : null,
+    ].filter(Boolean).join(" · ");
+    return `<div class="globe-tooltip"><strong>Falla activa · ${escapeHtml(path.name)}</strong><span>${details}</span><small>GEM Global Active Faults${path.catalogId ? ` · ${escapeHtml(path.catalogId)}` : ""}</small></div>`;
+  }
+  return `<div class="globe-tooltip"><strong>Frontera internacional</strong><span>${escapeHtml(path.name)}</span></div>`;
+}
+
 export function HistoricalHeatmapGlobe({
   events,
   mode,
   showCountryNames,
   showStrongEvents,
+  showPlateNames,
+  showPlateBoundaries,
+  showFaults,
   autoRotate,
 }: {
   events: HistoricalHeatmapEvent[];
   mode: HeatMode;
   showCountryNames: boolean;
   showStrongEvents: boolean;
+  showPlateNames: boolean;
+  showPlateBoundaries: boolean;
+  showFaults: boolean;
   autoRotate: boolean;
 }) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
@@ -128,18 +194,60 @@ export function HistoricalHeatmapGlobe({
       .slice(0, 350);
   }, [events, showStrongEvents]);
 
-  const countryPaths = useMemo<RenderPath[]>(() => (layers?.countryBorders ?? []).map((path) => ({
-    ...path,
-    color: "rgba(226,232,240,.42)",
-    stroke: 0.26,
-    points: path.points.map((point) => ({ ...point, altitude: 0.006 })),
-  })), [layers]);
+  const plateNames = useMemo(
+    () => new Map((layers?.tectonicPlates ?? []).map((plate) => [plate.code, plate.name])),
+    [layers],
+  );
 
-  const labels = useMemo(() => showCountryNames ? COUNTRIES.map((country) => ({
-    ...country,
-    text: country.name,
-    size: clamp(0.18 + country.radiusKm / 7_500, 0.18, 0.42),
-  })) : [], [showCountryNames]);
+  const geographicPaths = useMemo<RenderPath[]>(() => {
+    const countries = (layers?.countryBorders ?? []).map((path) => ({
+      ...path,
+      color: "rgba(226,232,240,.36)",
+      stroke: 0.24,
+      dashLength: 1,
+      dashGap: 0,
+      points: path.points.map((point) => ({ ...point, altitude: 0.006 })),
+    }));
+    const boundaries = showPlateBoundaries ? (layers?.plateBoundaries ?? []).map((path) => ({
+      ...path,
+      color: boundaryColor(path.boundaryClass),
+      stroke: path.boundaryClass === "SUB" ? 0.72 : 0.58,
+      dashLength: path.boundaryClass === "OTF" || path.boundaryClass === "CTF" ? 0.055 : 1,
+      dashGap: path.boundaryClass === "OTF" || path.boundaryClass === "CTF" ? 0.026 : 0,
+      points: path.points.map((point) => ({ ...point, altitude: 0.015 })),
+    })) : [];
+    const faults = showFaults ? (layers?.activeFaults ?? []).map((path) => ({
+      ...path,
+      color: faultColor(path.faultType),
+      stroke: 0.46,
+      dashLength: 0.035,
+      dashGap: 0.018,
+      points: path.points.map((point) => ({ ...point, altitude: 0.021 })),
+    })) : [];
+    return [...countries, ...boundaries, ...faults];
+  }, [layers, showFaults, showPlateBoundaries]);
+
+  const labels = useMemo<GlobeLabel[]>(() => {
+    const countries: GlobeLabel[] = showCountryNames ? COUNTRIES.map((country) => ({
+      id: `country:${country.code}`,
+      latitude: country.latitude,
+      longitude: country.longitude,
+      text: country.name,
+      size: clamp(0.18 + country.radiusKm / 7_500, 0.18, 0.42),
+      color: "rgba(241,245,249,.84)",
+      kind: "country",
+    })) : [];
+    const plates: GlobeLabel[] = showPlateNames ? (layers?.tectonicPlates ?? []).map((plate) => ({
+      id: `plate:${plate.code}`,
+      latitude: plate.latitude,
+      longitude: plate.longitude,
+      text: `Placa ${plate.name}`,
+      size: 0.42,
+      color: "rgba(253,224,71,.96)",
+      kind: "plate",
+    })) : [];
+    return [...countries, ...plates];
+  }, [layers, showCountryNames, showPlateNames]);
 
   return (
     <div ref={containerRef} style={{ width: "100%", minHeight: 520 }}>
@@ -152,14 +260,18 @@ export function HistoricalHeatmapGlobe({
         atmosphereColor="#69c7ff"
         atmosphereAltitude={0.16}
         showGraticules
-        pathsData={countryPaths}
+        pathsData={geographicPaths}
         pathPoints="points"
         pathPointLat="lat"
         pathPointLng="lng"
         pathPointAlt="altitude"
         pathColor="color"
         pathStroke="stroke"
-        pathTransitionDuration={0}
+        pathDashLength="dashLength"
+        pathDashGap="dashGap"
+        pathDashAnimateTime={0}
+        pathLabel={(path: object) => pathLabel(path as RenderPath, plateNames)}
+        pathTransitionDuration={220}
         heatmapsData={heatmaps}
         heatmapPoints="points"
         heatmapPointLat="latitude"
@@ -185,8 +297,8 @@ export function HistoricalHeatmapGlobe({
         labelLat="latitude"
         labelLng="longitude"
         labelText="text"
-        labelColor={() => "rgba(241,245,249,.86)"}
-        labelAltitude={0.012}
+        labelColor="color"
+        labelAltitude={(label: object) => (label as GlobeLabel).kind === "plate" ? 0.025 : 0.012}
         labelSize="size"
         labelIncludeDot={false}
         labelResolution={2}

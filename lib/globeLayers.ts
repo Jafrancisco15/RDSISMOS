@@ -1,5 +1,7 @@
 export type GlobeMapLayerKind = "plate-boundary" | "active-fault" | "country-border";
 
+export type PlateBoundaryClass = "SUB" | "OSR" | "OTF" | "OCB" | "CRB" | "CTF" | "CCB" | "UNKNOWN";
+
 export interface GlobeMapPoint {
   lat: number;
   lng: number;
@@ -10,11 +12,28 @@ export interface GlobeMapPath {
   kind: GlobeMapLayerKind;
   name: string;
   points: GlobeMapPoint[];
+  plateA?: string;
+  plateB?: string;
+  boundaryClass?: PlateBoundaryClass;
+  boundaryType?: string;
+  faultType?: string;
+  dip?: string;
+  dipDirection?: string;
+  slipRate?: string;
+  catalogId?: string;
+}
+
+export interface GlobeTectonicPlate {
+  code: string;
+  name: string;
+  latitude: number;
+  longitude: number;
 }
 
 export interface GlobeMapLayersResponse {
   generatedAt: string;
   plateBoundaries: GlobeMapPath[];
+  tectonicPlates?: GlobeTectonicPlate[];
   activeFaults: GlobeMapPath[];
   countryBorders: GlobeMapPath[];
   warnings: string[];
@@ -22,6 +41,8 @@ export interface GlobeMapLayersResponse {
     plateBoundaries: string;
     activeFaults: string;
     countryBorders: string;
+    plateAreas?: string;
+    plateBoundaryTypes?: string;
   };
 }
 
@@ -59,6 +80,29 @@ export const CARIBBEAN_PRIORITY_BOUNDS: PriorityBounds = {
   minLng: -100,
   maxLng: -50,
 };
+
+const BOUNDARY_TYPE_NAMES: Record<PlateBoundaryClass, string> = {
+  SUB: "Subducción",
+  OSR: "Dorsal oceánica divergente",
+  OTF: "Transformante oceánica",
+  OCB: "Convergente oceánica",
+  CRB: "Rift continental divergente",
+  CTF: "Transformante continental",
+  CCB: "Convergente continental",
+  UNKNOWN: "Tipo no disponible",
+};
+
+export function plateBoundaryClass(value: unknown): PlateBoundaryClass {
+  const normalized = String(value ?? "").trim().toUpperCase();
+  if (["SUB", "OSR", "OTF", "OCB", "CRB", "CTF", "CCB"].includes(normalized)) {
+    return normalized as PlateBoundaryClass;
+  }
+  return "UNKNOWN";
+}
+
+export function plateBoundaryTypeName(value: unknown) {
+  return BOUNDARY_TYPE_NAMES[plateBoundaryClass(value)];
+}
 
 function isPosition(value: unknown): value is number[] {
   return Array.isArray(value)
@@ -164,13 +208,50 @@ function insideBounds(point: GlobeMapPoint, bounds: PriorityBounds) {
     && point.lng <= bounds.maxLng;
 }
 
-function featureName(properties: Record<string, unknown> | undefined, fallback: string) {
-  const keys = ["name", "Name", "NAME", "ADMIN", "fz_name", "catalog_id", "PlateA"];
+function propertyText(properties: Record<string, unknown> | undefined, keys: string[]) {
   for (const key of keys) {
     const value = properties?.[key];
     if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
   }
-  return fallback;
+  return undefined;
+}
+
+function featureName(properties: Record<string, unknown> | undefined, fallback: string) {
+  return propertyText(properties, ["name", "Name", "NAME", "ADMIN", "fz_name", "fault_name", "catalog_id", "PLATEBOUND", "PlateA"])
+    ?? fallback;
+}
+
+function parsePlatePair(properties: Record<string, unknown> | undefined) {
+  const explicitA = propertyText(properties, ["PlateA", "PLATEA"]);
+  const explicitB = propertyText(properties, ["PlateB", "PLATEB"]);
+  if (explicitA || explicitB) return { plateA: explicitA, plateB: explicitB };
+  const pair = propertyText(properties, ["PLATEBOUND", "Name", "NAME"]);
+  if (!pair) return {};
+  const match = pair.toUpperCase().match(/^([A-Z0-9]{2,4})[-–/]([A-Z0-9]{2,4})/);
+  return match ? { plateA: match[1], plateB: match[2] } : {};
+}
+
+function featureMetadata(properties: Record<string, unknown> | undefined, kind: GlobeMapLayerKind) {
+  if (kind === "plate-boundary") {
+    const rawClass = propertyText(properties, ["STEPCLASS", "stepclass", "Type", "TYPE"]);
+    const boundaryClass = plateBoundaryClass(rawClass);
+    return {
+      ...parsePlatePair(properties),
+      boundaryClass,
+      boundaryType: plateBoundaryTypeName(boundaryClass),
+    };
+  }
+  if (kind === "active-fault") {
+    return {
+      faultType: propertyText(properties, ["slip_type", "SLIP_TYPE", "slipType", "kinematics"]),
+      dip: propertyText(properties, ["dip", "DIP"]),
+      dipDirection: propertyText(properties, ["dip_dir", "DIP_DIR", "dip_direction"]),
+      slipRate: propertyText(properties, ["net_slip_rate", "slip_rate", "strike_slip_rate", "dip_slip_rate"]),
+      catalogId: propertyText(properties, ["catalog_id", "CATALOG_ID", "ogc_fid"]),
+    };
+  }
+  return {};
 }
 
 export function normalizeGeoJsonPaths(
@@ -185,6 +266,7 @@ export function normalizeGeoJsonPaths(
 
   (collection.features ?? []).forEach((feature, featureIndex) => {
     const name = featureName(feature.properties, `${kind}-${featureIndex + 1}`);
+    const metadata = featureMetadata(feature.properties, kind);
     const lines = lineStringsFromGeometry(feature.geometry);
     lines.forEach((line, lineIndex) => {
       normalizePoints(line).forEach((segment, segmentIndex) => {
@@ -195,6 +277,7 @@ export function normalizeGeoJsonPaths(
           kind,
           name,
           points,
+          ...metadata,
           priority: options.priorityBounds
             ? points.some((point) => insideBounds(point, options.priorityBounds as PriorityBounds))
             : false,
@@ -208,4 +291,60 @@ export function normalizeGeoJsonPaths(
     .sort((a, b) => Number(b.priority) - Number(a.priority) || b.length - a.length)
     .slice(0, Math.max(1, options.maxPaths))
     .map(({ priority: _priority, length: _length, ...path }) => path);
+}
+
+function positionsFromGeometry(geometry: GeoJsonGeometry | null | undefined): GlobeMapPoint[] {
+  if (!geometry) return [];
+  const points: GlobeMapPoint[] = [];
+  function visit(value: unknown) {
+    if (isPosition(value)) {
+      const lng = Number(value[0]);
+      const lat = Number(value[1]);
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) points.push({ lat, lng });
+      return;
+    }
+    if (Array.isArray(value)) value.forEach(visit);
+  }
+  visit(geometry.coordinates);
+  (geometry.geometries ?? []).forEach((item) => points.push(...positionsFromGeometry(item)));
+  return points;
+}
+
+function sphericalMean(points: GlobeMapPoint[]) {
+  if (!points.length) return null;
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (const point of points) {
+    const latitude = point.lat * Math.PI / 180;
+    const longitude = point.lng * Math.PI / 180;
+    x += Math.cos(latitude) * Math.cos(longitude);
+    y += Math.cos(latitude) * Math.sin(longitude);
+    z += Math.sin(latitude);
+  }
+  const longitude = Math.atan2(y, x) * 180 / Math.PI;
+  const horizontal = Math.hypot(x, y);
+  const latitude = Math.atan2(z, horizontal) * 180 / Math.PI;
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+export function normalizeTectonicPlateLabels(payload: unknown): GlobeTectonicPlate[] {
+  const collection = payload && typeof payload === "object"
+    ? payload as GeoJsonFeatureCollection
+    : {};
+  const plates: GlobeTectonicPlate[] = [];
+  const used = new Set<string>();
+
+  (collection.features ?? []).forEach((feature, index) => {
+    const code = propertyText(feature.properties, ["Code", "CODE", "Plate", "PLATE"]) ?? `P${index + 1}`;
+    const name = propertyText(feature.properties, ["PlateName", "PLATENAME", "Name", "NAME"]) ?? code;
+    if (used.has(code)) return;
+    const center = sphericalMean(positionsFromGeometry(feature.geometry));
+    if (!center) return;
+    used.add(code);
+    plates.push({ code, name, ...center });
+  });
+
+  return plates.sort((a, b) => a.name.localeCompare(b.name));
 }
