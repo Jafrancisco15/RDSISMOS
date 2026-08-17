@@ -330,27 +330,27 @@ export function HistoricalHeatmapGlobe({
   const geographicPaths = useMemo<RenderPath[]>(() => {
     const countries = (layers?.countryBorders ?? []).map((path) => ({
       ...path,
-      color: "rgba(226,232,240,.44)",
-      stroke: 0.24,
+      color: "rgba(248,250,252,.88)",
+      stroke: 0.48,
       dashLength: 1,
       dashGap: 0,
-      points: path.points.map((point) => ({ ...point, altitude: 0.012 })),
+      points: path.points.map((point) => ({ ...point, altitude: 0.028 })),
     }));
     const boundaries = showPlateBoundaries ? (layers?.plateBoundaries ?? []).map((path) => ({
       ...path,
       color: boundaryColor(path.boundaryClass),
-      stroke: path.boundaryClass === "SUB" ? 0.72 : 0.58,
+      stroke: path.boundaryClass === "SUB" ? 1.0 : 0.78,
       dashLength: path.boundaryClass === "OTF" || path.boundaryClass === "CTF" ? 0.055 : 1,
       dashGap: path.boundaryClass === "OTF" || path.boundaryClass === "CTF" ? 0.026 : 0,
-      points: path.points.map((point) => ({ ...point, altitude: 0.022 })),
+      points: path.points.map((point) => ({ ...point, altitude: 0.04 })),
     })) : [];
     const faults = showFaults ? (layers?.activeFaults ?? []).map((path) => ({
       ...path,
       color: faultColor(path.faultType),
-      stroke: 0.46,
+      stroke: 0.56,
       dashLength: 0.035,
       dashGap: 0.018,
-      points: path.points.map((point) => ({ ...point, altitude: 0.028 })),
+      points: path.points.map((point) => ({ ...point, altitude: 0.05 })),
     })) : [];
     return [...countries, ...boundaries, ...faults];
   }, [layers, showFaults, showPlateBoundaries]);
@@ -362,7 +362,7 @@ export function HistoricalHeatmapGlobe({
       longitude: country.longitude,
       text: country.name,
       size: clamp(0.17 + country.radiusKm / 8_000, 0.17, 0.38),
-      color: "rgba(241,245,249,.9)",
+      color: "rgba(248,250,252,.96)",
       kind: "country",
     })) : [];
     const plates: GlobeLabel[] = showPlateNames ? (layers?.tectonicPlates ?? []).map((plate) => ({
@@ -371,7 +371,7 @@ export function HistoricalHeatmapGlobe({
       longitude: plate.longitude,
       text: `Placa ${plate.name}`,
       size: 0.4,
-      color: "rgba(253,224,71,.98)",
+      color: "rgba(253,224,71,.99)",
       kind: "plate",
     })) : [];
     return [...countries, ...plates];
@@ -408,7 +408,7 @@ export function HistoricalHeatmapGlobe({
         labelLng="longitude"
         labelText="text"
         labelColor="color"
-        labelAltitude={(label: object) => (label as GlobeLabel).kind === "plate" ? 0.03 : 0.018}
+        labelAltitude={(label: object) => (label as GlobeLabel).kind === "plate" ? 0.058 : 0.046}
         labelSize="size"
         labelIncludeDot={false}
         labelResolution={2}
