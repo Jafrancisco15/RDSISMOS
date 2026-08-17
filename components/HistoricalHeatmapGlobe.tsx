@@ -11,6 +11,7 @@ import type {
   PlateBoundaryClass,
 } from "@/lib/globeLayers";
 import type { HistoricalHeatmapCell } from "@/lib/historicalHeatmap";
+import { HistoricalHeatmapMap2D } from "./HistoricalHeatmapMap2D";
 
 interface RenderPath extends Omit<GlobeMapPath, "points"> {
   points: Array<GlobeMapPoint & { altitude: number }>;
@@ -380,41 +381,51 @@ export function HistoricalHeatmapGlobe({
   if (!textureUrl) return <div ref={containerRef} style={{ width: "100%", minHeight: 520 }} />;
 
   return (
-    <div ref={containerRef} style={{ width: "100%", minHeight: 520 }}>
-      <Globe
-        ref={globeRef}
-        width={size.width}
-        height={size.height}
-        globeImageUrl={textureUrl}
-        backgroundColor="rgba(0,0,0,0)"
-        atmosphereColor="#69c7ff"
-        atmosphereAltitude={0.13}
-        showGraticules
-        onGlobeReady={() => globeRef.current?.pointOfView({ lat: 12, lng: -20, altitude: 2.05 }, 0)}
-        pathsData={geographicPaths}
-        pathPoints="points"
-        pathPointLat="lat"
-        pathPointLng="lng"
-        pathPointAlt="altitude"
-        pathColor="color"
-        pathStroke="stroke"
-        pathDashLength="dashLength"
-        pathDashGap="dashGap"
-        pathDashAnimateTime={0}
-        pathLabel={(path: object) => pathLabel(path as RenderPath, plateNames)}
-        pathTransitionDuration={0}
-        labelsData={labels}
-        labelLat="latitude"
-        labelLng="longitude"
-        labelText="text"
-        labelColor="color"
-        labelAltitude={(label: object) => (label as GlobeLabel).kind === "plate" ? 0.058 : 0.046}
-        labelSize="size"
-        labelIncludeDot={false}
-        labelResolution={2}
-        labelsTransitionDuration={0}
-        enablePointerInteraction
+    <>
+      <div ref={containerRef} style={{ width: "100%", minHeight: 520 }}>
+        <Globe
+          ref={globeRef}
+          width={size.width}
+          height={size.height}
+          globeImageUrl={textureUrl}
+          backgroundColor="rgba(0,0,0,0)"
+          atmosphereColor="#69c7ff"
+          atmosphereAltitude={0.13}
+          showGraticules
+          onGlobeReady={() => globeRef.current?.pointOfView({ lat: 12, lng: -20, altitude: 2.05 }, 0)}
+          pathsData={geographicPaths}
+          pathPoints="points"
+          pathPointLat="lat"
+          pathPointLng="lng"
+          pathPointAlt="altitude"
+          pathColor="color"
+          pathStroke="stroke"
+          pathDashLength="dashLength"
+          pathDashGap="dashGap"
+          pathDashAnimateTime={0}
+          pathLabel={(path: object) => pathLabel(path as RenderPath, plateNames)}
+          pathTransitionDuration={0}
+          labelsData={labels}
+          labelLat="latitude"
+          labelLng="longitude"
+          labelText="text"
+          labelColor="color"
+          labelAltitude={(label: object) => (label as GlobeLabel).kind === "plate" ? 0.058 : 0.046}
+          labelSize="size"
+          labelIncludeDot={false}
+          labelResolution={2}
+          labelsTransitionDuration={0}
+          enablePointerInteraction
+        />
+      </div>
+      <HistoricalHeatmapMap2D
+        cells={cells}
+        showCountryNames={showCountryNames}
+        showPlateAreas={showPlateAreas}
+        showPlateNames={showPlateNames}
+        showPlateBoundaries={showPlateBoundaries}
+        showFaults={showFaults}
       />
-    </div>
+    </>
   );
 }
