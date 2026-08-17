@@ -13,6 +13,7 @@ const HistoricalHeatmapGlobe = dynamic(
 const MIN_YEAR = 1900;
 const DB_NAME = "rdsismos-historical-heatmap-v2";
 const STORE_NAME = "annual-surfaces";
+const HOT_CACHE_LIMIT = 3;
 
 async function readPayload(response: Response) {
   const raw = await response.text();
@@ -30,8 +31,26 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function delay(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function rememberHot(cache: Map<number, HistoricalHeatmapResponse>, payload: HistoricalHeatmapResponse) {
+  cache.delete(payload.year);
+  cache.set(payload.year, payload);
+  while (cache.size > HOT_CACHE_LIMIT) {
+    const oldest = cache.keys().next().value as number | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 function openCacheDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
+    if (typeof indexedDB === "undefined") {
+      reject(new Error("IndexedDB no está disponible."));
+      return;
+    }
     const request = indexedDB.open(DB_NAME, 1);
     request.onupgradeneeded = () => {
       const database = request.result;
@@ -39,43 +58,63 @@ function openCacheDb() {
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("No fue posible abrir la caché histórica."));
+    request.onblocked = () => reject(new Error("La caché histórica está bloqueada por otra sesión."));
   });
 }
 
 async function cacheRead(year: number) {
-  if (typeof indexedDB === "undefined") return null;
-  const database = await openCacheDb();
-  return new Promise<HistoricalHeatmapResponse | null>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readonly");
-    const request = transaction.objectStore(STORE_NAME).get(year);
-    request.onsuccess = () => resolve((request.result as HistoricalHeatmapResponse | undefined) ?? null);
-    request.onerror = () => resolve(null);
-    transaction.oncomplete = () => database.close();
-  });
+  try {
+    const database = await openCacheDb();
+    return await new Promise<HistoricalHeatmapResponse | null>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const request = transaction.objectStore(STORE_NAME).get(year);
+      request.onsuccess = () => resolve((request.result as HistoricalHeatmapResponse | undefined) ?? null);
+      request.onerror = () => resolve(null);
+      transaction.oncomplete = () => database.close();
+      transaction.onabort = () => {
+        database.close();
+        resolve(null);
+      };
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function cacheWrite(payload: HistoricalHeatmapResponse) {
-  if (typeof indexedDB === "undefined") return;
-  const database = await openCacheDb();
-  await new Promise<void>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readwrite");
-    transaction.objectStore(STORE_NAME).put(payload);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => resolve();
-  });
-  database.close();
+  try {
+    const database = await openCacheDb();
+    const stored = await new Promise<boolean>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readwrite");
+      transaction.objectStore(STORE_NAME).put(payload);
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => resolve(false);
+      transaction.onabort = () => resolve(false);
+    });
+    database.close();
+    return stored;
+  } catch {
+    return false;
+  }
 }
 
-async function cachedYears() {
-  if (typeof indexedDB === "undefined") return [] as number[];
-  const database = await openCacheDb();
-  return new Promise<number[]>((resolve) => {
-    const transaction = database.transaction(STORE_NAME, "readonly");
-    const request = transaction.objectStore(STORE_NAME).getAllKeys();
-    request.onsuccess = () => resolve(request.result.map(Number).filter(Number.isFinite));
-    request.onerror = () => resolve([]);
-    transaction.oncomplete = () => database.close();
-  });
+async function cachedYears(): Promise<number[] | null> {
+  try {
+    const database = await openCacheDb();
+    return await new Promise<number[]>((resolve) => {
+      const transaction = database.transaction(STORE_NAME, "readonly");
+      const request = transaction.objectStore(STORE_NAME).getAllKeys();
+      request.onsuccess = () => resolve(request.result.map(Number).filter(Number.isFinite));
+      request.onerror = () => resolve([]);
+      transaction.oncomplete = () => database.close();
+      transaction.onabort = () => {
+        database.close();
+        resolve([]);
+      };
+    });
+  } catch {
+    return null;
+  }
 }
 
 function cacheIsFresh(payload: HistoricalHeatmapResponse, currentYear: number) {
@@ -97,7 +136,7 @@ async function fetchAnnualSurface(year: number, signal?: AbortSignal) {
 export function HistoricalHeatmap() {
   const currentYear = new Date().getUTCFullYear();
   const totalYears = currentYear - MIN_YEAR + 1;
-  const memoryCache = useRef(new Map<number, HistoricalHeatmapResponse>());
+  const hotCache = useRef(new Map<number, HistoricalHeatmapResponse>());
   const preloadStarted = useRef(false);
   const [year, setYear] = useState(currentYear);
   const [data, setData] = useState<HistoricalHeatmapResponse | null>(null);
@@ -122,19 +161,19 @@ export function HistoricalHeatmap() {
       setLoading(true);
       setError(null);
       try {
-        const inMemory = memoryCache.current.get(year);
+        const inMemory = hotCache.current.get(year);
         if (inMemory && cacheIsFresh(inMemory, currentYear)) {
           if (!disposed) setData(inMemory);
           return;
         }
-        const persisted = await cacheRead(year).catch(() => null);
+        const persisted = await cacheRead(year);
         if (persisted && cacheIsFresh(persisted, currentYear)) {
-          memoryCache.current.set(year, persisted);
+          rememberHot(hotCache.current, persisted);
           if (!disposed) setData(persisted);
           return;
         }
         const payload = await fetchAnnualSurface(year, controller.signal);
-        memoryCache.current.set(year, payload);
+        rememberHot(hotCache.current, payload);
         void cacheWrite(payload);
         if (!disposed) setData(payload);
       } catch (loadError) {
@@ -158,9 +197,16 @@ export function HistoricalHeatmap() {
     let cancelled = false;
 
     async function preloadHistory() {
+      await delay(2_500);
+      if (cancelled) return;
       setPreloadActive(true);
       try {
-        const existing = new Set(await cachedYears());
+        const storedYears = await cachedYears();
+        if (storedYears === null) {
+          setPreloadError("El navegador no permite la caché local; el mapa seguirá funcionando año por año.");
+          return;
+        }
+        const existing = new Set(storedYears);
         if (cancelled) return;
         setPreloadedYears(existing.size);
         const queue = Array.from({ length: totalYears }, (_, index) => MIN_YEAR + index)
@@ -169,11 +215,24 @@ export function HistoricalHeatmap() {
 
         for (const candidate of queue) {
           if (cancelled) return;
+          while (!cancelled && document.visibilityState === "hidden") await delay(1_000);
+          if (cancelled) return;
+
+          const alreadyStored = await cacheRead(candidate);
+          if (alreadyStored && cacheIsFresh(alreadyStored, currentYear)) {
+            existing.add(candidate);
+            setPreloadedYears(existing.size);
+            continue;
+          }
+
           try {
             const payload = await fetchAnnualSurface(candidate);
             if (cancelled) return;
-            memoryCache.current.set(candidate, payload);
-            await cacheWrite(payload);
+            const stored = await cacheWrite(payload);
+            if (!stored) {
+              setPreloadError("La caché local dejó de estar disponible; se detuvo la precarga para proteger la memoria del dispositivo.");
+              return;
+            }
             existing.add(candidate);
             setPreloadedYears(existing.size);
             setPreloadError(null);
@@ -182,14 +241,19 @@ export function HistoricalHeatmap() {
               setPreloadError(preloadFailure instanceof Error ? preloadFailure.message : `No fue posible precargar ${candidate}.`);
             }
           }
-          await new Promise((resolve) => window.setTimeout(resolve, 120));
+          await delay(500);
         }
       } finally {
         if (!cancelled) setPreloadActive(false);
       }
     }
 
-    void preloadHistory();
+    void preloadHistory().catch((preloadFailure) => {
+      if (!cancelled) {
+        setPreloadActive(false);
+        setPreloadError(preloadFailure instanceof Error ? preloadFailure.message : "La precarga histórica se detuvo.");
+      }
+    });
     return () => { cancelled = true; };
   }, [currentYear, totalYears]);
 
@@ -228,7 +292,7 @@ export function HistoricalHeatmap() {
           <span>{preloadedYears} de {totalYears} años guardados localmente · {preloadPercent}%</span>
         </div>
         <div className={styles.preloadTrack}><i style={{ width: `${preloadPercent}%` }} /></div>
-        <small>{preloadActive ? "Continúa en segundo plano mientras exploras el globo." : "La precarga está completa o detenida."}{preloadError ? ` Último aviso: ${preloadError}` : ""}</small>
+        <small>{preloadActive ? "Continúa lentamente en segundo plano y se pausa cuando la pestaña no está visible." : "La precarga está completa o detenida."}{preloadError ? ` Último aviso: ${preloadError}` : ""}</small>
       </section>
 
       <section className={styles.timelinePanel}>
