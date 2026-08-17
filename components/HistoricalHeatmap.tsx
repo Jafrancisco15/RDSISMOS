@@ -1,147 +1,216 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
-import type { HistoricalHeatmapResponse } from "@/lib/historicalHeatmap";
+import { useEffect, useState } from "react";
+import {
+  aggregateHistoricalHeatmap,
+  historicalCoverageNote,
+  HISTORICAL_HEATMAP_CELL_SIZE_DEG,
+  type HistoricalHeatmapCell,
+  type HistoricalHeatmapEvent,
+  type HistoricalHeatmapResponse,
+} from "@/lib/historicalHeatmap";
 import styles from "./HistoricalHeatmap.module.css";
 
 const HistoricalHeatmapGlobe = dynamic(
   () => import("./HistoricalHeatmapGlobe").then((module) => module.HistoricalHeatmapGlobe),
-  { ssr: false, loading: () => <div className={styles.globeLoading}>Inicializando superficie sísmica 3D…</div> },
+  { ssr: false, loading: () => <div className={styles.globeLoading}>Inicializando globo 3D…</div> },
 );
 
 const MIN_YEAR = 1900;
-const DB_NAME = "rdsismos-historical-heatmap-v2";
-const STORE_NAME = "annual-surfaces";
-const HOT_CACHE_LIMIT = 3;
+const MIN_MAGNITUDE = 2.5;
+const USGS_QUERY = "https://earthquake.usgs.gov/fdsnws/event/1/query";
+const QUERY_LIMIT = 20_000;
+const DOWNLOAD_CONCURRENCY = 2;
 
-async function readPayload(response: Response) {
-  const raw = await response.text();
-  try {
-    return JSON.parse(raw) as HistoricalHeatmapResponse & { error?: string };
-  } catch {
-    throw new Error(raw || `HTTP ${response.status}`);
-  }
+interface UsgsFeature {
+  id?: string;
+  geometry?: { coordinates?: [number, number, number] };
+  properties?: Record<string, unknown>;
+}
+
+function normalizeFeature(feature: UsgsFeature): HistoricalHeatmapEvent | null {
+  const coordinates = feature.geometry?.coordinates;
+  const properties = feature.properties ?? {};
+  const magnitude = Number(properties.mag);
+  const time = new Date(Number(properties.time));
+  if (!feature.id || !coordinates || coordinates.length < 3 || !Number.isFinite(magnitude) || Number.isNaN(time.getTime())) return null;
+  const longitude = Number(coordinates[0]);
+  const latitude = Number(coordinates[1]);
+  const depthKm = Number(coordinates[2]);
+  if (![latitude, longitude, depthKm].every(Number.isFinite)) return null;
+  return {
+    id: feature.id,
+    latitude,
+    longitude,
+    magnitude,
+    depthKm,
+    timeUtc: time.toISOString(),
+    place: typeof properties.place === "string" && properties.place.trim() ? properties.place.trim() : "Región no especificada",
+  };
 }
 
 function formatDate(value: string) {
-  return new Intl.DateTimeFormat("es-DO", {
-    dateStyle: "medium",
-    timeZone: "UTC",
-  }).format(new Date(value));
+  return new Intl.DateTimeFormat("es-DO", { dateStyle: "medium", timeZone: "UTC" }).format(new Date(value));
 }
 
-function delay(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
-}
-
-function rememberHot(cache: Map<number, HistoricalHeatmapResponse>, payload: HistoricalHeatmapResponse) {
-  cache.delete(payload.year);
-  cache.set(payload.year, payload);
-  while (cache.size > HOT_CACHE_LIMIT) {
-    const oldest = cache.keys().next().value as number | undefined;
-    if (oldest === undefined) break;
-    cache.delete(oldest);
+function monthRanges(year: number, endTime: Date) {
+  const ranges: Array<[Date, Date]> = [];
+  for (let month = 0; month < 12; month += 1) {
+    const start = new Date(Date.UTC(year, month, 1));
+    if (start >= endTime) break;
+    const nextMonth = new Date(Date.UTC(year, month + 1, 1));
+    const naturalEnd = new Date(nextMonth.getTime() - 1);
+    ranges.push([start, naturalEnd < endTime ? naturalEnd : endTime]);
   }
+  return ranges;
 }
 
-function openCacheDb() {
-  return new Promise<IDBDatabase>((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
-      reject(new Error("IndexedDB no está disponible."));
-      return;
+async function fetchRange(start: Date, end: Date, signal: AbortSignal, depth = 0): Promise<HistoricalHeatmapEvent[]> {
+  const params = new URLSearchParams({
+    format: "geojson",
+    starttime: start.toISOString(),
+    endtime: end.toISOString(),
+    minmagnitude: String(MIN_MAGNITUDE),
+    eventtype: "earthquake",
+    orderby: "time-asc",
+    limit: String(QUERY_LIMIT),
+  });
+  const response = await fetch(`${USGS_QUERY}?${params}`, { signal, mode: "cors", cache: "no-store" });
+
+  if (response.status === 400 && depth < 6 && end.getTime() - start.getTime() > 2 * 86_400_000) {
+    const midpointMs = Math.floor((start.getTime() + end.getTime()) / 2);
+    const leftEnd = new Date(midpointMs);
+    const rightStart = new Date(midpointMs + 1);
+    const [left, right] = await Promise.all([
+      fetchRange(start, leftEnd, signal, depth + 1),
+      fetchRange(rightStart, end, signal, depth + 1),
+    ]);
+    return [...left, ...right];
+  }
+
+  if (!response.ok) {
+    const detail = (await response.text()).trim().replace(/\s+/g, " ").slice(0, 180);
+    throw new Error(`USGS HTTP ${response.status}${detail ? `: ${detail}` : ""}`);
+  }
+  const payload = await response.json() as { features?: UsgsFeature[] };
+  return (payload.features ?? []).map(normalizeFeature).filter((event): event is HistoricalHeatmapEvent => Boolean(event));
+}
+
+interface MergedCell {
+  count: number;
+  magnitudeSum: number;
+  depthSum: number;
+  maximumMagnitude: number;
+  sample: HistoricalHeatmapCell;
+}
+
+function mergeCells(target: Map<string, MergedCell>, cells: HistoricalHeatmapCell[]) {
+  for (const cell of cells) {
+    const existing = target.get(cell.id);
+    if (!existing) {
+      target.set(cell.id, {
+        count: cell.eventCount,
+        magnitudeSum: cell.averageMagnitude * cell.eventCount,
+        depthSum: cell.averageDepthKm * cell.eventCount,
+        maximumMagnitude: cell.maximumMagnitude,
+        sample: cell,
+      });
+      continue;
     }
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME, { keyPath: "year" });
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("No fue posible abrir la caché histórica."));
-    request.onblocked = () => reject(new Error("La caché histórica está bloqueada por otra sesión."));
-  });
-}
-
-async function cacheRead(year: number) {
-  try {
-    const database = await openCacheDb();
-    return await new Promise<HistoricalHeatmapResponse | null>((resolve) => {
-      const transaction = database.transaction(STORE_NAME, "readonly");
-      const request = transaction.objectStore(STORE_NAME).get(year);
-      request.onsuccess = () => resolve((request.result as HistoricalHeatmapResponse | undefined) ?? null);
-      request.onerror = () => resolve(null);
-      transaction.oncomplete = () => database.close();
-      transaction.onabort = () => {
-        database.close();
-        resolve(null);
-      };
-    });
-  } catch {
-    return null;
+    existing.count += cell.eventCount;
+    existing.magnitudeSum += cell.averageMagnitude * cell.eventCount;
+    existing.depthSum += cell.averageDepthKm * cell.eventCount;
+    existing.maximumMagnitude = Math.max(existing.maximumMagnitude, cell.maximumMagnitude);
   }
 }
 
-async function cacheWrite(payload: HistoricalHeatmapResponse) {
-  try {
-    const database = await openCacheDb();
-    const stored = await new Promise<boolean>((resolve) => {
-      const transaction = database.transaction(STORE_NAME, "readwrite");
-      transaction.objectStore(STORE_NAME).put(payload);
-      transaction.oncomplete = () => resolve(true);
-      transaction.onerror = () => resolve(false);
-      transaction.onabort = () => resolve(false);
-    });
-    database.close();
-    return stored;
-  } catch {
-    return false;
+function finalizeCells(cells: Map<string, MergedCell>): HistoricalHeatmapCell[] {
+  return [...cells.values()].map((entry) => ({
+    ...entry.sample,
+    eventCount: entry.count,
+    maximumMagnitude: Number(entry.maximumMagnitude.toFixed(2)),
+    averageMagnitude: Number((entry.magnitudeSum / entry.count).toFixed(2)),
+    averageDepthKm: Number((entry.depthSum / entry.count).toFixed(1)),
+  })).sort((a, b) => b.maximumMagnitude - a.maximumMagnitude || b.eventCount - a.eventCount);
+}
+
+async function loadYearDirect(
+  year: number,
+  currentYear: number,
+  signal: AbortSignal,
+  setProgress: (value: number) => void,
+  setStage: (value: string) => void,
+): Promise<HistoricalHeatmapResponse> {
+  const startTime = new Date(Date.UTC(year, 0, 1));
+  const now = new Date();
+  const nextYear = new Date(Date.UTC(year + 1, 0, 1));
+  const endTime = year === currentYear ? now : new Date(nextYear.getTime() - 1);
+  const ranges = monthRanges(year, endTime);
+  const mergedCells = new Map<string, MergedCell>();
+  let cursor = 0;
+  let completed = 0;
+  let totalEvents = 0;
+  let totalMagnitude = 0;
+  let totalDepth = 0;
+  let strongestEvent: HistoricalHeatmapEvent | null = null;
+
+  setProgress(2);
+  setStage(`Conectando directamente con USGS · ${ranges.length} segmentos`);
+
+  async function worker() {
+    while (cursor < ranges.length) {
+      const index = cursor;
+      cursor += 1;
+      const [start, end] = ranges[index];
+      const events = await fetchRange(start, end, signal);
+      if (signal.aborted) return;
+      totalEvents += events.length;
+      for (const event of events) {
+        totalMagnitude += event.magnitude;
+        totalDepth += event.depthKm;
+        if (!strongestEvent || event.magnitude > strongestEvent.magnitude) strongestEvent = event;
+      }
+      mergeCells(mergedCells, aggregateHistoricalHeatmap(events));
+      completed += 1;
+      setProgress(Math.min(84, Math.round(5 + (completed / Math.max(1, ranges.length)) * 79)));
+      setStage(`Descargando USGS · ${completed}/${ranges.length} segmentos`);
+    }
   }
-}
 
-async function cachedYears(): Promise<number[] | null> {
-  try {
-    const database = await openCacheDb();
-    return await new Promise<number[]>((resolve) => {
-      const transaction = database.transaction(STORE_NAME, "readonly");
-      const request = transaction.objectStore(STORE_NAME).getAllKeys();
-      request.onsuccess = () => resolve(request.result.map(Number).filter(Number.isFinite));
-      request.onerror = () => resolve([]);
-      transaction.oncomplete = () => database.close();
-      transaction.onabort = () => {
-        database.close();
-        resolve([]);
-      };
-    });
-  } catch {
-    return null;
-  }
-}
+  await Promise.all(Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, ranges.length) }, () => worker()));
+  setProgress(88);
+  setStage("Agregando sismicidad por áreas…");
+  const cells = finalizeCells(mergedCells);
+  setProgress(94);
+  setStage("Preparando textura del globo…");
 
-function cacheIsFresh(payload: HistoricalHeatmapResponse, currentYear: number) {
-  if (payload.year !== currentYear) return true;
-  const generatedAt = Date.parse(payload.generatedAt);
-  return Number.isFinite(generatedAt) && Date.now() - generatedAt < 30 * 60_000;
-}
-
-async function fetchAnnualSurface(year: number, signal?: AbortSignal) {
-  const response = await fetch(`/api/historical-heatmap?year=${year}`, {
-    cache: "force-cache",
-    signal,
-  });
-  const payload = await readPayload(response);
-  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
-  return payload;
+  return {
+    year,
+    generatedAt: new Date().toISOString(),
+    startTime: startTime.toISOString(),
+    endTime: endTime.toISOString(),
+    provider: "USGS ComCat",
+    minimumMagnitude: MIN_MAGNITUDE,
+    totalEvents,
+    cellSizeDeg: HISTORICAL_HEATMAP_CELL_SIZE_DEG,
+    cells,
+    strongestEvent,
+    averageMagnitude: totalEvents ? Number((totalMagnitude / totalEvents).toFixed(2)) : null,
+    averageDepthKm: totalEvents ? Number((totalDepth / totalEvents).toFixed(1)) : null,
+    warnings: [historicalCoverageNote(year)],
+  };
 }
 
 export function HistoricalHeatmap() {
   const currentYear = new Date().getUTCFullYear();
-  const totalYears = currentYear - MIN_YEAR + 1;
-  const hotCache = useRef(new Map<number, HistoricalHeatmapResponse>());
-  const preloadStarted = useRef(false);
   const [year, setYear] = useState(currentYear);
   const [data, setData] = useState<HistoricalHeatmapResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [progress, setProgress] = useState(0);
+  const [stage, setStage] = useState("Preparando consulta…");
   const [error, setError] = useState<string | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [showCountryNames, setShowCountryNames] = useState(true);
   const [showPlateAreas, setShowPlateAreas] = useState(true);
@@ -149,155 +218,73 @@ export function HistoricalHeatmap() {
   const [showPlateBoundaries, setShowPlateBoundaries] = useState(false);
   const [showFaults, setShowFaults] = useState(false);
   const [autoRotate, setAutoRotate] = useState(false);
-  const [preloadedYears, setPreloadedYears] = useState(0);
-  const [preloadActive, setPreloadActive] = useState(false);
-  const [preloadError, setPreloadError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
     let disposed = false;
+    setLoading(true);
+    setProgress(0);
+    setStage("Preparando consulta directa a USGS…");
+    setError(null);
+    setData(null);
 
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const inMemory = hotCache.current.get(year);
-        if (inMemory && cacheIsFresh(inMemory, currentYear)) {
-          if (!disposed) setData(inMemory);
-          return;
-        }
-        const persisted = await cacheRead(year);
-        if (persisted && cacheIsFresh(persisted, currentYear)) {
-          rememberHot(hotCache.current, persisted);
-          if (!disposed) setData(persisted);
-          return;
-        }
-        const payload = await fetchAnnualSurface(year, controller.signal);
-        rememberHot(hotCache.current, payload);
-        void cacheWrite(payload);
+    loadYearDirect(year, currentYear, controller.signal, setProgress, setStage)
+      .then((payload) => {
         if (!disposed) setData(payload);
-      } catch (loadError) {
+      })
+      .catch((loadError) => {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
-        if (!disposed) setError(loadError instanceof Error ? loadError.message : "No fue posible cargar el año seleccionado.");
-      } finally {
-        if (!disposed) setLoading(false);
-      }
-    }
+        if (!disposed) {
+          setLoading(false);
+          setError(loadError instanceof Error ? loadError.message : "No fue posible cargar USGS directamente.");
+          setStage("Carga detenida");
+        }
+      });
 
-    void load();
     return () => {
       disposed = true;
       controller.abort();
     };
-  }, [currentYear, year]);
-
-  useEffect(() => {
-    if (preloadStarted.current) return;
-    preloadStarted.current = true;
-    let cancelled = false;
-
-    async function preloadHistory() {
-      await delay(2_500);
-      if (cancelled) return;
-      setPreloadActive(true);
-      try {
-        const storedYears = await cachedYears();
-        if (storedYears === null) {
-          setPreloadError("El navegador no permite la caché local; el mapa seguirá funcionando año por año.");
-          return;
-        }
-        const existing = new Set(storedYears);
-        if (cancelled) return;
-        setPreloadedYears(existing.size);
-        const queue = Array.from({ length: totalYears }, (_, index) => MIN_YEAR + index)
-          .filter((candidate) => !existing.has(candidate))
-          .sort((a, b) => Math.abs(a - currentYear) - Math.abs(b - currentYear));
-
-        for (const candidate of queue) {
-          if (cancelled) return;
-          while (!cancelled && document.visibilityState === "hidden") await delay(1_000);
-          if (cancelled) return;
-
-          const alreadyStored = await cacheRead(candidate);
-          if (alreadyStored && cacheIsFresh(alreadyStored, currentYear)) {
-            existing.add(candidate);
-            setPreloadedYears(existing.size);
-            continue;
-          }
-
-          try {
-            const payload = await fetchAnnualSurface(candidate);
-            if (cancelled) return;
-            const stored = await cacheWrite(payload);
-            if (!stored) {
-              setPreloadError("La caché local dejó de estar disponible; se detuvo la precarga para proteger la memoria del dispositivo.");
-              return;
-            }
-            existing.add(candidate);
-            setPreloadedYears(existing.size);
-            setPreloadError(null);
-          } catch (preloadFailure) {
-            if (!cancelled) {
-              setPreloadError(preloadFailure instanceof Error ? preloadFailure.message : `No fue posible precargar ${candidate}.`);
-            }
-          }
-          await delay(500);
-        }
-      } finally {
-        if (!cancelled) setPreloadActive(false);
-      }
-    }
-
-    void preloadHistory().catch((preloadFailure) => {
-      if (!cancelled) {
-        setPreloadActive(false);
-        setPreloadError(preloadFailure instanceof Error ? preloadFailure.message : "La precarga histórica se detuvo.");
-      }
-    });
-    return () => { cancelled = true; };
-  }, [currentYear, totalYears]);
+  }, [currentYear, retryToken, year]);
 
   useEffect(() => {
     if (!playing || loading || !data || data.year !== year) return;
-    const timer = window.setTimeout(() => {
-      setYear((value) => value >= currentYear ? MIN_YEAR : value + 1);
-    }, 1_050);
+    const timer = window.setTimeout(() => setYear((value) => value >= currentYear ? MIN_YEAR : value + 1), 1_250);
     return () => window.clearTimeout(timer);
   }, [currentYear, data, loading, playing, year]);
 
-  const preloadPercent = Math.min(100, Math.round((preloadedYears / totalYears) * 100));
   const tectonicLayersActive = showPlateAreas || showPlateNames || showPlateBoundaries || showFaults;
 
   return (
     <main className={styles.page}>
       <header className={styles.header}>
         <div>
-          <span className={styles.eyebrow}>RDSISMOS · USGS HISTORICAL SURFACE</span>
+          <span className={styles.eyebrow}>RDSISMOS · USGS DIRECT HISTORICAL MAP</span>
           <h1>Mapa de Calor Histórico</h1>
           <p>
-            Superficie sísmica mundial por año basada en USGS ComCat. No dibuja cilindros ni epicentros individuales:
-            agrupa el catálogo en celdas geográficas y colorea cada área por la magnitud máxima registrada allí.
+            El navegador consulta USGS ComCat directamente y construye una superficie de calor rasterizada para el globo.
+            No depende de una función pesada de Vercel ni de una precarga persistente en IndexedDB.
           </p>
         </div>
         <div className={styles.yearBadge}>
           <span>Año visualizado</span>
           <strong>{year}</strong>
-          <small>{data?.provider ?? "USGS ComCat"} · M2.5+ · malla 1.5°</small>
+          <small>USGS ComCat · M2.5+ · malla 1.5°</small>
         </div>
       </header>
 
-      <section className={styles.preloadPanel}>
+      <section className={styles.preloadPanel} aria-live="polite">
         <div>
-          <strong>{preloadedYears >= totalYears ? "Historia precargada" : "Precarga histórica"}</strong>
-          <span>{preloadedYears} de {totalYears} años guardados localmente · {preloadPercent}%</span>
+          <strong>{progress >= 100 && !loading ? `Año ${year} listo` : `Cargando ${year}`}</strong>
+          <span>{progress}% · {stage}</span>
         </div>
-        <div className={styles.preloadTrack}><i style={{ width: `${preloadPercent}%` }} /></div>
-        <small>{preloadActive ? "Continúa lentamente en segundo plano y se pausa cuando la pestaña no está visible." : "La precarga está completa o detenida."}{preloadError ? ` Último aviso: ${preloadError}` : ""}</small>
+        <div className={styles.preloadTrack}><i style={{ width: `${progress}%` }} /></div>
+        <small>Este porcentaje corresponde a la carga real del año seleccionado. No se descargan 127 años silenciosamente ni se usa almacenamiento local obligatorio.</small>
       </section>
 
       <section className={styles.timelinePanel}>
         <div className={styles.timelineTop}>
-          <button type="button" onClick={() => setPlaying((value) => !value)} className={playing ? styles.playing : ""}>
+          <button type="button" onClick={() => setPlaying((value) => !value)} disabled={loading} className={playing ? styles.playing : ""}>
             {playing ? "Pausar recorrido" : "Reproducir años"}
           </button>
           <div className={styles.currentYear}>{year}</div>
@@ -337,14 +324,14 @@ export function HistoricalHeatmap() {
         <div><span className={styles.legendYellow} /> M5–6</div>
         <div><span className={styles.legendOrange} /> M6–7</div>
         <div><span className={styles.legendRed} /> M7+ · máximo calor</div>
-        <p>El color representa magnitud máxima local; la opacidad aumenta con la cantidad de eventos registrados en esa área.</p>
+        <p>Color = magnitud máxima local. Extensión/opacidad = cantidad de eventos dentro de esa zona.</p>
       </section>
 
       {tectonicLayersActive && (
         <section className={styles.tectonicLegend} aria-label="Leyenda tectónica">
           <div className={styles.tectonicLegendHead}>
             <strong>Contexto tectónico</strong>
-            <span>Las áreas de placas PB2002 tienen colores distintos y permanecen debajo de la superficie sísmica.</span>
+            <span>Las áreas de placas PB2002 se rasterizan dentro de la misma textura del globo para reducir carga WebGL.</span>
           </div>
           {showPlateBoundaries && (
             <div className={styles.tectonicItems}>
@@ -357,12 +344,12 @@ export function HistoricalHeatmap() {
               <span><i className={styles.continentalConvergent} /> CCB · Convergente continental</span>
             </div>
           )}
-          {showFaults && <p className={styles.faultLegendText}>Las fallas GEM se dibujan sobre el mapa; al pasar el cursor muestra la cinemática disponible.</p>}
+          {showFaults && <p className={styles.faultLegendText}>Las fallas GEM solo se solicitan cuando activas esta capa.</p>}
         </section>
       )}
 
       <section className={styles.globeStage}>
-        {loading && (!data || data.year !== year) && <div className={styles.loadingOverlay}>Preparando superficie USGS para {year}…</div>}
+        {loading && <div className={styles.loadingOverlay}>Cargando {progress}% · {stage}</div>}
         {data && (
           <HistoricalHeatmapGlobe
             cells={data.cells}
@@ -372,36 +359,45 @@ export function HistoricalHeatmap() {
             showPlateBoundaries={showPlateBoundaries}
             showFaults={showFaults}
             autoRotate={autoRotate}
+            onTextureReady={() => {
+              setProgress(100);
+              setStage("Mapa listo");
+              setLoading(false);
+            }}
           />
         )}
       </section>
 
-      {error && <div className={styles.error}>{error}</div>}
+      {error && (
+        <div className={styles.error}>
+          <strong>No se pudo completar la carga directa desde USGS.</strong> {error}
+          <button type="button" onClick={() => setRetryToken((value) => value + 1)} style={{ marginLeft: 10, padding: "7px 12px", borderRadius: 999, cursor: "pointer" }}>Reintentar</button>
+        </div>
+      )}
 
       <section className={styles.metrics}>
         <article><span>Eventos agregados</span><strong>{data?.totalEvents.toLocaleString() ?? "—"}</strong><small>{data?.cells.length.toLocaleString() ?? "—"} áreas activas de 1.5°</small></article>
         <article><span>Mayor magnitud</span><strong>{data?.strongestEvent ? `M${data.strongestEvent.magnitude.toFixed(1)}` : "—"}</strong><small>{data?.strongestEvent?.place ?? "Sin evento destacado"}</small></article>
-        <article><span>Magnitud media</span><strong>{data?.averageMagnitude?.toFixed(2) ?? "—"}</strong><small>sobre todo el catálogo M2.5+ del año</small></article>
+        <article><span>Magnitud media</span><strong>{data?.averageMagnitude?.toFixed(2) ?? "—"}</strong><small>catálogo M2.5+ del año</small></article>
         <article><span>Profundidad media</span><strong>{data?.averageDepthKm === null || data?.averageDepthKm === undefined ? "—" : `${data.averageDepthKm.toFixed(0)} km`}</strong><small>{data ? `${formatDate(data.startTime)} → ${formatDate(data.endTime)}` : "Año seleccionado"}</small></article>
       </section>
 
       {(data?.warnings.length ?? 0) > 0 && (
         <section className={styles.notice}>
-          <strong>Lectura científica:</strong> {data?.warnings.join(" ")}
-          {" "}La escala de color representa magnitud observada, no riesgo ni probabilidad futura.
+          <strong>Lectura científica:</strong> {data?.warnings.join(" ")} La escala representa el catálogo observado, no riesgo ni probabilidad futura.
         </section>
       )}
 
       <section className={styles.explanation}>
         <article>
-          <span>Color = magnitud</span>
-          <h2>Frío para sismos pequeños, rojo para M7+</h2>
-          <p>La magnitud máxima observada dentro de cada celda determina el color. Un M7+ vuelve roja esa área aunque no exista una gran cantidad de sismos pequeños alrededor.</p>
+          <span>Sin función histórica de Vercel</span>
+          <h2>USGS → navegador → globo</h2>
+          <p>El año seleccionado se divide en segmentos mensuales para respetar el límite del catálogo USGS. Cada segmento terminado avanza el porcentaje visible.</p>
         </article>
         <article>
-          <span>Opacidad = actividad</span>
-          <h2>La densidad sigue estando presente</h2>
-          <p>La cantidad de terremotos de la celda modifica la opacidad, no el color. Así se separa visualmente la severidad del evento de la frecuencia de ocurrencia.</p>
+          <span>Render ligero</span>
+          <h2>Una sola textura en lugar de miles de objetos 3D</h2>
+          <p>La sismicidad y las áreas de placas se rasterizan en un canvas equirectangular. El WebGL solo recibe una textura, nombres y las capas lineales que actives.</p>
         </article>
       </section>
     </main>

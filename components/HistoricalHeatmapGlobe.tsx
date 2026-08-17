@@ -12,8 +12,6 @@ import type {
 } from "@/lib/globeLayers";
 import type { HistoricalHeatmapCell } from "@/lib/historicalHeatmap";
 
-const EARTH_TEXTURE = "https://cdn.jsdelivr.net/npm/three-globe@2.45.2/example/img/earth-night.jpg";
-
 interface RenderPath extends Omit<GlobeMapPath, "points"> {
   points: Array<GlobeMapPoint & { altitude: number }>;
   color: string;
@@ -32,42 +30,12 @@ interface GlobeLabel {
   kind: "country" | "plate";
 }
 
-interface PlatePolygon {
-  id: string;
-  geometry: NonNullable<GlobeTectonicPlate["geometry"]>;
-  plate: GlobeTectonicPlate;
-  color: string;
-}
-
-interface HeatPoint {
-  latitude: number;
-  longitude: number;
-  weight: number;
-}
-
-interface HeatBand {
-  id: string;
-  label: string;
-  color: string;
-  minMagnitude: number;
-  maxMagnitude: number | null;
-  altitude: number;
-  points: HeatPoint[];
-}
+type Position = [number, number];
 
 const PLATE_PALETTE = [
   "#2563eb", "#7c3aed", "#0891b2", "#059669", "#65a30d", "#ca8a04",
   "#ea580c", "#dc2626", "#db2777", "#9333ea", "#0d9488", "#4f46e5",
 ];
-
-const HEAT_BAND_DEFINITIONS = [
-  { id: "m3", label: "M≤3", color: "#2563eb", minMagnitude: -Infinity, maxMagnitude: 3, altitude: 0.009 },
-  { id: "m3-4", label: "M3–4", color: "#22d3ee", minMagnitude: 3, maxMagnitude: 4, altitude: 0.010 },
-  { id: "m4-5", label: "M4–5", color: "#22c55e", minMagnitude: 4, maxMagnitude: 5, altitude: 0.011 },
-  { id: "m5-6", label: "M5–6", color: "#facc15", minMagnitude: 5, maxMagnitude: 6, altitude: 0.012 },
-  { id: "m6-7", label: "M6–7", color: "#f97316", minMagnitude: 6, maxMagnitude: 7, altitude: 0.013 },
-  { id: "m7", label: "M7+", color: "#ef4444", minMagnitude: 7, maxMagnitude: null, altitude: 0.014 },
-] as const;
 
 const PLATE_BOUNDARY_COLORS: Record<PlateBoundaryClass, string> = {
   SUB: "#ef4444",
@@ -113,6 +81,15 @@ function plateColor(code: string) {
   return PLATE_PALETTE[hash % PLATE_PALETTE.length];
 }
 
+function heatColor(magnitude: number) {
+  if (magnitude >= 7) return "#ef4444";
+  if (magnitude >= 6) return "#f97316";
+  if (magnitude >= 5) return "#facc15";
+  if (magnitude >= 4) return "#22c55e";
+  if (magnitude > 3) return "#22d3ee";
+  return "#2563eb";
+}
+
 function boundaryColor(boundaryClass: PlateBoundaryClass | undefined) {
   return PLATE_BOUNDARY_COLORS[boundaryClass ?? "UNKNOWN"];
 }
@@ -145,42 +122,126 @@ function pathLabel(path: RenderPath, plateNames: Map<string, string>) {
   return `<div class="globe-tooltip"><strong>Frontera internacional</strong><span>${escapeHtml(path.name)}</span></div>`;
 }
 
-function plateLabel(polygon: PlatePolygon) {
-  return `<div class="globe-tooltip"><strong>Placa tectónica · ${escapeHtml(polygon.plate.name)}</strong><span>Código PB2002: ${escapeHtml(polygon.plate.code)}</span><small>Área tectónica PB2002. El color es contextual y no representa riesgo.</small></div>`;
+function parsePosition(value: unknown): Position | null {
+  if (!Array.isArray(value) || value.length < 2) return null;
+  const longitude = Number(value[0]);
+  const latitude = Number(value[1]);
+  return Number.isFinite(longitude) && Number.isFinite(latitude) ? [longitude, latitude] : null;
 }
 
-function bandForMagnitude(magnitude: number) {
-  return HEAT_BAND_DEFINITIONS.find((band) => (
-    magnitude > band.minMagnitude
-    && (band.maxMagnitude === null || magnitude <= band.maxMagnitude)
-  )) ?? HEAT_BAND_DEFINITIONS[0];
+function parseRing(value: unknown): Position[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(parsePosition).filter((position): position is Position => Boolean(position));
 }
 
-function buildHeatBands(cells: HistoricalHeatmapCell[]): HeatBand[] {
-  const buckets = new Map<string, HeatPoint[]>();
-  HEAT_BAND_DEFINITIONS.forEach((band) => buckets.set(band.id, []));
+function polygonsFromPlate(plate: GlobeTectonicPlate): Position[][][] {
+  const geometry = plate.geometry;
+  const coordinates = geometry?.coordinates;
+  if (!geometry || !Array.isArray(coordinates)) return [];
+  if (geometry.type === "Polygon") {
+    const rings = (coordinates as unknown[]).map(parseRing).filter((ring) => ring.length >= 3);
+    return rings.length ? [rings] : [];
+  }
+  return (coordinates as unknown[]).map((polygon) => {
+    if (!Array.isArray(polygon)) return [];
+    return (polygon as unknown[]).map(parseRing).filter((ring) => ring.length >= 3);
+  }).filter((polygon) => polygon.length > 0);
+}
 
-  for (const cell of cells) {
-    const band = bandForMagnitude(cell.maximumMagnitude);
-    buckets.get(band.id)?.push({
-      latitude: (cell.minLatitude + cell.maxLatitude) / 2,
-      longitude: (cell.minLongitude + cell.maxLongitude) / 2,
-      weight: 1 + Math.log2(Math.max(1, cell.eventCount)),
-    });
+function longitudeToX(longitude: number, width: number) {
+  return ((longitude + 180) / 360) * width;
+}
+
+function latitudeToY(latitude: number, height: number) {
+  return ((90 - latitude) / 180) * height;
+}
+
+function drawWrappedRing(
+  context: CanvasRenderingContext2D,
+  ring: Position[],
+  width: number,
+  height: number,
+) {
+  if (ring.length < 3) return;
+  const points = ring.map(([longitude, latitude]) => ({
+    x: longitudeToX(longitude, width),
+    y: latitudeToY(latitude, height),
+  }));
+  for (let index = 1; index < points.length; index += 1) {
+    while (points[index].x - points[index - 1].x > width / 2) points[index].x -= width;
+    while (points[index].x - points[index - 1].x < -width / 2) points[index].x += width;
+  }
+  for (const shift of [-width, 0, width]) {
+    context.beginPath();
+    context.moveTo(points[0].x + shift, points[0].y);
+    for (let index = 1; index < points.length; index += 1) context.lineTo(points[index].x + shift, points[index].y);
+    context.closePath();
+    context.fill();
+  }
+}
+
+function drawPlateAreas(
+  context: CanvasRenderingContext2D,
+  plates: GlobeTectonicPlate[],
+  width: number,
+  height: number,
+) {
+  for (const plate of plates) {
+    const color = plateColor(plate.code);
+    context.fillStyle = rgba(color, 0.13);
+    for (const polygon of polygonsFromPlate(plate)) {
+      for (const ring of polygon) drawWrappedRing(context, ring, width, height);
+    }
+  }
+}
+
+function drawHeatSpot(
+  context: CanvasRenderingContext2D,
+  cell: HistoricalHeatmapCell,
+  width: number,
+  height: number,
+) {
+  const x = longitudeToX(cell.longitude, width);
+  const y = latitudeToY(cell.latitude, height);
+  const density = Math.log2(Math.max(1, cell.eventCount) + 1);
+  const radius = clamp(7 + density * 4 + Math.max(0, cell.maximumMagnitude - 5) * 2.5, 8, 42);
+  const alpha = cell.maximumMagnitude >= 7 ? 0.9 : clamp(0.24 + Math.log10(cell.eventCount + 1) * 0.2, 0.24, 0.78);
+  const rgb = parseHexColor(heatColor(cell.maximumMagnitude));
+
+  function drawAt(centerX: number) {
+    const gradient = context.createRadialGradient(centerX, y, 0, centerX, y, radius);
+    gradient.addColorStop(0, `rgba(${rgb.red},${rgb.green},${rgb.blue},${alpha})`);
+    gradient.addColorStop(0.42, `rgba(${rgb.red},${rgb.green},${rgb.blue},${(alpha * 0.66).toFixed(3)})`);
+    gradient.addColorStop(1, `rgba(${rgb.red},${rgb.green},${rgb.blue},0)`);
+    context.fillStyle = gradient;
+    context.fillRect(centerX - radius, y - radius, radius * 2, radius * 2);
   }
 
-  return HEAT_BAND_DEFINITIONS
-    .map((band) => ({ ...band, points: buckets.get(band.id) ?? [] }))
-    .filter((band) => band.points.length > 0);
+  drawAt(x);
+  if (x < radius) drawAt(x + width);
+  if (x > width - radius) drawAt(x - width);
 }
 
-function heatColorInterpolator(band: HeatBand) {
-  const rgb = parseHexColor(band.color);
-  return (value: number) => {
-    const normalized = clamp(value, 0, 1.35);
-    const alpha = clamp(0.05 + normalized * 0.72, 0.04, 0.86);
-    return `rgba(${rgb.red},${rgb.green},${rgb.blue},${alpha.toFixed(3)})`;
-  };
+function buildRasterTexture(cells: HistoricalHeatmapCell[], plates: GlobeTectonicPlate[], showPlateAreas: boolean) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024;
+  canvas.height = 512;
+  const context = canvas.getContext("2d");
+  if (!context) return "";
+
+  const background = context.createLinearGradient(0, 0, 0, canvas.height);
+  background.addColorStop(0, "#06131f");
+  background.addColorStop(0.5, "#03101a");
+  background.addColorStop(1, "#020a12");
+  context.fillStyle = background;
+  context.fillRect(0, 0, canvas.width, canvas.height);
+
+  if (showPlateAreas) drawPlateAreas(context, plates, canvas.width, canvas.height);
+
+  const ordered = [...cells].sort((a, b) => a.maximumMagnitude - b.maximumMagnitude || a.eventCount - b.eventCount);
+  for (const cell of ordered) drawHeatSpot(context, cell, canvas.width, canvas.height);
+
+  return canvas.toDataURL("image/jpeg", 0.88);
 }
 
 export function HistoricalHeatmapGlobe({
@@ -191,6 +252,7 @@ export function HistoricalHeatmapGlobe({
   showPlateBoundaries,
   showFaults,
   autoRotate,
+  onTextureReady,
 }: {
   cells: HistoricalHeatmapCell[];
   showCountryNames: boolean;
@@ -199,11 +261,16 @@ export function HistoricalHeatmapGlobe({
   showPlateBoundaries: boolean;
   showFaults: boolean;
   autoRotate: boolean;
+  onTextureReady?: () => void;
 }) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
+  const readyCallbackRef = useRef(onTextureReady);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 1000, height: 720 });
   const [layers, setLayers] = useState<GlobeMapLayersResponse | null>(null);
+  const [textureUrl, setTextureUrl] = useState<string>("");
+
+  useEffect(() => { readyCallbackRef.current = onTextureReady; }, [onTextureReady]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -241,8 +308,10 @@ export function HistoricalHeatmapGlobe({
   }, [requestedLayerSet]);
 
   useEffect(() => {
-    globeRef.current?.pointOfView({ lat: 12, lng: -20, altitude: 2.05 }, 0);
-  }, []);
+    const texture = buildRasterTexture(cells, layers?.tectonicPlates ?? [], showPlateAreas);
+    setTextureUrl(texture);
+    if (texture) window.requestAnimationFrame(() => readyCallbackRef.current?.());
+  }, [cells, layers?.tectonicPlates, showPlateAreas]);
 
   useEffect(() => {
     const controls = globeRef.current?.controls();
@@ -261,11 +330,11 @@ export function HistoricalHeatmapGlobe({
   const geographicPaths = useMemo<RenderPath[]>(() => {
     const countries = (layers?.countryBorders ?? []).map((path) => ({
       ...path,
-      color: "rgba(226,232,240,.42)",
-      stroke: 0.25,
+      color: "rgba(226,232,240,.44)",
+      stroke: 0.24,
       dashLength: 1,
       dashGap: 0,
-      points: path.points.map((point) => ({ ...point, altitude: 0.018 })),
+      points: path.points.map((point) => ({ ...point, altitude: 0.012 })),
     }));
     const boundaries = showPlateBoundaries ? (layers?.plateBoundaries ?? []).map((path) => ({
       ...path,
@@ -273,7 +342,7 @@ export function HistoricalHeatmapGlobe({
       stroke: path.boundaryClass === "SUB" ? 0.72 : 0.58,
       dashLength: path.boundaryClass === "OTF" || path.boundaryClass === "CTF" ? 0.055 : 1,
       dashGap: path.boundaryClass === "OTF" || path.boundaryClass === "CTF" ? 0.026 : 0,
-      points: path.points.map((point) => ({ ...point, altitude: 0.026 })),
+      points: path.points.map((point) => ({ ...point, altitude: 0.022 })),
     })) : [];
     const faults = showFaults ? (layers?.activeFaults ?? []).map((path) => ({
       ...path,
@@ -281,23 +350,10 @@ export function HistoricalHeatmapGlobe({
       stroke: 0.46,
       dashLength: 0.035,
       dashGap: 0.018,
-      points: path.points.map((point) => ({ ...point, altitude: 0.032 })),
+      points: path.points.map((point) => ({ ...point, altitude: 0.028 })),
     })) : [];
     return [...countries, ...boundaries, ...faults];
   }, [layers, showFaults, showPlateBoundaries]);
-
-  const platePolygons = useMemo<PlatePolygon[]>(() => showPlateAreas
-    ? (layers?.tectonicPlates ?? [])
-      .filter((plate): plate is GlobeTectonicPlate & { geometry: NonNullable<GlobeTectonicPlate["geometry"]> } => Boolean(plate.geometry))
-      .map((plate) => ({
-        id: `plate-area:${plate.code}`,
-        geometry: plate.geometry,
-        plate,
-        color: plateColor(plate.code),
-      }))
-    : [], [layers, showPlateAreas]);
-
-  const heatBands = useMemo(() => buildHeatBands(cells), [cells]);
 
   const labels = useMemo<GlobeLabel[]>(() => {
     const countries: GlobeLabel[] = showCountryNames ? COUNTRIES.map((country) => ({
@@ -305,7 +361,7 @@ export function HistoricalHeatmapGlobe({
       latitude: country.latitude,
       longitude: country.longitude,
       text: country.name,
-      size: clamp(0.18 + country.radiusKm / 7_500, 0.18, 0.42),
+      size: clamp(0.17 + country.radiusKm / 8_000, 0.17, 0.38),
       color: "rgba(241,245,249,.9)",
       kind: "country",
     })) : [];
@@ -314,12 +370,14 @@ export function HistoricalHeatmapGlobe({
       latitude: plate.latitude,
       longitude: plate.longitude,
       text: `Placa ${plate.name}`,
-      size: 0.42,
+      size: 0.4,
       color: "rgba(253,224,71,.98)",
       kind: "plate",
     })) : [];
     return [...countries, ...plates];
   }, [layers, showCountryNames, showPlateNames]);
+
+  if (!textureUrl) return <div ref={containerRef} style={{ width: "100%", minHeight: 520 }} />;
 
   return (
     <div ref={containerRef} style={{ width: "100%", minHeight: 520 }}>
@@ -327,30 +385,12 @@ export function HistoricalHeatmapGlobe({
         ref={globeRef}
         width={size.width}
         height={size.height}
-        globeImageUrl={EARTH_TEXTURE}
+        globeImageUrl={textureUrl}
         backgroundColor="rgba(0,0,0,0)"
         atmosphereColor="#69c7ff"
-        atmosphereAltitude={0.16}
+        atmosphereAltitude={0.13}
         showGraticules
-        polygonsData={platePolygons}
-        polygonGeoJsonGeometry={(polygon: object) => (polygon as PlatePolygon).geometry as any}
-        polygonAltitude={0.002}
-        polygonCapColor={(polygon: object) => rgba((polygon as PlatePolygon).color, 0.12)}
-        polygonSideColor={(polygon: object) => rgba((polygon as PlatePolygon).color, 0.025)}
-        polygonStrokeColor={(polygon: object) => rgba((polygon as PlatePolygon).color, 0.24)}
-        polygonLabel={(polygon: object) => plateLabel(polygon as PlatePolygon)}
-        polygonsTransitionDuration={0}
-        heatmapsData={heatBands}
-        heatmapPoints="points"
-        heatmapPointLat="latitude"
-        heatmapPointLng="longitude"
-        heatmapPointWeight="weight"
-        heatmapBandwidth={1.55}
-        heatmapColorFn={(heatmap: object) => heatColorInterpolator(heatmap as HeatBand)}
-        heatmapColorSaturation={0.9}
-        heatmapBaseAltitude={(heatmap: object) => (heatmap as HeatBand).altitude}
-        heatmapTopAltitude={(heatmap: object) => (heatmap as HeatBand).altitude}
-        heatmapsTransitionDuration={0}
+        onGlobeReady={() => globeRef.current?.pointOfView({ lat: 12, lng: -20, altitude: 2.05 }, 0)}
         pathsData={geographicPaths}
         pathPoints="points"
         pathPointLat="lat"
@@ -368,7 +408,7 @@ export function HistoricalHeatmapGlobe({
         labelLng="longitude"
         labelText="text"
         labelColor="color"
-        labelAltitude={(label: object) => (label as GlobeLabel).kind === "plate" ? 0.036 : 0.024}
+        labelAltitude={(label: object) => (label as GlobeLabel).kind === "plate" ? 0.03 : 0.018}
         labelSize="size"
         labelIncludeDot={false}
         labelResolution={2}
