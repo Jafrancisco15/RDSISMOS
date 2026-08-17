@@ -42,6 +42,9 @@ export function HistoricalHeatmap() {
   const [minimumMagnitude, setMinimumMagnitude] = useState<number>(2.5);
   const [showCountryNames, setShowCountryNames] = useState(true);
   const [showStrongEvents, setShowStrongEvents] = useState(true);
+  const [showPlateNames, setShowPlateNames] = useState(false);
+  const [showPlateBoundaries, setShowPlateBoundaries] = useState(false);
+  const [showFaults, setShowFaults] = useState(false);
   const [autoRotate, setAutoRotate] = useState(false);
 
   useEffect(() => {
@@ -120,6 +123,8 @@ export function HistoricalHeatmap() {
     };
   }, [visibleEvents]);
 
+  const tectonicLayersActive = showPlateNames || showPlateBoundaries || showFaults;
+
   return (
     <main className={styles.page}>
       <header className={styles.header}>
@@ -184,6 +189,9 @@ export function HistoricalHeatmap() {
         </div>
         <label><input type="checkbox" checked={showCountryNames} onChange={(event) => setShowCountryNames(event.target.checked)} /> Nombres de países</label>
         <label><input type="checkbox" checked={showStrongEvents} onChange={(event) => setShowStrongEvents(event.target.checked)} /> Sismos M5.5+ individuales</label>
+        <label className={styles.tectonicToggle}><input type="checkbox" checked={showPlateBoundaries} onChange={(event) => setShowPlateBoundaries(event.target.checked)} /> Límites de placas + tipos</label>
+        <label className={styles.tectonicToggle}><input type="checkbox" checked={showPlateNames} onChange={(event) => setShowPlateNames(event.target.checked)} /> Nombres de placas</label>
+        <label className={styles.tectonicToggle}><input type="checkbox" checked={showFaults} onChange={(event) => setShowFaults(event.target.checked)} /> Fallas activas + cinemática</label>
         <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} /> Rotación automática</label>
       </section>
 
@@ -196,6 +204,32 @@ export function HistoricalHeatmap() {
         <p>{mode === "density" ? "Densidad: cada terremoto visible aporta el mismo peso." : "Magnitud: la densidad se pondera visualmente por magnitud; no representa energía sísmica absoluta."}</p>
       </section>
 
+      {tectonicLayersActive && (
+        <section className={styles.tectonicLegend} aria-label="Leyenda tectónica">
+          <div className={styles.tectonicLegendHead}>
+            <strong>Capas tectónicas sobre el heatmap</strong>
+            <span>Pasa el cursor sobre una línea para ver nombre, placas involucradas y tipo.</span>
+          </div>
+          {showPlateBoundaries && (
+            <div className={styles.tectonicItems}>
+              <span><i className={styles.subduction} /> SUB · Subducción</span>
+              <span><i className={styles.oceanRidge} /> OSR · Dorsal oceánica</span>
+              <span><i className={styles.oceanTransform} /> OTF · Transformante oceánica</span>
+              <span><i className={styles.oceanConvergent} /> OCB · Convergente oceánica</span>
+              <span><i className={styles.continentalRift} /> CRB · Rift continental</span>
+              <span><i className={styles.continentalTransform} /> CTF · Transformante continental</span>
+              <span><i className={styles.continentalConvergent} /> CCB · Convergente continental</span>
+            </div>
+          )}
+          {showFaults && (
+            <p className={styles.faultLegendText}>
+              Las fallas provienen de GEM GAF-DB. El tooltip muestra su nombre y `slip_type` cuando la base lo proporciona; el color distingue de forma visual normal/extensional, inversa-compresiva, rumbo y oblicua.
+            </p>
+          )}
+          {showPlateNames && <p className={styles.faultLegendText}>Los nombres amarillos identifican las placas de PB2002.</p>}
+        </section>
+      )}
+
       <section className={styles.globeStage}>
         {loading && (!data || data.year !== year) && <div className={styles.loadingOverlay}>Consultando USGS para {year}…</div>}
         {data && (
@@ -204,6 +238,9 @@ export function HistoricalHeatmap() {
             mode={mode}
             showCountryNames={showCountryNames}
             showStrongEvents={showStrongEvents}
+            showPlateNames={showPlateNames}
+            showPlateBoundaries={showPlateBoundaries}
+            showFaults={showFaults}
             autoRotate={autoRotate}
           />
         )}
