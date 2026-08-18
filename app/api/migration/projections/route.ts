@@ -40,6 +40,12 @@ function integer(value: string | null, fallback: number) {
   return Number.isInteger(parsed) ? parsed : fallback;
 }
 
+function optionalNumber(value: string | null) {
+  if (value === null || value.trim() === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 export async function GET(request: NextRequest) {
   const rawStatus = request.nextUrl.searchParams.get("status") ?? "all";
   const status = VALID_STATUSES.has(rawStatus as ProjectionHistoryStatus | "all")
@@ -65,6 +71,9 @@ export async function GET(request: NextRequest) {
       search: request.nextUrl.searchParams.get("search") ?? "",
       from: request.nextUrl.searchParams.get("from") ?? "",
       to: request.nextUrl.searchParams.get("to") ?? "",
+      minProbability: optionalNumber(request.nextUrl.searchParams.get("minProbability")),
+      minProjectedMagnitude: optionalNumber(request.nextUrl.searchParams.get("minProjectedMagnitude")),
+      minObservedMagnitude: optionalNumber(request.nextUrl.searchParams.get("minObservedMagnitude")),
       sort,
       direction,
     });
@@ -92,6 +101,12 @@ export async function GET(request: NextRequest) {
           fulfilled_outside_range: 0,
           not_fulfilled: 0,
           pending_evaluation: 0,
+        },
+        archive: {
+          oldestGeneratedAt: null,
+          newestGeneratedAt: null,
+          legacyEvaluatedCount: 0,
+          evaluatedCount: 0,
         },
         sort,
         direction,

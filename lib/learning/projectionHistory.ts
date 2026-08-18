@@ -29,6 +29,7 @@ export interface ProjectionHistoryItem {
   capsuleId: string;
   modelVersionId: string;
   status: ProjectionHistoryStatus;
+  legacyEvaluated: boolean;
   zoneName: string;
   countryCode: string;
   countryName: string;
@@ -91,8 +92,18 @@ export interface ProjectionHistoryFilters {
   search?: string;
   from?: string;
   to?: string;
+  minProbability?: number | null;
+  minProjectedMagnitude?: number | null;
+  minObservedMagnitude?: number | null;
   sort?: ProjectionHistorySort;
   direction?: ProjectionHistorySortDirection;
+}
+
+export interface ProjectionHistoryArchiveSummary {
+  oldestGeneratedAt: string | null;
+  newestGeneratedAt: string | null;
+  legacyEvaluatedCount: number;
+  evaluatedCount: number;
 }
 
 export interface ProjectionHistoryResponse {
@@ -105,6 +116,7 @@ export interface ProjectionHistoryResponse {
   items: ProjectionHistoryItem[];
   countries: Array<{ code: string; name: string }>;
   statusCounts: Record<ProjectionHistoryStatus, number>;
+  archive: ProjectionHistoryArchiveSummary;
   sort: ProjectionHistorySort;
   direction: ProjectionHistorySortDirection;
   message?: string;
@@ -116,6 +128,13 @@ const EMPTY_COUNTS: Record<ProjectionHistoryStatus, number> = {
   fulfilled_outside_range: 0,
   not_fulfilled: 0,
   pending_evaluation: 0,
+};
+
+const EMPTY_ARCHIVE: ProjectionHistoryArchiveSummary = {
+  oldestGeneratedAt: null,
+  newestGeneratedAt: null,
+  legacyEvaluatedCount: 0,
+  evaluatedCount: 0,
 };
 
 const ALL_COUNTRIES = COUNTRIES
@@ -136,6 +155,12 @@ function nullableNumber(value: unknown) {
 function iso(value: unknown) {
   const date = new Date(String(value));
   return Number.isNaN(date.getTime()) ? new Date(0).toISOString() : date.toISOString();
+}
+
+function nullableIso(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
 function parseObject(value: unknown): Record<string, unknown> {
@@ -173,10 +198,15 @@ function dateBoundary(value: string | undefined, endOfDay: boolean) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function finiteFilter(value: number | null | undefined) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  return Number(value);
+}
+
 export async function loadProjectionHistory(
   filters: ProjectionHistoryFilters = {},
 ): Promise<ProjectionHistoryResponse> {
-  const pageSize = Math.min(100, Math.max(50, Math.trunc(filters.pageSize ?? 50)));
+  const pageSize = Math.min(100, Math.max(20, Math.trunc(filters.pageSize ?? 50)));
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
   const status = filters.status ?? "all";
   const countryCode = (filters.countryCode ?? "").trim().toUpperCase();
@@ -186,6 +216,12 @@ export async function loadProjectionHistory(
   const to = dateBoundary(filters.to, true) ?? "9999-12-31T23:59:59.999Z";
   const hasFrom = Boolean(dateBoundary(filters.from, false));
   const hasTo = Boolean(dateBoundary(filters.to, true));
+  const minProbability = finiteFilter(filters.minProbability);
+  const minProjectedMagnitude = finiteFilter(filters.minProjectedMagnitude);
+  const minObservedMagnitude = finiteFilter(filters.minObservedMagnitude);
+  const hasMinProbability = minProbability !== null;
+  const hasMinProjectedMagnitude = minProjectedMagnitude !== null;
+  const hasMinObservedMagnitude = minObservedMagnitude !== null;
   const sort = filters.sort ?? "generatedAt";
   const direction = filters.direction ?? "desc";
   const offset = (page - 1) * pageSize;
@@ -200,6 +236,7 @@ export async function loadProjectionHistory(
     items: [],
     countries: ALL_COUNTRIES,
     statusCounts: { ...EMPTY_COUNTS },
+    archive: { ...EMPTY_ARCHIVE },
     sort,
     direction,
   };
@@ -256,10 +293,11 @@ export async function loadProjectionHistory(
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
         LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-        WHERE p.analog_hits > 0
+        WHERE COALESCE(p.analog_hits, 0) > 0 OR o.prediction_id IS NOT NULL
       ), projection_rows AS (
         SELECT
           *,
+          (COALESCE(analog_hits, 0) <= 0 AND outcome_prediction_id IS NOT NULL) AS legacy_evaluated,
           CASE
             WHEN occurred IS TRUE THEN 'fulfilled'
             WHEN outcome_prediction_id IS NOT NULL
@@ -281,7 +319,7 @@ export async function loadProjectionHistory(
                 WHEN outcome_prediction_id IS NOT NULL THEN 1
                 ELSE 2
               END,
-              analog_hits DESC,
+              COALESCE(analog_hits, 0) DESC,
               probability_pct DESC,
               created_at DESC,
               id ASC
@@ -301,6 +339,9 @@ export async function loadProjectionHistory(
           id ILIKE ${searchPattern})
         AND (${hasFrom} = FALSE OR generated_at >= ${from})
         AND (${hasTo} = FALSE OR generated_at <= ${to})
+        AND (${hasMinProbability} = FALSE OR probability_pct >= ${minProbability ?? 0})
+        AND (${hasMinProjectedMagnitude} = FALSE OR magnitude_max >= ${minProjectedMagnitude ?? 0})
+        AND (${hasMinObservedMagnitude} = FALSE OR first_event_magnitude >= ${minObservedMagnitude ?? 0})
       ORDER BY
         CASE WHEN ${sort} = 'generatedAt' AND ${direction} = 'asc' THEN generated_at END ASC,
         CASE WHEN ${sort} = 'generatedAt' AND ${direction} = 'desc' THEN generated_at END DESC,
@@ -346,19 +387,22 @@ export async function loadProjectionHistory(
           p.analog_hits,
           p.created_at,
           p.surveillance_end,
+          p.magnitude_max,
           c.source_place,
           c.source_event_external_id,
           c.generated_at,
           o.prediction_id AS outcome_prediction_id,
           o.occurred,
+          o.first_event_magnitude,
           o.evaluation_payload
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
         LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-        WHERE p.analog_hits > 0
+        WHERE COALESCE(p.analog_hits, 0) > 0 OR o.prediction_id IS NOT NULL
       ), projection_rows AS (
         SELECT
           *,
+          (COALESCE(analog_hits, 0) <= 0 AND outcome_prediction_id IS NOT NULL) AS legacy_evaluated,
           CASE
             WHEN occurred IS TRUE THEN 'fulfilled'
             WHEN outcome_prediction_id IS NOT NULL
@@ -380,14 +424,20 @@ export async function loadProjectionHistory(
                 WHEN outcome_prediction_id IS NOT NULL THEN 1
                 ELSE 2
               END,
-              analog_hits DESC,
+              COALESCE(analog_hits, 0) DESC,
               probability_pct DESC,
               created_at DESC,
               id ASC
           ) AS duplicate_rank
         FROM joined
       )
-      SELECT display_status, COUNT(*)::bigint AS count
+      SELECT
+        display_status,
+        COUNT(*)::bigint AS count,
+        MIN(MIN(generated_at)) OVER() AS oldest_generated_at,
+        MAX(MAX(generated_at)) OVER() AS newest_generated_at,
+        SUM(SUM(CASE WHEN legacy_evaluated THEN 1 ELSE 0 END)) OVER()::bigint AS legacy_evaluated_count,
+        SUM(SUM(CASE WHEN outcome_prediction_id IS NOT NULL THEN 1 ELSE 0 END)) OVER()::bigint AS evaluated_count
       FROM projection_rows
       WHERE duplicate_rank = 1
         AND (${countryCode} = '' OR country_code = ${countryCode})
@@ -399,6 +449,9 @@ export async function loadProjectionHistory(
           id ILIKE ${searchPattern})
         AND (${hasFrom} = FALSE OR generated_at >= ${from})
         AND (${hasTo} = FALSE OR generated_at <= ${to})
+        AND (${hasMinProbability} = FALSE OR probability_pct >= ${minProbability ?? 0})
+        AND (${hasMinProjectedMagnitude} = FALSE OR magnitude_max >= ${minProjectedMagnitude ?? 0})
+        AND (${hasMinObservedMagnitude} = FALSE OR first_event_magnitude >= ${minObservedMagnitude ?? 0})
       GROUP BY display_status
     `;
 
@@ -408,6 +461,13 @@ export async function loadProjectionHistory(
       const key = String(row.display_status) as ProjectionHistoryStatus;
       if (key in statusCounts) statusCounts[key] = number(row.count);
     }
+    const archiveRow = countRows[0];
+    const archive: ProjectionHistoryArchiveSummary = archiveRow ? {
+      oldestGeneratedAt: nullableIso(archiveRow.oldest_generated_at),
+      newestGeneratedAt: nullableIso(archiveRow.newest_generated_at),
+      legacyEvaluatedCount: number(archiveRow.legacy_evaluated_count),
+      evaluatedCount: number(archiveRow.evaluated_count),
+    } : { ...EMPTY_ARCHIVE };
 
     const items: ProjectionHistoryItem[] = rows.map((row) => {
       const payload = parseObject(row.evaluation_payload);
@@ -415,8 +475,9 @@ export async function loadProjectionHistory(
       return {
         id: String(row.id),
         capsuleId: String(row.capsule_id),
-        modelVersionId: String(row.model_version_id),
+        modelVersionId: String(row.model_version_id ?? "legacy"),
         status: String(row.display_status) as ProjectionHistoryStatus,
+        legacyEvaluated: Boolean(row.legacy_evaluated),
         zoneName: String(row.zone_name),
         countryCode: String(row.country_code),
         countryName: String(row.country_name),
@@ -471,6 +532,7 @@ export async function loadProjectionHistory(
       totalPages: total ? Math.ceil(total / pageSize) : 0,
       items,
       statusCounts,
+      archive,
     };
   } catch (error) {
     return {

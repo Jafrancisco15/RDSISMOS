@@ -16,6 +16,7 @@ import {
   PROJECTION_PARAMETER_HELP,
   projectionInfoStyles,
 } from "./ProjectionInfo";
+import controls from "./ProjectionArchiveControls.module.css";
 
 const STATUS_LABELS: Record<ProjectionHistoryStatus, string> = {
   active: "Activa",
@@ -216,19 +217,34 @@ export function ProjectionHistoryPanel() {
     );
   }
 
+  const archiveStart = data?.archive.oldestGeneratedAt ? formatDate(data.archive.oldestGeneratedAt) : "—";
+  const archiveEnd = data?.archive.newestGeneratedAt ? formatDate(data.archive.newestGeneratedAt) : "—";
+
   return (
     <main className="projection-history-page">
       <header className="projection-history-head">
         <div>
-          <span className="eyebrow">Registro y resultados</span>
+          <span className="eyebrow">Archivo completo y resultados</span>
           <h1>Historial de proyecciones</h1>
-          <p>Tabla completa de proyecciones, ventanas de vigilancia, eventos precedentes y resultados observados. Se muestran 50 registros por página de forma predeterminada; usa las flechas de los encabezados para ordenar todo el historial, no solo la página visible.</p>
+          <p>Este tab es el archivo de proyecciones persistidas: incluye proyecciones modernas con señal histórica y también registros antiguos que ya fueron evaluados. Los registros antiguos con resultado se conservan aunque su versión original no tuviera todos los campos de evidencia actuales.</p>
         </div>
         <div className="projection-history-total">
           <span>Resultados filtrados</span>
           <strong>{data?.total.toLocaleString() ?? "—"}</strong>
         </div>
       </header>
+
+      <section className={controls.archiveBanner} aria-label="Cobertura del archivo histórico">
+        <div>
+          <strong>¿Qué aparece aquí?</strong>
+          <p>Desde {archiveStart} hasta {archiveEnd} según los filtros actuales. Los registros marcados <b>Legado auditado</b> son proyecciones antiguas con un resultado persistido, pero con metadata de análogos incompleta o anterior al esquema actual. No se incluyen antiguas señales sin evidencia y sin evaluación solo para inflar el archivo.</p>
+        </div>
+        <div className={controls.archiveStats}>
+          <span>Evaluadas<strong>{data?.archive.evaluatedCount.toLocaleString() ?? "—"}</strong></span>
+          <span>Legado auditado<strong>{data?.archive.legacyEvaluatedCount.toLocaleString() ?? "—"}</strong></span>
+          <span>Rango<strong>{archiveStart} → {archiveEnd}</strong></span>
+        </div>
+      </section>
 
       <section className="projection-status-summary" aria-label="Resumen por estado">
         <button className={status === "all" ? "active" : ""} onClick={() => selectStatus("all")}>
@@ -280,7 +296,7 @@ export function ProjectionHistoryPanel() {
       </section>
 
       <div className="quality-warning">
-        <strong>Lectura segura:</strong> el selector de países usa ahora el catálogo completo de la aplicación, aunque un país todavía no tenga una proyección con señal histórica. Las proyecciones antiguas duplicadas por solapamiento de zonas continúan consolidadas como una sola proyección por evento precedente + país.
+        <strong>Cómo leer el archivo:</strong> la tabla consolida duplicados por evento precedente + país. Las proyecciones modernas sin señal histórica siguen fuera del historial; en cambio, una proyección antigua que ya tenga una evaluación persistida vuelve a mostrarse aunque su campo <code>analog_hits</code> sea cero o no estuviera poblado en la versión original.
         {lastLoadedAt ? ` Última lectura: ${formatDate(lastLoadedAt, true)} UTC.` : ""}
       </div>
 
@@ -289,7 +305,7 @@ export function ProjectionHistoryPanel() {
 
       <section className="panel projection-history-list">
         <div className="projection-history-list-head">
-          <div><span className="eyebrow">Tabla</span><h2>Proyecciones registradas</h2></div>
+          <div><span className="eyebrow">Archivo</span><h2>Proyecciones registradas</h2></div>
           <span>{loading ? "Actualizando…" : `${showing} · ${data?.pageSize ?? pageSize} por página`}</span>
         </div>
 
@@ -323,6 +339,7 @@ export function ProjectionHistoryPanel() {
                   <tr key={item.id}>
                     <td>
                       <span className={`projection-status-badge ${item.status}`}>{STATUS_LABELS[item.status]}</span>
+                      {item.legacyEvaluated && <span className={controls.legacyBadge}>Legado auditado</span>}
                       <button type="button" className={projectionInfoStyles.detailButton} onClick={() => setSelectedItem(item)}>Explicar</button>
                     </td>
                     <td><strong>{formatDate(item.generatedAt, true)}</strong><small>{item.id}</small></td>
@@ -331,27 +348,27 @@ export function ProjectionHistoryPanel() {
                     <td><strong className="projection-probability">{formatProbability(item.probabilityPct)}</strong></td>
                     <td><strong>{formatProbability(item.baselinePct)}</strong></td>
                     <td><strong>{formatSignedPercentagePoints(item.liftPct)}</strong></td>
-                    <td><strong>{item.confidencePct.toFixed(0)}%</strong><small>escenario</small></td>
+                    <td>{item.legacyEvaluated ? <><strong>—</strong><small>metadata legado</small></> : <><strong>{item.confidencePct.toFixed(0)}%</strong><small>escenario</small></>}</td>
                     <td><strong>M{item.magnitudeMin.toFixed(1)}–M{item.magnitudeMax.toFixed(1)}</strong></td>
                     <td><strong>{formatDate(item.surveillanceStart)}</strong><span>hasta {formatDate(item.surveillanceEnd)}</span></td>
                     <td><strong>{item.sourceEvent.place}</strong><small>{item.sourceEvent.id}</small></td>
                     <td><strong>M{item.sourceEvent.magnitude.toFixed(1)}</strong></td>
                     <td><strong>{formatDate(item.sourceEvent.time, true)}</strong></td>
                     <td><strong>{item.sourceEvent.depthKm.toFixed(1)} km</strong></td>
-                    <td><strong>{item.analogHits}/{item.analogsEvaluated || "—"} análogos</strong><span>{item.controlHits} controles</span><small>Mediana {item.medianLeadDays?.toFixed(1) ?? "—"} días</small></td>
+                    <td>{item.legacyEvaluated ? <><strong>Metadata histórica incompleta</strong><small>Se conserva porque ya fue evaluada.</small></> : <><strong>{item.analogHits}/{item.analogsEvaluated || "—"} análogos</strong><span>{item.controlHits} controles</span><small>Mediana {item.medianLeadDays?.toFixed(1) ?? "—"} días</small></>}</td>
                     <td>
                       <strong>{STATUS_LABELS[item.status]}</strong>
                       {item.outcome && <span>{item.outcome.eventCount} dentro del rango</span>}
                       {item.outcome?.outsideRangeEventCount ? <small>{item.outcome.outsideRangeEventCount} fuera del rango</small> : null}
                     </td>
                     <td>
-                      {observed ? <><strong>M{observed.magnitude.toFixed(1)} · {observed.place}</strong><span>{formatDate(observed.time, true)}</span><small>{observed.note}{observed.days !== null && observed.days !== undefined ? ` · ${observed.days.toFixed(1)} días` : ""}</small></> : <span>Sin evento registrado</span>}
+                      {observed ? <><strong>M{observed.magnitude.toFixed(1)} · {observed.place}</strong><span>{formatDate(observed.time, true)}</span><small>{observed.note}{observed.days !== null && observed.days !== undefined ? ` · ${observed.days.toFixed(1)} días` : ""}</small></> : item.status === "fulfilled" && item.legacyEvaluated ? <><strong>Cumplida según evaluación persistida</strong><small>El detalle del primer evento no fue conservado por el esquema antiguo.</small></> : <span>Sin evento registrado</span>}
                     </td>
                   </tr>
                 );
               })}
               {!loading && !data?.items.length && !error && <tr><td colSpan={17} className="projection-history-empty">No hay proyecciones que coincidan con los filtros.</td></tr>}
-              {loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">Cargando las últimas proyecciones…</td></tr>}
+              {loading && !data?.items.length && <tr><td colSpan={17} className="projection-history-empty">Cargando el archivo de proyecciones…</td></tr>}
             </tbody>
           </table>
         </div>
@@ -364,7 +381,7 @@ export function ProjectionHistoryPanel() {
       </section>
 
       <footer className="projection-history-note">
-        “Cumplida fuera de rango” indica que hubo actividad en el área y dentro de la ventana temporal, pero su magnitud quedó fuera de la escala proyectada.
+        “Cumplida fuera de rango” indica que hubo actividad en el área y dentro de la ventana temporal, pero su magnitud quedó fuera de la escala proyectada. “Legado auditado” indica un registro antiguo cuyo resultado se conserva aunque no tenga toda la metadata de evidencia del esquema actual.
       </footer>
     </main>
   );
