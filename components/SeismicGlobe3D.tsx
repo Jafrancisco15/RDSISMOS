@@ -11,11 +11,14 @@ import {
   projectionInfoStyles,
 } from "./ProjectionInfo";
 import type { SeismicGlobePoint } from "./SeismicGlobeRenderer";
+import controls from "./ProjectionArchiveControls.module.css";
 
 const SeismicGlobeRenderer = dynamic(
   () => import("./SeismicGlobeRenderer").then((module) => module.SeismicGlobeRenderer),
   { ssr: false, loading: () => <div className="globe-loading">Inicializando motor WebGL y globo 3D…</div> },
 );
+
+const PROJECTION_PAGE_SIZE = 20;
 
 function formatDate(value: string, withTime = false) {
   return new Intl.DateTimeFormat("es-DO", {
@@ -43,6 +46,10 @@ function projectionPoint(projection: GlobeProjection, comparison: boolean): Seis
   };
 }
 
+function normalized(value: string) {
+  return value.trim().toLocaleLowerCase("es");
+}
+
 export function SeismicGlobe3D() {
   const today = todayKey();
   const [data, setData] = useState<SeismicGlobeResponse | null>(null);
@@ -63,6 +70,13 @@ export function SeismicGlobe3D() {
   const [focusTarget, setFocusTarget] = useState<{ key: string; latitude: number; longitude: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [projectionPage, setProjectionPage] = useState(1);
+  const [comparisonPage, setComparisonPage] = useState(1);
+  const [projectionSearch, setProjectionSearch] = useState("");
+  const [projectionCountry, setProjectionCountry] = useState("");
+  const [projectionModel, setProjectionModel] = useState<"" | "historical-country" | "regional-etas">("");
+  const [projectionMinProbability, setProjectionMinProbability] = useState("");
+  const [projectionMinMagnitude, setProjectionMinMagnitude] = useState("");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -83,6 +97,8 @@ export function SeismicGlobe3D() {
           setData(payload);
           setError(null);
           setShowComparison(compareEnabled && payload.comparisonProjections.length > 0);
+          setProjectionPage(1);
+          setComparisonPage(1);
         }
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
@@ -120,6 +136,54 @@ export function SeismicGlobe3D() {
     ]));
   }, [data]);
 
+  const projectionCountries = useMemo(() => {
+    const items = [...(data?.projections ?? []), ...(data?.comparisonProjections ?? [])];
+    return [...new Map(items.map((item) => [item.countryCode, item.countryName])).entries()]
+      .map(([code, name]) => ({ code, name }))
+      .sort((a, b) => a.name.localeCompare(b.name, "es", { sensitivity: "base" }));
+  }, [data]);
+
+  function matchesProjection(projection: GlobeProjection) {
+    const needle = normalized(projectionSearch);
+    const minimumProbability = projectionMinProbability === "" ? null : Number(projectionMinProbability);
+    const minimumMagnitude = projectionMinMagnitude === "" ? null : Number(projectionMinMagnitude);
+    if (needle) {
+      const haystack = normalized([
+        projection.countryName,
+        projection.countryCode,
+        projection.sourceEvent.place,
+        projection.sourceEvent.id,
+        projection.id,
+      ].join(" "));
+      if (!haystack.includes(needle)) return false;
+    }
+    if (projectionCountry && projection.countryCode !== projectionCountry) return false;
+    if (projectionModel && projection.projectionKind !== projectionModel) return false;
+    if (minimumProbability !== null && Number.isFinite(minimumProbability) && projection.probabilityPct < minimumProbability) return false;
+    if (minimumMagnitude !== null && Number.isFinite(minimumMagnitude) && projection.magnitudeMax < minimumMagnitude) return false;
+    return true;
+  }
+
+  const filteredProjections = useMemo(
+    () => (data?.projections ?? []).filter(matchesProjection),
+    [data, projectionCountry, projectionMinMagnitude, projectionMinProbability, projectionModel, projectionSearch],
+  );
+  const filteredComparisonProjections = useMemo(
+    () => (data?.comparisonProjections ?? []).filter(matchesProjection),
+    [data, projectionCountry, projectionMinMagnitude, projectionMinProbability, projectionModel, projectionSearch],
+  );
+  const projectionTotalPages = Math.max(1, Math.ceil(filteredProjections.length / PROJECTION_PAGE_SIZE));
+  const comparisonTotalPages = Math.max(1, Math.ceil(filteredComparisonProjections.length / PROJECTION_PAGE_SIZE));
+  const visibleProjections = filteredProjections.slice((projectionPage - 1) * PROJECTION_PAGE_SIZE, projectionPage * PROJECTION_PAGE_SIZE);
+  const visibleComparisonProjections = filteredComparisonProjections.slice((comparisonPage - 1) * PROJECTION_PAGE_SIZE, comparisonPage * PROJECTION_PAGE_SIZE);
+
+  useEffect(() => {
+    if (projectionPage > projectionTotalPages) setProjectionPage(projectionTotalPages);
+  }, [projectionPage, projectionTotalPages]);
+  useEffect(() => {
+    if (comparisonPage > comparisonTotalPages) setComparisonPage(comparisonTotalPages);
+  }, [comparisonPage, comparisonTotalPages]);
+
   function applyDates() {
     setViewDate(dateDraft || today);
     setComparisonDate(comparisonDraft || today);
@@ -133,6 +197,16 @@ export function SeismicGlobe3D() {
       latitude: projection.latitude,
       longitude: projection.longitude,
     });
+  }
+
+  function resetProjectionFilters() {
+    setProjectionSearch("");
+    setProjectionCountry("");
+    setProjectionModel("");
+    setProjectionMinProbability("");
+    setProjectionMinMagnitude("");
+    setProjectionPage(1);
+    setComparisonPage(1);
   }
 
   return (
@@ -198,10 +272,21 @@ export function SeismicGlobe3D() {
           </div>
 
           <aside className="globe-projection-list" aria-label="Listado de proyecciones">
-            <div className="globe-list-head"><span className="eyebrow">Proyecciones activas</span><strong>{data?.projections.length ?? 0}</strong></div>
-            <p>Toca una proyección para mover el globo y abrir su explicación.</p>
+            <div className="globe-list-head"><span className="eyebrow">Proyecciones activas</span><strong>{filteredProjections.length}/{data?.projections.length ?? 0}</strong></div>
+            <p>Listado limitado a {PROJECTION_PAGE_SIZE} por página. Los filtros afectan la lista, no ocultan las capas del globo.</p>
+
+            <div className={`${controls.filterBar} ${controls.compact}`} aria-label="Filtros de proyecciones activas">
+              <label className={controls.field}><span>Buscar</span><input type="search" value={projectionSearch} onChange={(event) => { setProjectionPage(1); setComparisonPage(1); setProjectionSearch(event.target.value); }} placeholder="País, precedente, ID" /></label>
+              <label className={controls.field}><span>País</span><select value={projectionCountry} onChange={(event) => { setProjectionPage(1); setComparisonPage(1); setProjectionCountry(event.target.value); }}><option value="">Todos</option>{projectionCountries.map((item) => <option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
+              <label className={controls.field}><span>Modelo</span><select value={projectionModel} onChange={(event) => { setProjectionPage(1); setComparisonPage(1); setProjectionModel(event.target.value as "" | "historical-country" | "regional-etas"); }}><option value="">Todos</option><option value="historical-country">Histórica</option><option value="regional-etas">ETAS regional</option></select></label>
+              <label className={controls.field}><span>Prob. mín. %</span><input type="number" min="0" max="100" step="0.1" value={projectionMinProbability} onChange={(event) => { setProjectionPage(1); setComparisonPage(1); setProjectionMinProbability(event.target.value); }} placeholder="0" /></label>
+              <label className={controls.field}><span>M máx. proyectada ≥</span><input type="number" min="0" max="10" step="0.1" value={projectionMinMagnitude} onChange={(event) => { setProjectionPage(1); setComparisonPage(1); setProjectionMinMagnitude(event.target.value); }} placeholder="0" /></label>
+              <button type="button" className={controls.clearButton} onClick={resetProjectionFilters}>Limpiar</button>
+            </div>
+
+            <div className={controls.filterMeta}><span>{filteredProjections.length} coinciden</span><strong>{PROJECTION_PAGE_SIZE} por página</strong></div>
             <div className="globe-list-scroll">
-              {(data?.projections ?? []).map((projection) => {
+              {visibleProjections.map((projection) => {
                 const delta = projectionDeltas.get(projection.id);
                 return (
                   <button type="button" key={projection.id} onClick={() => focusProjection(projection)}>
@@ -214,17 +299,28 @@ export function SeismicGlobe3D() {
                   </button>
                 );
               })}
-              {!data?.projections.length && <div className="globe-list-empty">No hay proyecciones activas para esta fecha.</div>}
+              {!filteredProjections.length && <div className="globe-list-empty">No hay proyecciones activas que coincidan con los filtros.</div>}
             </div>
+            <nav className={controls.pagination} aria-label="Paginación de proyecciones activas">
+              <button type="button" disabled={projectionPage <= 1} onClick={() => setProjectionPage((value) => Math.max(1, value - 1))}>Anterior</button>
+              <span>Página <strong>{projectionPage}</strong> de <strong>{projectionTotalPages}</strong></span>
+              <button type="button" disabled={projectionPage >= projectionTotalPages} onClick={() => setProjectionPage((value) => value + 1)}>Siguiente</button>
+            </nav>
+
             {compareEnabled && data?.comparisonProjections.length ? (
               <details className="globe-comparison-list">
-                <summary>{data.comparisonDate}: {data.comparisonProjections.length} proyecciones</summary>
-                {data.comparisonProjections.map((projection) => (
+                <summary>{data.comparisonDate}: {filteredComparisonProjections.length}/{data.comparisonProjections.length} proyecciones</summary>
+                {visibleComparisonProjections.map((projection) => (
                   <button type="button" key={`comparison-${projection.id}`} onClick={() => focusProjection(projection, true)}>
                     <span className="comparison" />
                     <div><strong>{projection.countryName} · {formatProbability(projection.probabilityPct)}</strong><small>M{projection.magnitudeMin.toFixed(1)}–M{projection.magnitudeMax.toFixed(1)}</small></div>
                   </button>
                 ))}
+                <nav className={controls.pagination} aria-label="Paginación de fecha comparada">
+                  <button type="button" disabled={comparisonPage <= 1} onClick={() => setComparisonPage((value) => Math.max(1, value - 1))}>Anterior</button>
+                  <span>Página <strong>{comparisonPage}</strong> de <strong>{comparisonTotalPages}</strong></span>
+                  <button type="button" disabled={comparisonPage >= comparisonTotalPages} onClick={() => setComparisonPage((value) => value + 1)}>Siguiente</button>
+                </nav>
               </details>
             ) : null}
           </aside>
