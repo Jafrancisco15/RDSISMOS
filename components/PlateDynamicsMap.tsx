@@ -1,14 +1,28 @@
 "use client";
 
+import { useState } from "react";
 import { divIcon } from "leaflet";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip } from "react-leaflet";
 import type { GeoFeatureCollection, PlateMapEvent } from "@/lib/plateDynamics";
 import { horizontalAxisScale, type SeismicMechanism } from "@/lib/seismicMechanisms";
 import { destinationPoint, type TectonicVector } from "@/lib/tectonicVectors";
+import { ActiveFaultOverlay, type FaultOverlayStatus } from "./ActiveFaultOverlay";
 import styles from "./PlateDynamicsDashboard.module.css";
+import faultStyles from "./PlateDynamicsFaults.module.css";
 import vectorStyles from "./PlateDynamicsVectors.module.css";
 
 type Pair = [number, number];
+
+const EMPTY_FAULT_STATUS: FaultOverlayStatus = {
+  state: "idle",
+  faultCount: 0,
+  visibleStrongEvents: 0,
+  within25Km: 0,
+  within75Km: 0,
+  mechanismMatches: 0,
+  highCompatibility: 0,
+  warning: null,
+};
 
 function boundaryColor(type: unknown) {
   if (type === "subduction") return "#ef4444";
@@ -102,6 +116,13 @@ function guidePoints(boundaries: GeoFeatureCollection) {
   return guides.filter((_, index) => index % stride === 0);
 }
 
+function faultStatusText(status: FaultOverlayStatus) {
+  if (status.state === "zoom" || status.state === "error") return status.warning ?? "Capa de fallas no disponible.";
+  if (status.state === "loading") return "Cargando trazas GEM para la ventana visible…";
+  if (status.state !== "ready") return "Activa la capa y acerca el mapa para comparar sismos con fallas cartografiadas.";
+  return `${status.faultCount.toLocaleString("es-DO")} trazas · M6+ visibles: ${status.visibleStrongEvents} · ≤25 km: ${status.within25Km} · ≤75 km: ${status.within75Km} · mecanismos evaluados: ${status.mechanismMatches} · compatibilidad alta: ${status.highCompatibility}.`;
+}
+
 export function PlateDynamicsMap({
   polygons,
   boundaries,
@@ -126,6 +147,8 @@ export function PlateDynamicsMap({
   onSelectPlate: (plateId: string) => void;
 }) {
   const guides = showBoundaryGuides ? guidePoints(boundaries) : [];
+  const [showActiveFaults, setShowActiveFaults] = useState(false);
+  const [faultStatus, setFaultStatus] = useState<FaultOverlayStatus>(EMPTY_FAULT_STATUS);
 
   return (
     <div className={styles.mapWrap}>
@@ -164,6 +187,13 @@ export function PlateDynamicsMap({
             opacity: showBoundaryGuides ? 1 : 0.88,
             dashArray: feature?.properties?.boundaryType === "transform" ? "5 5" : undefined,
           })}
+        />
+
+        <ActiveFaultOverlay
+          enabled={showActiveFaults}
+          events={events}
+          mechanisms={showMechanisms ? mechanisms : []}
+          onStatus={setFaultStatus}
         />
 
         {showBoundaryGuides && guides.map((guide) => {
@@ -273,11 +303,41 @@ export function PlateDynamicsMap({
               <div>P: {mechanism.pAxis.azimuthDeg.toFixed(0)}° / plunge {mechanism.pAxis.plungeDeg.toFixed(0)}°</div>
               <div>T: {mechanism.tAxis.azimuthDeg.toFixed(0)}° / plunge {mechanism.tAxis.plungeDeg.toFixed(0)}°</div>
               {mechanism.strikeDeg !== null && <div>NP1: strike {mechanism.strikeDeg.toFixed(0)}° · dip {mechanism.dipDeg?.toFixed(0) ?? "—"}° · rake {mechanism.rakeDeg?.toFixed(0) ?? "—"}°</div>}
+              {mechanism.strike2Deg !== null && <div>NP2: strike {mechanism.strike2Deg.toFixed(0)}° · dip {mechanism.dip2Deg?.toFixed(0) ?? "—"}° · rake {mechanism.rake2Deg?.toFixed(0) ?? "—"}°</div>}
               <div>{new Date(mechanism.timeUtc).toLocaleString("es-DO", { timeZone: "UTC" })} UTC</div>
             </Popup>
           </CircleMarker>,
         ])}
       </MapContainer>
+
+      <div className={faultStyles.faultControl}>
+        <label className={faultStyles.faultToggle}>
+          <input
+            type="checkbox"
+            checked={showActiveFaults}
+            onChange={(event) => {
+              setShowActiveFaults(event.target.checked);
+              if (!event.target.checked) setFaultStatus(EMPTY_FAULT_STATUS);
+            }}
+          />
+          <span>
+            <strong>Fallas activas + asociación sísmica</strong>
+            <small>GEM GAF-DB · proximidad M6+ y compatibilidad con mecanismos focales. Requiere zoom 3+.</small>
+          </span>
+        </label>
+        <div className={`${faultStyles.faultStatus} ${faultStatus.warning ? faultStyles.faultStatusWarning : ""}`}>
+          {faultStatusText(faultStatus)}
+          {faultStatus.warning && faultStatus.state === "ready" ? ` ${faultStatus.warning}` : ""}
+        </div>
+        {showActiveFaults && (
+          <div className={faultStyles.faultPalette}>
+            <span><i style={{ background: "#fb7185" }} /> inversa/thrust</span>
+            <span><i style={{ background: "#4ade80" }} /> normal</span>
+            <span><i style={{ background: "#fbbf24" }} /> strike-slip</span>
+            <span><i style={{ background: "#c084fc" }} /> sin clasificar</span>
+          </div>
+        )}
+      </div>
 
       <div className={styles.mapLegend}>
         <span><i style={{ background: "#ef4444" }} /> Subducción</span>
@@ -287,6 +347,7 @@ export function PlateDynamicsMap({
         {showVectors && <span><b className={vectorStyles.legendArrow}>➤</b> Movimiento de placa</span>}
         {showBoundaryGuides && <span><b className={vectorStyles.legendGlyph}>↔</b> Interacción del borde</span>}
         {showMechanisms && <span><b style={{ color: "#ef4444" }}>P</b>/<b style={{ color: "#38bdf8" }}>T</b> Compresión/extensión USGS</span>}
+        {showActiveFaults && <span><b style={{ color: "#c084fc" }}>━</b> Fallas activas GEM</span>}
       </div>
     </div>
   );

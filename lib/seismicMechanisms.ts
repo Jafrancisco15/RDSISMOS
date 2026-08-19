@@ -16,6 +16,9 @@ export interface SeismicMechanism {
   strikeDeg: number | null;
   dipDeg: number | null;
   rakeDeg: number | null;
+  strike2Deg: number | null;
+  dip2Deg: number | null;
+  rake2Deg: number | null;
   percentDoubleCouple: number | null;
   source: string;
   sourceUrl: string | null;
