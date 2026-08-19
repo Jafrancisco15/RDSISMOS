@@ -76,11 +76,12 @@ async function fetchModelRange(start: number, end: number, signal: AbortSignal) 
   const response = await fetch(MODEL_FILE_URL, {
     headers: {
       Accept: "application/x-netcdf,application/octet-stream,*/*",
+      "Accept-Encoding": "identity",
       Range: `bytes=${start}-${end}`,
       "User-Agent": "RDSISMOS/1.0",
     },
     signal,
-    next: { revalidate: 604_800 },
+    cache: "no-store",
   });
   if (!response.ok) throw new Error(`EarthScope EMC NetCDF respondió HTTP ${response.status}.`);
   const buffer = await response.arrayBuffer();
