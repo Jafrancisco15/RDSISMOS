@@ -3,24 +3,32 @@ import {
   MANTLE_TOMOGRAPHY_DEPTHS,
   aggregateMantleCells,
   chooseTomographyGridStep,
-  parseEarthModelGeoCsv,
   summarizeMantleCells,
   type MantleTomographyCell,
   type MantleTomographyResponse,
 } from "@/lib/mantleTomography";
+import {
+  decodeNetcdfNumericSlice,
+  netcdfTypeSize,
+  parseNetcdfClassicHeader,
+  type NetcdfClassicHeader,
+  type NetcdfVariable,
+} from "@/lib/netcdfClassic";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const MODEL = "SEISGLOB2" as const;
-const MODEL_CANDIDATES = ["SEISGLOB2", "SEISGLOB2_percent"];
-const SERVICE_BASES = [
-  "https://service.iris.edu/irisws/earth-model/1/plane",
-  "https://service.earthscope.org/irisws/earth-model/1/plane",
-];
+const MODEL_FILE_URL = "https://ds.iris.edu/files/products/emc/emc-files/SEISGLOB2_percent.nc";
+const HEADER_RANGE_END = 131_071;
+const MODEL_MIN_DEPTH_KM = 50;
+const MODEL_DEPTH_STEP_KM = 50;
 
 type Bounds = { west: number; south: number; east: number; north: number };
+type HeaderCache = { header: NetcdfClassicHeader; initialBuffer: ArrayBuffer; fullFile: boolean };
+
+let headerPromise: Promise<HeaderCache> | null = null;
 
 function normalizeLongitude(value: number) {
   let longitude = value;
@@ -58,60 +66,112 @@ function longitudeSpan(bounds: Bounds) {
   return 360 - bounds.west + bounds.east;
 }
 
-function serviceSegments(bounds: Bounds) {
-  if (longitudeSpan(bounds) >= 350) return [{ west: -180, east: 180 }];
-  if (bounds.west <= bounds.east) return [{ west: bounds.west, east: bounds.east }];
-  return [{ west: bounds.west, east: 180 }, { west: -180, east: bounds.east }];
+function longitudeInside(longitude: number, bounds: Bounds) {
+  const value = normalizeLongitude(longitude);
+  if (bounds.west <= bounds.east) return value >= bounds.west && value <= bounds.east;
+  return value >= bounds.west || value <= bounds.east;
 }
 
-async function fetchGeoCsv(segment: { west: number; east: number }, bounds: Bounds, depthKm: number, signal: AbortSignal) {
-  const errors: string[] = [];
-  for (const base of SERVICE_BASES) {
-    for (const model of MODEL_CANDIDATES) {
-      const params = new URLSearchParams({
-        model,
-        depth: String(depthKm),
-        minlat: bounds.south.toFixed(3),
-        maxlat: bounds.north.toFixed(3),
-        minlon: segment.west.toFixed(3),
-        maxlon: segment.east.toFixed(3),
-        format: "geocsv",
-        nodata: "404",
-      });
-      try {
-        const response = await fetch(`${base}?${params}`, {
-          headers: { Accept: "text/plain,text/csv", "User-Agent": "RDSISMOS/1.0" },
-          signal,
-          next: { revalidate: 604_800 },
-        });
-        if (!response.ok) {
-          errors.push(`${new URL(base).host}/${model}: HTTP ${response.status}`);
-          continue;
-        }
-        const text = await response.text();
-        const cells = parseEarthModelGeoCsv(text);
-        if (cells.length) return cells;
-        errors.push(`${new URL(base).host}/${model}: respuesta sin celdas interpretables`);
-      } catch (error) {
-        if (error instanceof DOMException && error.name === "AbortError") throw error;
-        errors.push(`${new URL(base).host}/${model}: ${error instanceof Error ? error.message : "error de consulta"}`);
-      }
+async function fetchModelRange(start: number, end: number, signal: AbortSignal) {
+  const response = await fetch(MODEL_FILE_URL, {
+    headers: {
+      Accept: "application/x-netcdf,application/octet-stream,*/*",
+      "Accept-Encoding": "identity",
+      Range: `bytes=${start}-${end}`,
+      "User-Agent": "RDSISMOS/1.0",
+    },
+    signal,
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`EarthScope EMC NetCDF respondió HTTP ${response.status}.`);
+  const buffer = await response.arrayBuffer();
+  return { buffer, partial: response.status === 206 };
+}
+
+async function loadHeader(signal: AbortSignal) {
+  if (!headerPromise) {
+    headerPromise = (async () => {
+      const first = await fetchModelRange(0, HEADER_RANGE_END, signal);
+      const header = parseNetcdfClassicHeader(first.buffer);
+      return { header, initialBuffer: first.buffer, fullFile: !first.partial };
+    })().catch((error) => {
+      headerPromise = null;
+      throw error;
+    });
+  }
+  return headerPromise;
+}
+
+function dimensionSize(header: NetcdfClassicHeader, variable: NetcdfVariable, name: string) {
+  const position = variable.dimensionIds.findIndex((id) => header.dimensions[id]?.name.toLowerCase() === name);
+  if (position < 0) throw new Error(`SEISGLOB2 no expone la dimensión ${name} en dvs.`);
+  const dimensionId = variable.dimensionIds[position];
+  const size = header.dimensions[dimensionId]?.size;
+  if (!size) throw new Error(`Dimensión ${name} inválida en SEISGLOB2.`);
+  return { position, size };
+}
+
+function assertExpectedLayout(header: NetcdfClassicHeader, variable: NetcdfVariable) {
+  const names = variable.dimensionIds.map((id) => header.dimensions[id]?.name.toLowerCase());
+  if (names.join(",") !== "depth,latitude,longitude") {
+    throw new Error(`Orden de dimensiones inesperado para SEISGLOB2 dvs: ${names.join(",")}.`);
+  }
+  const depth = dimensionSize(header, variable, "depth");
+  const latitude = dimensionSize(header, variable, "latitude");
+  const longitude = dimensionSize(header, variable, "longitude");
+  if (latitude.size !== 179 || longitude.size !== 360) {
+    throw new Error(`Malla SEISGLOB2 inesperada: ${latitude.size}×${longitude.size}.`);
+  }
+  return { depthCount: depth.size, latitudeCount: latitude.size, longitudeCount: longitude.size };
+}
+
+async function loadDepthSlice(depthKm: number, signal: AbortSignal) {
+  const { header, initialBuffer, fullFile } = await loadHeader(signal);
+  const variable = header.variables.find((item) => item.name.toLowerCase() === "dvs");
+  if (!variable) throw new Error("El archivo oficial SEISGLOB2 no contiene la variable dvs.");
+  const { depthCount, latitudeCount, longitudeCount } = assertExpectedLayout(header, variable);
+  const depthIndex = Math.round((depthKm - MODEL_MIN_DEPTH_KM) / MODEL_DEPTH_STEP_KM);
+  if (depthIndex < 0 || depthIndex >= depthCount) throw new Error(`Profundidad ${depthKm} km fuera de SEISGLOB2.`);
+
+  const valuesPerSlice = latitudeCount * longitudeCount;
+  const bytesPerValue = netcdfTypeSize(variable.type);
+  const bytesPerSlice = valuesPerSlice * bytesPerValue;
+  const start = variable.begin + depthIndex * bytesPerSlice;
+  const end = start + bytesPerSlice - 1;
+
+  let sliceBuffer: ArrayBuffer;
+  if (fullFile && initialBuffer.byteLength > end) {
+    sliceBuffer = initialBuffer.slice(start, end + 1);
+  } else {
+    const range = await fetchModelRange(start, end, signal);
+    sliceBuffer = range.partial ? range.buffer : range.buffer.slice(start, end + 1);
+  }
+  const values = decodeNetcdfNumericSlice(sliceBuffer, variable.type, valuesPerSlice);
+  return { values, latitudeCount, longitudeCount };
+}
+
+async function cellsForBounds(depthKm: number, bounds: Bounds, signal: AbortSignal) {
+  const { values, latitudeCount, longitudeCount } = await loadDepthSlice(depthKm, signal);
+  const cells: MantleTomographyCell[] = [];
+  for (let latIndex = 0; latIndex < latitudeCount; latIndex += 1) {
+    const latitude = -89 + latIndex;
+    if (latitude < bounds.south || latitude > bounds.north) continue;
+    for (let lonIndex = 0; lonIndex < longitudeCount; lonIndex += 1) {
+      const longitude = normalizeLongitude(lonIndex);
+      if (!longitudeInside(longitude, bounds)) continue;
+      const dvsPct = values[latIndex * longitudeCount + lonIndex];
+      if (!Number.isFinite(dvsPct) || Math.abs(dvsPct) > 100) continue;
+      cells.push({ latitude, longitude, dvsPct });
     }
   }
-  throw new Error(`EarthScope EMC no devolvió una sección utilizable. ${errors.slice(0, 4).join(" · ")}`);
+  return cells;
 }
 
 export async function GET(request: NextRequest) {
   try {
     const depthKm = nearestDepth(request.nextUrl.searchParams.get("depth"));
     const bounds = parseBounds(request.nextUrl.searchParams.get("bbox"));
-    const segments = serviceSegments(bounds);
-    const rawCells: MantleTomographyCell[] = [];
-
-    for (const segment of segments) {
-      const cells = await fetchGeoCsv(segment, bounds, depthKm, request.signal);
-      rawCells.push(...cells);
-    }
+    const rawCells = await cellsForBounds(depthKm, bounds, request.signal);
 
     const spanLon = longitudeSpan(bounds);
     const spanLat = bounds.north - bounds.south;
