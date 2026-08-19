@@ -4,11 +4,14 @@ import { useState } from "react";
 import { divIcon } from "leaflet";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip } from "react-leaflet";
 import type { GeoFeatureCollection, PlateMapEvent } from "@/lib/plateDynamics";
+import { MANTLE_TOMOGRAPHY_DEPTHS } from "@/lib/mantleTomography";
 import { horizontalAxisScale, type SeismicMechanism } from "@/lib/seismicMechanisms";
 import { destinationPoint, type TectonicVector } from "@/lib/tectonicVectors";
 import { ActiveFaultOverlay, type FaultOverlayStatus } from "./ActiveFaultOverlay";
+import { EMPTY_MANTLE_STATUS, MantleTomographyOverlay, type MantleTomographyStatus } from "./MantleTomographyOverlay";
 import styles from "./PlateDynamicsDashboard.module.css";
 import faultStyles from "./PlateDynamicsFaults.module.css";
+import tomographyStyles from "./PlateDynamicsTomography.module.css";
 import vectorStyles from "./PlateDynamicsVectors.module.css";
 
 type Pair = [number, number];
@@ -123,6 +126,24 @@ function faultStatusText(status: FaultOverlayStatus) {
   return `${status.faultCount.toLocaleString("es-DO")} trazas · M6+ visibles: ${status.visibleStrongEvents} · ≤25 km: ${status.within25Km} · ≤75 km: ${status.within75Km} · mecanismos evaluados: ${status.mechanismMatches} · compatibilidad alta: ${status.highCompatibility}.`;
 }
 
+function mantleStatusText(status: MantleTomographyStatus) {
+  if (status.state === "loading") return `Cargando SEISGLOB2 a ${status.depthKm.toLocaleString("es-DO")} km…`;
+  if (status.state === "error") return status.warning ?? "Tomografía no disponible.";
+  if (status.state !== "ready") return "Activa la capa para proyectar anomalías de velocidad S a través del manto.";
+  return `${status.cellCount.toLocaleString("es-DO")} celdas · resolución mostrada ≈${status.gridStepDeg}° · dVs ${status.minDvsPct?.toFixed(1)}% a +${status.maxDvsPct?.toFixed(1)}% · rápidas ${status.fastPct?.toFixed(0)}% · lentas ${status.slowPct?.toFixed(0)}%.`;
+}
+
+function depthLabel(depth: number) {
+  if (depth === 100) return "100 km · manto superior";
+  if (depth === 400) return "400 km · cerca de 410";
+  if (depth === 650) return "650 km · cerca de 660";
+  if (depth === 1000) return "1,000 km · manto medio";
+  if (depth === 1500) return "1,500 km · manto inferior";
+  if (depth === 2000) return "2,000 km · manto inferior";
+  if (depth === 2500) return "2,500 km · manto profundo";
+  return "2,850 km · cerca de CMB";
+}
+
 export function PlateDynamicsMap({
   polygons,
   boundaries,
@@ -149,6 +170,9 @@ export function PlateDynamicsMap({
   const guides = showBoundaryGuides ? guidePoints(boundaries) : [];
   const [showActiveFaults, setShowActiveFaults] = useState(false);
   const [faultStatus, setFaultStatus] = useState<FaultOverlayStatus>(EMPTY_FAULT_STATUS);
+  const [showMantleTomography, setShowMantleTomography] = useState(false);
+  const [mantleDepth, setMantleDepth] = useState(650);
+  const [mantleStatus, setMantleStatus] = useState<MantleTomographyStatus>({ ...EMPTY_MANTLE_STATUS, depthKm: 650 });
 
   return (
     <div className={styles.mapWrap}>
@@ -177,6 +201,12 @@ export function PlateDynamicsMap({
             layer.bindTooltip(`${plateName} · ID ${plateId}`, { sticky: true });
             layer.on("click", () => onSelectPlate(plateId));
           }}
+        />
+
+        <MantleTomographyOverlay
+          enabled={showMantleTomography}
+          depthKm={mantleDepth}
+          onStatus={setMantleStatus}
         />
 
         <GeoJSON
@@ -339,6 +369,44 @@ export function PlateDynamicsMap({
         )}
       </div>
 
+      <div className={tomographyStyles.tomographyControl}>
+        <label className={tomographyStyles.tomographyToggle}>
+          <input
+            type="checkbox"
+            checked={showMantleTomography}
+            onChange={(event) => {
+              setShowMantleTomography(event.target.checked);
+              if (!event.target.checked) setMantleStatus({ ...EMPTY_MANTLE_STATUS, depthKm: mantleDepth });
+            }}
+          />
+          <span>
+            <strong>Tomografía del manto</strong>
+            <small>SEISGLOB2 · anomalía de velocidad S respecto a PREM, desde 100 hasta 2,850 km.</small>
+          </span>
+        </label>
+        {showMantleTomography && (
+          <>
+            <div className={tomographyStyles.depthRow}>
+              <span>Profundidad</span>
+              <select value={mantleDepth} onChange={(event) => setMantleDepth(Number(event.target.value))}>
+                {MANTLE_TOMOGRAPHY_DEPTHS.map((depth) => <option key={depth} value={depth}>{depthLabel(depth)}</option>)}
+              </select>
+            </div>
+            <div className={`${tomographyStyles.tomographyStatus} ${mantleStatus.warning ? tomographyStyles.tomographyWarning : ""}`}>
+              {mantleStatusText(mantleStatus)}
+              {mantleStatus.warning && mantleStatus.state === "ready" ? ` ${mantleStatus.warning}` : ""}
+            </div>
+            <div className={tomographyStyles.scale}>
+              <div className={tomographyStyles.gradient} />
+              <div className={tomographyStyles.scaleLabels}><span>lenta · proxy caliente</span><span>rápida · proxy fría</span></div>
+            </div>
+            <div className={tomographyStyles.caveat}>
+              dVs no es temperatura directa: composición, anisotropía y fusión parcial también modifican la velocidad sísmica.
+            </div>
+          </>
+        )}
+      </div>
+
       <div className={styles.mapLegend}>
         <span><i style={{ background: "#ef4444" }} /> Subducción</span>
         <span><i style={{ background: "#22c55e" }} /> Divergente</span>
@@ -348,6 +416,7 @@ export function PlateDynamicsMap({
         {showBoundaryGuides && <span><b className={vectorStyles.legendGlyph}>↔</b> Interacción del borde</span>}
         {showMechanisms && <span><b style={{ color: "#ef4444" }}>P</b>/<b style={{ color: "#38bdf8" }}>T</b> Compresión/extensión USGS</span>}
         {showActiveFaults && <span><b style={{ color: "#c084fc" }}>━</b> Fallas activas GEM</span>}
+        {showMantleTomography && <span><b style={{ color: "#60a5fa" }}>▦</b> Tomografía SEISGLOB2</span>}
       </div>
     </div>
   );
