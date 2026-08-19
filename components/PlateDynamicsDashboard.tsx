@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import type { PlateDynamicsResponse, PlateStat } from "@/lib/plateDynamics";
+import type { SeismicMechanismResponse } from "@/lib/seismicMechanisms";
 import type { TectonicVector, TectonicVectorResponse } from "@/lib/tectonicVectors";
 import styles from "./PlateDynamicsDashboard.module.css";
 import vectorStyles from "./PlateDynamicsVectors.module.css";
@@ -48,9 +49,13 @@ export function PlateDynamicsDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [showVectors, setShowVectors] = useState(false);
   const [showBoundaryGuides, setShowBoundaryGuides] = useState(false);
+  const [showMechanisms, setShowMechanisms] = useState(false);
   const [vectorData, setVectorData] = useState<TectonicVectorResponse | null>(null);
   const [vectorLoading, setVectorLoading] = useState(false);
   const [vectorError, setVectorError] = useState<string | null>(null);
+  const [mechanismData, setMechanismData] = useState<SeismicMechanismResponse | null>(null);
+  const [mechanismLoading, setMechanismLoading] = useState(false);
+  const [mechanismError, setMechanismError] = useState<string | null>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -117,6 +122,44 @@ export function PlateDynamicsDashboard() {
       controller.abort();
     };
   }, [showVectors, vectorData]);
+
+  useEffect(() => {
+    if (!showMechanisms) return;
+    const controller = new AbortController();
+    let disposed = false;
+
+    async function loadMechanisms() {
+      setMechanismLoading(true);
+      setMechanismError(null);
+      setMechanismData(null);
+      try {
+        const mechanismMinMagnitude = Math.max(6, applied.minMagnitude);
+        const params = new URLSearchParams({
+          days: "365",
+          minMagnitude: String(mechanismMinMagnitude),
+          limit: "28",
+        });
+        const response = await fetch(`/api/seismic-mechanisms?${params}`, {
+          cache: "force-cache",
+          signal: controller.signal,
+        });
+        const payload = await response.json() as SeismicMechanismResponse & { error?: string };
+        if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+        if (!disposed) setMechanismData(payload);
+      } catch (loadError) {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        if (!disposed) setMechanismError(loadError instanceof Error ? loadError.message : "No fue posible cargar mecanismos focales.");
+      } finally {
+        if (!disposed) setMechanismLoading(false);
+      }
+    }
+
+    void loadMechanisms();
+    return () => {
+      disposed = true;
+      controller.abort();
+    };
+  }, [showMechanisms, applied.minMagnitude]);
 
   const selected = useMemo(
     () => data?.plates.find((plate) => plate.plateId === selectedPlateId) ?? null,
@@ -221,6 +264,13 @@ export function PlateDynamicsDashboard() {
             <small>Símbolos para subducción, convergencia, divergencia y deslizamiento transformante.</small>
           </span>
         </label>
+        <label className={vectorStyles.layerToggle}>
+          <input type="checkbox" checked={showMechanisms} onChange={(event) => setShowMechanisms(event.target.checked)} />
+          <span>
+            <strong>Mecanismos focales P/T</strong>
+            <small>Ejes de compresión P y extensión T para sismos fuertes con productos de mecanismo USGS.</small>
+          </span>
+        </label>
         {showVectors && (
           <div className={`${vectorStyles.vectorStatus} ${vectorError ? vectorStyles.vectorStatusError : ""}`}>
             {vectorLoading && "Calculando cinemática de placas con el modelo de rotaciones de GPlates…"}
@@ -230,6 +280,19 @@ export function PlateDynamicsDashboard() {
                 {vectorData.vectors.length} vectores · intervalo {vectorData.intervalMa} Ma · anchor plate {vectorData.anchorPlateId}.
                 La flecha indica movimiento modelado de la placa; no representa una fuerza generada por los sismos.
                 {vectorData.warnings.length > 0 ? ` ${vectorData.warnings.join(" ")}` : ""}
+              </>
+            )}
+          </div>
+        )}
+        {showMechanisms && (
+          <div className={`${vectorStyles.vectorStatus} ${mechanismError ? vectorStyles.vectorStatusError : ""}`}>
+            {mechanismLoading && "Consultando tensores de momento y mecanismos focales USGS…"}
+            {!mechanismLoading && mechanismError && `Mecanismos no disponibles: ${mechanismError}. Las demás capas siguen funcionando.`}
+            {!mechanismLoading && !mechanismError && mechanismData && (
+              <>
+                {mechanismData.mechanisms.length} mecanismos · últimos {mechanismData.days} días · M{mechanismData.minMagnitude.toFixed(1)}+.
+                Rojo = eje P de máxima compresión; azul = eje T de máxima extensión. La longitud mostrada es simbólica y se reduce cuando el eje tiene gran plunge.
+                {mechanismData.warnings.length > 0 ? ` ${mechanismData.warnings.join(" ")}` : ""}
               </>
             )}
           </div>
@@ -261,13 +324,15 @@ export function PlateDynamicsDashboard() {
                 boundaries={data.boundaries}
                 events={data.mapEvents}
                 vectors={vectorData?.vectors ?? []}
+                mechanisms={mechanismData?.mechanisms ?? []}
                 showVectors={showVectors && Boolean(vectorData)}
                 showBoundaryGuides={showBoundaryGuides}
+                showMechanisms={showMechanisms && Boolean(mechanismData)}
                 selectedPlateId={selectedPlateId}
                 onSelectPlate={setSelectedPlateId}
               />
               <p className={styles.mapNote}>
-                La asignación sísmica es geométrica: relaciona el epicentro con el polígono superficial de GPlates. En subducción no implica que esa sea necesariamente la placa física que rompió en profundidad. Las flechas cinemáticas son un promedio modelado 0–1 Ma y su longitud está amplificada para hacerlas visibles.
+                La asignación sísmica es geométrica: relaciona el epicentro con el polígono superficial de GPlates. En subducción no implica que esa sea necesariamente la placa física que rompió en profundidad. Las flechas cinemáticas son un promedio modelado 0–1 Ma y su longitud está amplificada para hacerlas visibles. Los ejes P/T son la proyección horizontal de los ejes principales publicados por USGS; indican orientación de compresión/extensión del mecanismo, no magnitud de una fuerza en newtons.
               </p>
             </div>
 
@@ -305,7 +370,7 @@ export function PlateDynamicsDashboard() {
           </section>
 
           <footer className={styles.sourceNote}>
-            Fuentes: USGS ComCat para sismicidad observada y GPlates Web Service/EarthByte para topología y cinemática de placas. Modelo tectónico fijado explícitamente en {data.model} para reproducibilidad. Las guías de borde describen el tipo de límite; no son un cálculo de fuerza en newtons.
+            Fuentes: USGS ComCat para sismicidad observada y productos de tensor de momento/mecanismo focal; GPlates Web Service/EarthByte para topología y cinemática de placas. Modelo tectónico fijado explícitamente en {data.model} para reproducibilidad. Las guías de borde describen el tipo de límite; no son un cálculo de fuerza en newtons.
           </footer>
         </>
       )}
