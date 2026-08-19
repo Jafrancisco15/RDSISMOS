@@ -1,0 +1,96 @@
+.tomographyControl {
+  position: absolute;
+  right: 12px;
+  bottom: 58px;
+  z-index: 600;
+  width: min(360px, calc(100% - 24px));
+  padding: 11px 12px;
+  border: 1px solid rgba(96, 165, 250, .38);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, .92);
+  box-shadow: 0 10px 28px rgba(2, 6, 23, .38);
+  color: #e2e8f0;
+  backdrop-filter: blur(10px);
+}
+
+.tomographyToggle {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.tomographyToggle input {
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+  accent-color: #60a5fa;
+}
+
+.tomographyToggle strong,
+.tomographyToggle small { display: block; }
+.tomographyToggle strong { color: #f8fafc; font-size: .82rem; }
+.tomographyToggle small { margin-top: 2px; color: #94a3b8; font-size: .68rem; line-height: 1.4; }
+
+.depthRow {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 8px;
+  align-items: center;
+  margin-top: 9px;
+}
+
+.depthRow span { color: #94a3b8; font-size: .68rem; font-weight: 700; }
+.depthRow select {
+  min-height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(148, 163, 184, .24);
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 0 8px;
+}
+
+.tomographyStatus {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(148, 163, 184, .16);
+  color: #cbd5e1;
+  font-size: .68rem;
+  line-height: 1.45;
+}
+
+.tomographyWarning { color: #fde68a; }
+
+.scale {
+  margin-top: 8px;
+}
+
+.gradient {
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #991b1b, #ef4444, #fb923c, #cbd5e1, #60a5fa, #2563eb, #1e3a8a);
+}
+
+.scaleLabels {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 4px;
+  color: #94a3b8;
+  font-size: .62rem;
+}
+
+.caveat {
+  margin-top: 7px;
+  color: #64748b;
+  font-size: .62rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 650px) {
+  .tomographyControl {
+    right: 8px;
+    bottom: 88px;
+    width: min(330px, calc(100% - 16px));
+  }
+}
