@@ -1,9 +1,14 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import type { PlateDynamicsResponse, PlateStat } from "@/lib/plateDynamics";
-import { PlateDynamicsMap } from "./PlateDynamicsMap";
 import styles from "./PlateDynamicsDashboard.module.css";
+
+const PlateDynamicsMap = dynamic(
+  () => import("./PlateDynamicsMap").then((module) => module.PlateDynamicsMap),
+  { ssr: false, loading: () => <div className={styles.loading}>Inicializando mapa tectónico…</div> },
+);
 
 function pct(value: number | null, digits = 1) {
   return value === null ? "—" : `${value.toFixed(digits)}%`;
