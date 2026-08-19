@@ -5,6 +5,7 @@ import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer
 import type { GeoFeatureCollection, PlateMapEvent } from "@/lib/plateDynamics";
 import { destinationPoint, type TectonicVector } from "@/lib/tectonicVectors";
 import styles from "./PlateDynamicsDashboard.module.css";
+import vectorStyles from "./PlateDynamicsVectors.module.css";
 
 type Pair = [number, number];
 
@@ -29,7 +30,7 @@ function vectorEnd(vector: TectonicVector) {
 
 function vectorIcon(bearingDeg: number, color: string) {
   return divIcon({
-    className: styles.vectorArrowIcon,
+    className: vectorStyles.vectorArrowIcon,
     html: `<span style="color:${color};transform:rotate(${bearingDeg - 90}deg)">➤</span>`,
     iconSize: [22, 22],
     iconAnchor: [11, 11],
@@ -48,7 +49,7 @@ function interactionIcon(type: unknown) {
   const item = interactionLabel(type);
   if (!item) return null;
   return divIcon({
-    className: styles.interactionGlyph,
+    className: vectorStyles.interactionGlyph,
     html: `<span style="border-color:${item.color};color:${item.color}">${item.glyph}</span>`,
     iconSize: [30, 24],
     iconAnchor: [15, 12],
@@ -236,8 +237,8 @@ export function PlateDynamicsMap({
         <span><i style={{ background: "#22c55e" }} /> Divergente</span>
         <span><i style={{ background: "#f59e0b" }} /> Transformante</span>
         <span><i style={{ background: "#38bdf8" }} /> Otro límite</span>
-        {showVectors && <span><b className={styles.legendArrow}>➤</b> Movimiento de placa</span>}
-        {showBoundaryGuides && <span><b className={styles.legendGlyph}>↔</b> Interacción del borde</span>}
+        {showVectors && <span><b className={vectorStyles.legendArrow}>➤</b> Movimiento de placa</span>}
+        {showBoundaryGuides && <span><b className={vectorStyles.legendGlyph}>↔</b> Interacción del borde</span>}
       </div>
     </div>
   );
