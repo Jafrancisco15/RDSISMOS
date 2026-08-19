@@ -3,6 +3,7 @@
 import { divIcon } from "leaflet";
 import { CircleMarker, GeoJSON, MapContainer, Marker, Polyline, Popup, TileLayer, Tooltip } from "react-leaflet";
 import type { GeoFeatureCollection, PlateMapEvent } from "@/lib/plateDynamics";
+import { horizontalAxisScale, type SeismicMechanism } from "@/lib/seismicMechanisms";
 import { destinationPoint, type TectonicVector } from "@/lib/tectonicVectors";
 import styles from "./PlateDynamicsDashboard.module.css";
 import vectorStyles from "./PlateDynamicsVectors.module.css";
@@ -56,6 +57,15 @@ function interactionIcon(type: unknown) {
   });
 }
 
+function mechanismAxisLine(mechanism: SeismicMechanism, axis: "p" | "t") {
+  const principal = axis === "p" ? mechanism.pAxis : mechanism.tAxis;
+  const horizontalScale = horizontalAxisScale(principal.plungeDeg);
+  const halfLengthKm = Math.max(55, Math.min(260, (95 + Math.max(0, mechanism.magnitude - 5.5) * 55) * horizontalScale));
+  const forward = destinationPoint(mechanism.latitude, mechanism.longitude, principal.azimuthDeg, halfLengthKm);
+  const backward = destinationPoint(mechanism.latitude, mechanism.longitude, principal.azimuthDeg + 180, halfLengthKm);
+  return [[backward.latitude, backward.longitude], [forward.latitude, forward.longitude]] as [[number, number], [number, number]];
+}
+
 function isPair(value: unknown): value is Pair {
   return Array.isArray(value) && value.length >= 2 && Number.isFinite(Number(value[0])) && Number.isFinite(Number(value[1]));
 }
@@ -97,8 +107,10 @@ export function PlateDynamicsMap({
   boundaries,
   events,
   vectors,
+  mechanisms,
   showVectors,
   showBoundaryGuides,
+  showMechanisms,
   selectedPlateId,
   onSelectPlate,
 }: {
@@ -106,8 +118,10 @@ export function PlateDynamicsMap({
   boundaries: GeoFeatureCollection;
   events: PlateMapEvent[];
   vectors: TectonicVector[];
+  mechanisms: SeismicMechanism[];
   showVectors: boolean;
   showBoundaryGuides: boolean;
+  showMechanisms: boolean;
   selectedPlateId: string | null;
   onSelectPlate: (plateId: string) => void;
 }) {
@@ -230,6 +244,39 @@ export function PlateDynamicsMap({
             </CircleMarker>
           );
         })}
+
+        {showMechanisms && mechanisms.flatMap((mechanism) => [
+          <Polyline
+            key={`p-axis-${mechanism.id}`}
+            positions={mechanismAxisLine(mechanism, "p")}
+            pathOptions={{ color: "#ef4444", weight: 3.2, opacity: 0.92 }}
+          >
+            <Tooltip direction="top">P · compresión · {mechanism.pAxis.azimuthDeg.toFixed(0)}° / plunge {mechanism.pAxis.plungeDeg.toFixed(0)}°</Tooltip>
+          </Polyline>,
+          <Polyline
+            key={`t-axis-${mechanism.id}`}
+            positions={mechanismAxisLine(mechanism, "t")}
+            pathOptions={{ color: "#38bdf8", weight: 3.2, opacity: 0.92 }}
+          >
+            <Tooltip direction="top">T · extensión · {mechanism.tAxis.azimuthDeg.toFixed(0)}° / plunge {mechanism.tAxis.plungeDeg.toFixed(0)}°</Tooltip>
+          </Polyline>,
+          <CircleMarker
+            key={`mechanism-${mechanism.id}`}
+            center={[mechanism.latitude, mechanism.longitude]}
+            radius={5.5}
+            pathOptions={{ color: "#f8fafc", fillColor: "#0f172a", fillOpacity: 0.95, weight: 1.5 }}
+          >
+            <Tooltip direction="top">M{mechanism.magnitude.toFixed(1)} · mecanismo focal USGS</Tooltip>
+            <Popup>
+              <strong>{mechanism.place}</strong>
+              <div>M{mechanism.magnitude.toFixed(1)} · {mechanism.depthKm.toFixed(0)} km</div>
+              <div>P: {mechanism.pAxis.azimuthDeg.toFixed(0)}° / plunge {mechanism.pAxis.plungeDeg.toFixed(0)}°</div>
+              <div>T: {mechanism.tAxis.azimuthDeg.toFixed(0)}° / plunge {mechanism.tAxis.plungeDeg.toFixed(0)}°</div>
+              {mechanism.strikeDeg !== null && <div>NP1: strike {mechanism.strikeDeg.toFixed(0)}° · dip {mechanism.dipDeg?.toFixed(0) ?? "—"}° · rake {mechanism.rakeDeg?.toFixed(0) ?? "—"}°</div>}
+              <div>{new Date(mechanism.timeUtc).toLocaleString("es-DO", { timeZone: "UTC" })} UTC</div>
+            </Popup>
+          </CircleMarker>,
+        ])}
       </MapContainer>
 
       <div className={styles.mapLegend}>
@@ -239,6 +286,7 @@ export function PlateDynamicsMap({
         <span><i style={{ background: "#38bdf8" }} /> Otro límite</span>
         {showVectors && <span><b className={vectorStyles.legendArrow}>➤</b> Movimiento de placa</span>}
         {showBoundaryGuides && <span><b className={vectorStyles.legendGlyph}>↔</b> Interacción del borde</span>}
+        {showMechanisms && <span><b style={{ color: "#ef4444" }}>P</b>/<b style={{ color: "#38bdf8" }}>T</b> Compresión/extensión USGS</span>}
       </div>
     </div>
   );
