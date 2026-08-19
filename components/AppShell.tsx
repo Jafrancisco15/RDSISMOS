@@ -7,6 +7,7 @@ import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
 import { LearningStatusPanel } from "./LearningStatusPanel";
+import { PlateDynamicsDashboard } from "./PlateDynamicsDashboard";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { RecentFulfilledProjections } from "./RecentFulfilledProjections";
 import { ScopeActiveCountrySearch } from "./ScopeActiveCountrySearch";
@@ -14,7 +15,7 @@ import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "simulator";
+type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "simulator";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -30,6 +31,7 @@ export function AppShell() {
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
+        <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
         <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
       </nav>
 
@@ -84,6 +86,7 @@ export function AppShell() {
       {tab === "history" && <ProjectionHistoryPanel />}
       {tab === "heatmap" && <HistoricalHeatmap />}
       {tab === "events" && <EarthquakeEventsDashboard />}
+      {tab === "plates" && <PlateDynamicsDashboard />}
       {tab === "simulator" && <TectonicSimulator />}
     </>
   );
