@@ -1,0 +1,110 @@
+.vectorArrowIcon {
+  background: transparent;
+  border: 0;
+}
+
+.vectorArrowIcon span {
+  display: block;
+  width: 22px;
+  height: 22px;
+  font-size: 22px;
+  line-height: 22px;
+  transform-origin: 50% 50%;
+  filter: drop-shadow(0 1px 3px rgba(2, 6, 23, .95));
+}
+
+.interactionGlyph {
+  background: transparent;
+  border: 0;
+}
+
+.interactionGlyph span {
+  display: grid;
+  place-items: center;
+  min-width: 28px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid;
+  border-radius: 999px;
+  background: rgba(2, 6, 23, .88);
+  font-size: 13px;
+  font-weight: 900;
+  box-shadow: 0 2px 7px rgba(2, 6, 23, .5);
+}
+
+.legendArrow,
+.legendGlyph {
+  display: inline-grid;
+  place-items: center;
+  min-width: 14px;
+  color: #22d3ee;
+  font-size: 13px;
+}
+
+.legendGlyph { color: #22c55e; }
+
+.layerPanel {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  margin: 14px 0 0;
+}
+
+.layerToggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 260px;
+  flex: 1 1 300px;
+  padding: 12px 14px;
+  border: 1px solid rgba(148, 163, 184, .18);
+  border-radius: 14px;
+  background: rgba(15, 23, 42, .72);
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.layerToggle input {
+  width: 18px;
+  height: 18px;
+  accent-color: #7c3aed;
+}
+
+.layerToggle strong,
+.layerToggle small {
+  display: block;
+}
+
+.layerToggle strong { font-size: .84rem; }
+.layerToggle small { margin-top: 2px; color: #94a3b8; font-size: .72rem; line-height: 1.35; }
+
+.vectorStatus {
+  flex: 1 1 100%;
+  padding: 10px 12px;
+  border-left: 3px solid #22d3ee;
+  border-radius: 8px;
+  background: rgba(8, 145, 178, .09);
+  color: #bae6fd;
+  font-size: .76rem;
+  line-height: 1.5;
+}
+
+.vectorStatusError {
+  border-left-color: #ef4444;
+  background: rgba(127, 29, 29, .16);
+  color: #fecaca;
+}
+
+.vectorReadout {
+  margin: 12px 0 2px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(34, 211, 238, .18);
+  background: rgba(8, 145, 178, .08);
+}
+
+.vectorReadout span,
+.vectorReadout small { display: block; color: #94a3b8; }
+.vectorReadout strong { display: block; margin: 4px 0; color: #cffafe; font-size: 1.1rem; }
+.vectorReadout small { font-size: .7rem; line-height: 1.45; }
