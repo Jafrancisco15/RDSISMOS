@@ -12,16 +12,19 @@ const USGS_QUERY = "https://earthquake.usgs.gov/fdsnws/event/1/query";
 const DAY_MS = 86_400_000;
 const PAGE_SIZE = 500;
 const MAX_SEQUENCE_EVENTS = 1500;
+const SURFACE_ALTITUDE = 0.34;
 
 type Mode = "global" | "sequence";
 type ColorMode = "depth" | "time";
 type GlobePoint = EarthquakeEvent & { lat:number; lng:number; altitude:number; radius:number; color:string };
-type DepthStem = { id:string; color:string; points:Array<[number,number,number]> };
+type ScenePath = { id:string; color:string; width:number; points:Array<[number,number,number]> };
+type SceneLabel = { id:string; lat:number; lng:number; altitude:number; text:string; color:string; size:number };
 type UsgsFeature = { id:string; geometry?:{coordinates?:number[]}; properties?:Record<string,unknown> };
+type RaisedBlock = { geometry:{type:"Polygon";coordinates:number[][][]}; altitude:number };
 
 function daysAgo(days:number){ const d=new Date(); d.setUTCDate(d.getUTCDate()-days); return d.toISOString(); }
 function formatUtc(value:string){ return new Intl.DateTimeFormat("es-DO",{dateStyle:"medium",timeStyle:"short",timeZone:"UTC"}).format(new Date(value)); }
-function colorByDepth(d:number){ if(d<35)return"#ff5d2e"; if(d<70)return"#ffc857"; if(d<150)return"#51c7e8"; if(d<300)return"#3588d4"; return"#3f51d7"; }
+function colorByDepth(d:number){ if(d<35)return"#ff5d2e"; if(d<70)return"#ffc857"; if(d<150)return"#51c7e8"; if(d<300)return"#3588d4"; return"#6d5dfc"; }
 function colorByTime(t:string,a:number,b:number){ const v=Date.parse(t); const f=b>a?Math.max(0,Math.min(1,(v-a)/(b-a))):1; return `hsl(${(215-f*205).toFixed(0)} 88% 56%)`; }
 function num(value:unknown,fallback=0){ const n=Number(value); return Number.isFinite(n)?n:fallback; }
 function text(value:unknown,fallback=""){ return typeof value==="string"?value:fallback; }
@@ -66,7 +69,7 @@ export function SequenceGlobeUnified(){
   const [timelinePct,setTimelinePct]=useState(100); const [playing,setPlaying]=useState(false); const [loading,setLoading]=useState(true);
   const [sequenceLoading,setSequenceLoading]=useState(false); const [error,setError]=useState<string|null>(null);
 
-  useEffect(()=>{const n=containerRef.current;if(!n)return;const u=()=>setSize({width:Math.max(320,n.clientWidth),height:Math.max(620,Math.min(900,window.innerHeight*.76))});u();const o=new ResizeObserver(u);o.observe(n);return()=>o.disconnect();},[]);
+  useEffect(()=>{const n=containerRef.current;if(!n)return;const u=()=>setSize({width:Math.max(320,n.clientWidth),height:Math.max(650,Math.min(930,window.innerHeight*.8))});u();const o=new ResizeObserver(u);o.observe(n);return()=>o.disconnect();},[]);
   useEffect(()=>{const c=globeRef.current?.controls();if(!c)return;c.enableDamping=true;c.dampingFactor=.08;c.autoRotate=mode==="global";c.autoRotateSpeed=.18;},[mode]);
   useEffect(()=>{globeRef.current?.pointOfView({lat:8,lng:-35,altitude:2.05},800);},[]);
 
@@ -75,7 +78,7 @@ export function SequenceGlobeUnified(){
 
   async function reconstruct(anchor:EarthquakeEvent){
     setSelected(anchor);setMode("sequence");setPlaying(false);setTimelinePct(100);setSequenceLoading(true);setError(null);
-    globeRef.current?.pointOfView({lat:anchor.latitude,lng:anchor.longitude,altitude:.55},950);
+    globeRef.current?.pointOfView({lat:anchor.latitude-3,lng:anchor.longitude,altitude:.78},950);
     try{const ms=Date.parse(anchor.timeUtc);const starttime=new Date(ms-beforeDays*DAY_MS).toISOString();const endtime=new Date(Math.min(Date.now(),ms+afterDays*DAY_MS)).toISOString();const base=new URLSearchParams({starttime,endtime,minmagnitude:String(sequenceMinMagnitude),latitude:String(anchor.latitude),longitude:String(anchor.longitude),maxradiuskm:String(radiusKm),orderby:"time-asc",limit:String(PAGE_SIZE)});const gathered:EarthquakeEvent[]=[];for(let page=0;page<3;page++){const p=new URLSearchParams(base);p.set("offset",String(page*PAGE_SIZE+1));const r=await fetchPage(p);gathered.push(...r.events);if(!r.hasMore)break;}const unique=[...new Map(gathered.map(e=>[e.id,e])).values()].sort((a,b)=>Date.parse(a.timeUtc)-Date.parse(b.timeUtc)).slice(0,MAX_SEQUENCE_EVENTS);setSequenceEvents(unique);if(!unique.length)setError("USGS no devolvió eventos para ese radio y ventana temporal.");}catch(e){setSequenceEvents([]);setError(e instanceof Error?e.message:"No fue posible reconstruir la secuencia.");}finally{setSequenceLoading(false);}
   }
 
@@ -84,18 +87,70 @@ export function SequenceGlobeUnified(){
   const times=useMemo(()=>sequenceEvents.map(e=>Date.parse(e.timeUtc)).filter(Number.isFinite),[sequenceEvents]);
   const t0=times.length?Math.min(...times):0,t1=times.length?Math.max(...times):0,cutoff=t0+(t1-t0)*(timelinePct/100);
   const visibleSequence=useMemo(()=>timelinePct>=100?sequenceEvents:sequenceEvents.filter(e=>Date.parse(e.timeUtc)<=cutoff),[cutoff,sequenceEvents,timelinePct]);
-  const active=mode==="global"?globalEvents:visibleSequence; const minTime=mode==="global"?Date.now()-globalDays*DAY_MS:t0,maxTime=mode==="global"?Date.now():Math.max(t1,t0+1),maxDepth=Math.max(30,...active.map(e=>e.depthKm));
-  const points=useMemo<GlobePoint[]>(()=>active.map(e=>{const df=Math.max(0,Math.min(1,e.depthKm/maxDepth));const altitude=mode==="sequence"?.018+df*.22*depthExaggeration:.012+Math.max(0,Math.min(.09,(e.magnitude-globalMinMagnitude)*.022));return{...e,lat:e.latitude,lng:e.longitude,altitude,radius:mode==="sequence"?Math.max(.055,Math.min(.18,.055+Math.max(0,e.magnitude)*.024)):.13+Math.max(0,Math.min(.42,(e.magnitude-globalMinMagnitude)*.12)),color:colorMode==="depth"?colorByDepth(e.depthKm):colorByTime(e.timeUtc,minTime,maxTime)};}),[active,colorMode,depthExaggeration,globalMinMagnitude,maxDepth,maxTime,minTime,mode]);
-  const stems=useMemo<DepthStem[]>(()=>mode!=="sequence"?[]:points.map(p=>({id:p.id,color:p.color,points:[[p.latitude,p.longitude,.008],[p.latitude,p.longitude,p.altitude]]})),[mode,points]);
-  const rings=useMemo(()=>mode==="sequence"&&selected?[{lat:selected.latitude,lng:selected.longitude,maxRadius:Math.max(.45,radiusKm/111.2)}]:[],[mode,radiusKm,selected]);
+  const active=mode==="global"?globalEvents:visibleSequence;
+  const minTime=mode==="global"?Date.now()-globalDays*DAY_MS:t0,maxTime=mode==="global"?Date.now():Math.max(t1,t0+1);
+  const maxDepth=Math.max(30,...sequenceEvents.map(e=>e.depthKm));
+  const depthPer100Km=.026*depthExaggeration;
+
+  const blockBounds=useMemo(()=>{
+    if(!selected)return null;
+    const latHalf=Math.max(.35,radiusKm/111.2);
+    const cos=Math.max(.18,Math.cos(selected.latitude*Math.PI/180));
+    const lngHalf=Math.min(18,Math.max(.35,radiusKm/(111.2*cos)));
+    return {south:selected.latitude-latHalf,north:selected.latitude+latHalf,west:selected.longitude-lngHalf,east:selected.longitude+lngHalf};
+  },[radiusKm,selected]);
+
+  const raisedBlock=useMemo<RaisedBlock[]>(()=>{
+    if(mode!=="sequence"||!blockBounds)return[];
+    const {south,north,west,east}=blockBounds;
+    return [{altitude:SURFACE_ALTITUDE,geometry:{type:"Polygon",coordinates:[[[west,south],[east,south],[east,north],[west,north],[west,south]]]}}];
+  },[blockBounds,mode]);
+
+  const points=useMemo<GlobePoint[]>(()=>active.map(e=>{
+    const altitude=mode==="sequence"?Math.max(.018,SURFACE_ALTITUDE-(e.depthKm/100)*depthPer100Km):.012+Math.max(0,Math.min(.09,(e.magnitude-globalMinMagnitude)*.022));
+    return {...e,lat:e.latitude,lng:e.longitude,altitude,radius:mode==="sequence"?Math.max(.045,Math.min(.14,.045+Math.max(0,e.magnitude)*.02)):.13+Math.max(0,Math.min(.42,(e.magnitude-globalMinMagnitude)*.12)),color:colorMode==="depth"?colorByDepth(e.depthKm):colorByTime(e.timeUtc,minTime,maxTime)};
+  }),[active,colorMode,depthPer100Km,globalMinMagnitude,maxTime,minTime,mode]);
+
+  const scenePaths=useMemo<ScenePath[]>(()=>{
+    if(mode!=="sequence"||!blockBounds)return[];
+    const paths:ScenePath[]=[];
+    for(const p of points)paths.push({id:`stem-${p.id}`,color:p.color,width:.5,points:[[p.latitude,p.longitude,SURFACE_ALTITUDE],[p.latitude,p.longitude,p.altitude]]});
+    const {south,north,west,east}=blockBounds;
+    for(let i=0;i<=4;i++){
+      const f=i/4,lat=south+(north-south)*f,lng=west+(east-west)*f;
+      paths.push({id:`lat-${i}`,color:"rgba(235,245,255,.58)",width:.32,points:[[lat,west,SURFACE_ALTITUDE+.002],[lat,east,SURFACE_ALTITUDE+.002]]});
+      paths.push({id:`lng-${i}`,color:"rgba(235,245,255,.58)",width:.32,points:[[south,lng,SURFACE_ALTITUDE+.002],[north,lng,SURFACE_ALTITUDE+.002]]});
+    }
+    return paths;
+  },[blockBounds,mode,points]);
+
+  const depthLabels=useMemo<SceneLabel[]>(()=>{
+    if(mode!=="sequence"||!blockBounds||!selected)return[];
+    const tickMax=Math.max(50,Math.ceil(maxDepth/50)*50);
+    const ticks=[0,.25,.5,.75,1].map(f=>Math.round(tickMax*f/10)*10);
+    return ticks.map((km,i)=>({id:`depth-${i}`,lat:blockBounds.south,lng:blockBounds.west,altitude:Math.max(.018,SURFACE_ALTITUDE-(km/100)*depthPer100Km),text:`${km} km`,color:"#f8fafc",size:.55}));
+  },[blockBounds,depthPer100Km,maxDepth,mode,selected]);
+
   const maxMag=Math.max(0,...visibleSequence.map(e=>e.magnitude));
+  const selectedDepth=selected?.depthKm??0;
 
   return <main className={styles.csicPage}><section className={styles.csicViewer}><div className={styles.csicGlobe} ref={containerRef}>
-    <Globe ref={globeRef} width={size.width} height={size.height} globeImageUrl={DAY_TEXTURE} backgroundColor="#b8d2df" atmosphereColor="#bfe9f7" atmosphereAltitude={.12} pointsData={points} pointLat="lat" pointLng="lng" pointAltitude="altitude" pointRadius="radius" pointColor="color" pointLabel={(point:object)=>{const e=point as GlobePoint;return `<div class=\"globe-tooltip\"><strong>M${e.magnitude.toFixed(1)} · ${e.place}</strong><span>${formatUtc(e.timeUtc)} UTC</span><small>${e.depthKm.toFixed(1)} km de profundidad</small></div>`;}} onPointClick={(point:object)=>{const e=point as GlobePoint;if(mode==="global")void reconstruct(e);else setSelected(e);}} pathsData={stems} pathPoints="points" pathPointLat={(p:object)=>Number((p as [number,number,number])[0])} pathPointLng={(p:object)=>Number((p as [number,number,number])[1])} pathPointAlt={(p:object)=>Number((p as [number,number,number])[2])} pathColor={(d:object)=>[(d as DepthStem).color,(d as DepthStem).color]} pathStroke={.55} pathDashLength={1} pathDashGap={0} ringsData={rings} ringLat="lat" ringLng="lng" ringAltitude={.006} ringColor={()=>["rgba(190,24,93,.95)","rgba(190,24,93,0)"]} ringMaxRadius="maxRadius" ringPropagationSpeed={0} ringRepeatPeriod={0} enablePointerInteraction />
-    {(loading||sequenceLoading)&&<div className={styles.csicLoading}>{sequenceLoading?"Construyendo volumen sísmico…":"Cargando catálogo sísmico…"}</div>}
+    <Globe ref={globeRef} width={size.width} height={size.height} globeImageUrl={DAY_TEXTURE} backgroundColor="#b8d2df" atmosphereColor="#bfe9f7" atmosphereAltitude={.12}
+      polygonsData={raisedBlock} polygonGeoJsonGeometry={(d:object)=>(d as RaisedBlock).geometry} polygonAltitude={(d:object)=>(d as RaisedBlock).altitude} polygonCapColor={()=>"rgba(78,126,105,.48)"} polygonSideColor={()=>"rgba(24,48,63,.66)"} polygonStrokeColor={()=>"rgba(226,242,248,.82)"} polygonsTransitionDuration={500}
+      pointsData={points} pointLat="lat" pointLng="lng" pointAltitude="altitude" pointRadius="radius" pointColor="color" pointsMerge={false}
+      pointLabel={(point:object)=>{const e=point as GlobePoint;return `<div class=\"globe-tooltip\"><strong>M${e.magnitude.toFixed(1)} · ${e.place}</strong><span>${formatUtc(e.timeUtc)} UTC</span><small>${e.depthKm.toFixed(1)} km de profundidad</small></div>`;}}
+      onPointClick={(point:object)=>{const e=point as GlobePoint;if(mode==="global")void reconstruct(e);else setSelected(e);}}
+      pathsData={scenePaths} pathPoints="points" pathPointLat={(p:object)=>Number((p as [number,number,number])[0])} pathPointLng={(p:object)=>Number((p as [number,number,number])[1])} pathPointAlt={(p:object)=>Number((p as [number,number,number])[2])} pathColor={(d:object)=>[(d as ScenePath).color,(d as ScenePath).color]} pathStroke={(d:object)=>(d as ScenePath).width} pathDashLength={1} pathDashGap={0}
+      labelsData={depthLabels} labelLat="lat" labelLng="lng" labelAltitude="altitude" labelText="text" labelColor="color" labelSize="size" labelDotRadius={.12} labelResolution={2}
+      enablePointerInteraction />
+
+    {(loading||sequenceLoading)&&<div className={styles.csicLoading}>{sequenceLoading?"Levantando bloque geológico…":"Cargando catálogo sísmico…"}</div>}
     {!loading&&!sequenceLoading&&error&&<div className={styles.csicError}>{error}<button onClick={()=>window.location.reload()}>Recargar</button></div>}
+
+    {mode==="sequence"&&<div className={styles.depthScale} aria-label="Escala de profundidad"><b>PROFUNDIDAD</b><span>0 km</span><i/><span>{Math.round(maxDepth/2)} km</span><i/><span>{Math.round(maxDepth)} km</span><small>proyección vertical {depthExaggeration.toFixed(1)}×</small></div>}
+
     <aside className={styles.csicPanel}><div className={styles.csicPanelHead}><span>RDSISMOS</span><h2>SISMICIDAD 3D</h2><small>{mode==="global"?"Planeta · últimos sismos":selected?.place??"Secuencia local"}</small></div><div className={styles.csicMetrics}><div><b>{mode==="global"?globalEvents.length:visibleSequence.length}</b><span>eventos</span></div><div><b>{mode==="global"?Math.max(0,...globalEvents.map(e=>e.magnitude)).toFixed(1):maxMag.toFixed(1)}</b><span>mag. máx.</span></div></div>
-    {mode==="global"?<><label><span>Ventana</span><select value={globalDays} onChange={e=>setGlobalDays(Number(e.target.value))}><option value={7}>7 días</option><option value={30}>30 días</option><option value={60}>60 días</option><option value={90}>90 días</option></select></label><label><span>Magnitud mínima</span><select value={globalMinMagnitude} onChange={e=>setGlobalMinMagnitude(Number(e.target.value))}><option value={4}>M4.0+</option><option value={4.5}>M4.5+</option><option value={5}>M5.0+</option><option value={5.5}>M5.5+</option><option value={6}>M6.0+</option></select></label><label><span>Color</span><select value={colorMode} onChange={e=>setColorMode(e.target.value as ColorMode)}><option value="depth">Profundidad</option><option value="time">Antigüedad</option></select></label><div className={styles.csicHint}>Toca un terremoto para reconstruir automáticamente su secuencia local.</div></>:<><div className={styles.csicDateRow}><span>{sequenceEvents.length?formatUtc(sequenceEvents[0].timeUtc):"—"}</span><b>→</b><span>{sequenceEvents.length?formatUtc(sequenceEvents.at(-1)!.timeUtc):"—"}</span></div><label><span>Radio</span><select value={radiusKm} onChange={e=>setRadiusKm(Number(e.target.value))}><option value={50}>50 km</option><option value={100}>100 km</option><option value={150}>150 km</option><option value={300}>300 km</option><option value={500}>500 km</option></select></label><label><span>Magnitud mínima</span><select value={sequenceMinMagnitude} onChange={e=>setSequenceMinMagnitude(Number(e.target.value))}><option value={0}>M0+</option><option value={1}>M1+</option><option value={2}>M2+</option><option value={3}>M3+</option><option value={4}>M4+</option></select></label><label><span>Exageración vertical</span><select value={depthExaggeration} onChange={e=>setDepthExaggeration(Number(e.target.value))}><option value={1}>1×</option><option value={1.5}>1.5×</option><option value={2.2}>2.2×</option><option value={3}>3×</option></select></label><button className={styles.csicPrimary} onClick={()=>selected&&void reconstruct(selected)} disabled={!selected||sequenceLoading}>Aplicar filtros</button><div className={styles.csicTimeline}><button onClick={()=>{if(timelinePct>=100)setTimelinePct(0);setPlaying(v=>!v)}}>{playing?"❚❚":"▶"}</button><input type="range" min="0" max="100" value={timelinePct} onChange={e=>{setPlaying(false);setTimelinePct(Number(e.target.value))}}/><span>{times.length?formatUtc(new Date(cutoff).toISOString()):"—"}</span></div><button className={styles.csicSecondary} onClick={returnGlobal}>← Volver al planeta</button></>}
-    <div className={styles.csicLegend}><i className={styles.shallow}/>0–35 km <i className={styles.mid}/>35–150 km <i className={styles.deep}/>&gt;150 km</div></aside>
+    {mode==="global"?<><label><span>Ventana</span><select value={globalDays} onChange={e=>setGlobalDays(Number(e.target.value))}><option value={7}>7 días</option><option value={30}>30 días</option><option value={60}>60 días</option><option value={90}>90 días</option></select></label><label><span>Magnitud mínima</span><select value={globalMinMagnitude} onChange={e=>setGlobalMinMagnitude(Number(e.target.value))}><option value={4}>M4.0+</option><option value={4.5}>M4.5+</option><option value={5}>M5.0+</option><option value={5.5}>M5.5+</option><option value={6}>M6.0+</option></select></label><label><span>Color</span><select value={colorMode} onChange={e=>setColorMode(e.target.value as ColorMode)}><option value="depth">Profundidad</option><option value="time">Antigüedad</option></select></label><div className={styles.csicHint}>Toca un terremoto. El área local se levantará como un bloque geológico y los hipocentros se proyectarán debajo de la superficie.</div></>:<><div className={styles.csicDateRow}><span>{sequenceEvents.length?formatUtc(sequenceEvents[0].timeUtc):"—"}</span><b>→</b><span>{sequenceEvents.length?formatUtc(sequenceEvents.at(-1)!.timeUtc):"—"}</span></div><label><span>Radio</span><select value={radiusKm} onChange={e=>setRadiusKm(Number(e.target.value))}><option value={50}>50 km</option><option value={100}>100 km</option><option value={150}>150 km</option><option value={300}>300 km</option><option value={500}>500 km</option></select></label><label><span>Magnitud mínima</span><select value={sequenceMinMagnitude} onChange={e=>setSequenceMinMagnitude(Number(e.target.value))}><option value={0}>M0+</option><option value={1}>M1+</option><option value={2}>M2+</option><option value={3}>M3+</option><option value={4}>M4+</option></select></label><label><span>Proyección de profundidad</span><select value={depthExaggeration} onChange={e=>setDepthExaggeration(Number(e.target.value))}><option value={1}>1×</option><option value={1.5}>1.5×</option><option value={2.2}>2.2×</option><option value={3}>3×</option><option value={4}>4×</option></select></label><button className={styles.csicPrimary} onClick={()=>selected&&void reconstruct(selected)} disabled={!selected||sequenceLoading}>Actualizar bloque 3D</button><div className={styles.csicTimeline}><button onClick={()=>{if(!playing&&timelinePct>=100)setTimelinePct(0);setPlaying(v=>!v);}}>{playing?"Ⅱ":"▶"}</button><input type="range" min={0} max={100} value={timelinePct} onChange={e=>{setPlaying(false);setTimelinePct(Number(e.target.value));}}/><span>{visibleSequence.length} / {sequenceEvents.length} eventos</span></div><div className={styles.csicHint}>Superficie elevada = mapa local. Cada línea vertical baja desde la superficie hasta la profundidad real del hipocentro. Evento seleccionado: {selectedDepth.toFixed(1)} km.</div><button className={styles.csicSecondary} onClick={returnGlobal}>← Volver al planeta</button></>}
+    <div className={styles.csicLegend}><i className={styles.shallow}/><span>&lt;35 km</span><i className={styles.mid}/><span>35–150 km</span><i className={styles.deep}/><span>&gt;150 km</span></div></aside>
   </div></section></main>;
 }
