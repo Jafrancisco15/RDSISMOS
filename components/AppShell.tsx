@@ -14,11 +14,13 @@ import { RecentFulfilledProjections } from "./RecentFulfilledProjections";
 import { ScopeActiveCountrySearch } from "./ScopeActiveCountrySearch";
 import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
+import { Sequence3D } from "./Sequence3D";
+import { Sequence3DAboutNote } from "./Sequence3DAboutNote";
 import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "simulator" | "about";
+type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "sequence" | "plates" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -34,6 +36,7 @@ export function AppShell() {
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
+        <button className={tab === "sequence" ? "active" : ""} onClick={() => setTab("sequence")}>Secuencia 3D</button>
         <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
         <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
         <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Acerca</button>
@@ -90,6 +93,7 @@ export function AppShell() {
       {tab === "history" && <ProjectionHistoryPanel />}
       {tab === "heatmap" && <HistoricalHeatmap />}
       {tab === "events" && <EarthquakeEventsDashboard />}
+      {tab === "sequence" && <Sequence3D />}
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
@@ -100,6 +104,7 @@ export function AppShell() {
       {tab === "about" && (
         <>
           <AboutRdsismos />
+          <Sequence3DAboutNote />
           <Slab2AboutNote />
         </>
       )}
