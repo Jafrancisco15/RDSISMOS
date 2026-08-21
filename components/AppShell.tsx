@@ -14,7 +14,7 @@ import { RecentFulfilledProjections } from "./RecentFulfilledProjections";
 import { ScopeActiveCountrySearch } from "./ScopeActiveCountrySearch";
 import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
-import { SequenceGlobeEntry } from "./SequenceGlobeEntry";
+import { SequenceGlobeUnified } from "./SequenceGlobeUnified";
 import { Sequence3DAboutNote } from "./Sequence3DAboutNote";
 import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
@@ -93,7 +93,7 @@ export function AppShell() {
       {tab === "history" && <ProjectionHistoryPanel />}
       {tab === "heatmap" && <HistoricalHeatmap />}
       {tab === "events" && <EarthquakeEventsDashboard />}
-      {tab === "sequence" && <SequenceGlobeEntry />}
+      {tab === "sequence" && <SequenceGlobeUnified />}
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
