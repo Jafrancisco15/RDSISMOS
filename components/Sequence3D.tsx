@@ -42,6 +42,7 @@ const VIEW_WIDTH = 920;
 const VIEW_HEIGHT = 620;
 const PROFILE_WIDTH = 920;
 const PROFILE_HEIGHT = 380;
+const DEFAULT_CONFIG: SequenceConfig = { beforeDays: 2, afterDays: 10, radiusKm: 150, minMagnitude: 1 };
 
 function formatUtc(value: string, withTime = true) {
   return new Intl.DateTimeFormat("es-DO", {
@@ -66,13 +67,20 @@ async function readJson<T>(response: Response): Promise<T> {
   }
 }
 
+function normalizeLongitude(value: number) {
+  let longitude = value;
+  while (longitude > 180) longitude -= 360;
+  while (longitude < -180) longitude += 360;
+  return longitude;
+}
+
 function sequenceBounds(latitude: number, longitude: number, radiusKm: number) {
   const latDelta = radiusKm / 111.2;
   const lonDelta = Math.min(175, radiusKm / (111.2 * Math.max(0.15, Math.cos(latitude * Math.PI / 180))));
   return {
-    west: Math.max(-180, longitude - lonDelta),
+    west: normalizeLongitude(longitude - lonDelta),
     south: Math.max(-89.8, latitude - latDelta),
-    east: Math.min(180, longitude + lonDelta),
+    east: normalizeLongitude(longitude + lonDelta),
     north: Math.min(89.8, latitude + latDelta),
   };
 }
@@ -137,10 +145,6 @@ function profileScreen(alongKm: number, depthKm: number, radiusKm: number, maxDe
   return { x, y };
 }
 
-function compact(value: number, digits = 1) {
-  return Number.isFinite(value) ? value.toFixed(digits) : "—";
-}
-
 export function Sequence3D() {
   const [anchors, setAnchors] = useState<EarthquakeEvent[]>([]);
   const [anchor, setAnchor] = useState<EarthquakeEvent | null>(null);
@@ -153,8 +157,8 @@ export function Sequence3D() {
   const [loadingSequence, setLoadingSequence] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [config, setConfig] = useState<SequenceConfig>({ beforeDays: 2, afterDays: 10, radiusKm: 150, minMagnitude: 1 });
-  const [applied, setApplied] = useState<SequenceConfig>(config);
+  const [config, setConfig] = useState<SequenceConfig>({ ...DEFAULT_CONFIG });
+  const [applied, setApplied] = useState<SequenceConfig>({ ...DEFAULT_CONFIG });
   const [viewAzimuth, setViewAzimuth] = useState(325);
   const [viewElevation, setViewElevation] = useState(34);
   const [verticalExaggeration, setVerticalExaggeration] = useState(1.6);
@@ -280,7 +284,7 @@ export function Sequence3D() {
         if (cancelled) return;
         setAnchors(payload.events);
         const first = payload.events[0] ?? null;
-        if (first) void loadSequence(first, applied);
+        if (first) void loadSequence(first, DEFAULT_CONFIG);
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "No fue posible cargar sismos recientes.");
       } finally {
@@ -288,7 +292,7 @@ export function Sequence3D() {
       }
     })();
     return () => { cancelled = true; };
-  }, [applied, loadSequence]);
+  }, [loadSequence]);
 
   useEffect(() => {
     if (!playing) return;
@@ -420,7 +424,7 @@ export function Sequence3D() {
 
   function applyConfig() {
     if (!anchor) return;
-    setApplied(config);
+    setApplied({ ...config });
     void loadSequence(anchor, config);
   }
 
