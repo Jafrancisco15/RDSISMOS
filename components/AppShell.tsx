@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
 import { HistoricalHeatmap } from "./HistoricalHeatmap";
 import { SeismicDashboard } from "./SeismicDashboard";
@@ -15,7 +16,7 @@ import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "simulator";
+type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -33,6 +34,7 @@ export function AppShell() {
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
         <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
         <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
+        <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Acerca</button>
       </nav>
 
       {tab === "globe" && (
@@ -88,6 +90,7 @@ export function AppShell() {
       {tab === "events" && <EarthquakeEventsDashboard />}
       {tab === "plates" && <PlateDynamicsDashboard />}
       {tab === "simulator" && <TectonicSimulator />}
+      {tab === "about" && <AboutRdsismos />}
     </>
   );
 }
