@@ -102,6 +102,7 @@ async function mechanismFromFeature(feature: Feature, signal: AbortSignal): Prom
       dip2Deg: numericProperty(productProps, ["nodal-plane-2-dip", "nodalPlane2Dip", "np2-dip"]),
       rake2Deg: numericProperty(productProps, ["nodal-plane-2-rake", "nodalPlane2Rake", "np2-rake"]),
       percentDoubleCouple: numericProperty(productProps, ["percent-double-couple", "percentDoubleCouple", "double-couple-percent"]),
+      scalarMomentNm: numericProperty(productProps, ["scalar-moment", "scalarMoment", "seismic-moment", "seismicMoment", "moment"]),
       source,
       sourceUrl: text(properties.url),
     };
