@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EarthquakeEvent, EarthquakePage } from "@/lib/earthquakes/types";
 import type { ScopeProjectionResponse } from "@/lib/scopeProjection";
+import { tectonicRegimeLabel } from "@/lib/slab2";
 import styles from "./ScopeProjection.module.css";
 
 const ScopeProjectionGlobe = dynamic(
@@ -131,21 +132,21 @@ export function ScopeProjection() {
           <div className={styles.brand}><span /> RDSISMOS · EARTHSCOPE LAB</div>
           <h1>Scope Projection</h1>
           <p>
-            Proyección de ocurrencia posterior basada en la misma lógica histórica del Mapa 3D,
-            pero ponderando cada análogo por la evidencia observacional disponible en EarthScope.
+            Proyección de ocurrencia posterior basada en analogía histórica, contexto tectónico 3D Slab2
+            y evidencia observacional disponible en EarthScope.
           </p>
         </div>
         <div className={styles.modelBadge}>
           <span>Modelo independiente</span>
-          <strong>Historical + EarthScope</strong>
-          <small>USGS/NEIC eventos · EarthScope estaciones y archivo de formas de onda</small>
+          <strong>Historical + Slab2 + EarthScope</strong>
+          <small>USGS/NEIC eventos · USGS Slab2 geometría · EarthScope observabilidad</small>
         </div>
       </header>
 
       <section className={styles.notice}>
         <strong>Cómo leer Scope Projection:</strong> el porcentaje es recurrencia histórica ponderada.
-        EarthScope no sustituye el catálogo de terremotos: aporta qué tan bien observado estuvo cada análogo histórico
-        y modifica su peso. La cifra no es certeza de que ocurrirá un sismo.
+        Slab2 evita tratar automáticamente como equivalentes un sismo de interfaz, uno intraslab y uno de placa superior;
+        EarthScope modifica el peso según la observabilidad histórica. La cifra no es certeza de que ocurrirá un sismo.
       </section>
 
       <section className={styles.eventsSection}>
@@ -197,14 +198,25 @@ export function ScopeProjection() {
             <h2>M{selectedEvent.magnitude.toFixed(1)} · {selectedEvent.place}</h2>
             <p>{formatDate(selectedEvent.timeUtc, true)} UTC · profundidad {selectedEvent.depthKm.toFixed(1)} km</p>
           </div>
+          {projection?.sourceTectonicContext && (
+            <div>
+              <span>Contexto hipocentral Slab2</span>
+              <strong>{tectonicRegimeLabel(projection.sourceTectonicContext.regime)}</strong>
+              <small>
+                {projection.sourceTectonicContext.slabDepthKm === null
+                  ? projection.sourceTectonicContext.warning ?? "Sin losa próxima modelada"
+                  : `losa ≈${projection.sourceTectonicContext.slabDepthKm.toFixed(0)} km · Δprof ${projection.sourceTectonicContext.depthOffsetKm?.toFixed(0) ?? "—"} km · confianza ${projection.sourceTectonicContext.confidence}`}
+              </small>
+            </div>
+          )}
           <button type="button" onClick={() => void runProjection(selectedEvent)} disabled={loading}>
-            {loading ? "Evaluando historia + EarthScope…" : "Recalcular Scope"}
+            {loading ? "Evaluando historia + Slab2 + EarthScope…" : "Recalcular Scope"}
           </button>
         </section>
       )}
 
       {error && <div className={styles.error}>{error}</div>}
-      {loading && !projection && <div className={styles.loading}>Buscando análogos, controles y evidencia histórica EarthScope…</div>}
+      {loading && !projection && <div className={styles.loading}>Buscando análogos, contexto Slab2 y evidencia histórica EarthScope…</div>}
 
       {projection && (
         <>
@@ -218,6 +230,11 @@ export function ScopeProjection() {
               <span>Análogos evaluados</span>
               <strong>{projection.analogsEvaluated}</strong>
               <small>{projection.analogsFound.toLocaleString()} candidatos históricos encontrados</small>
+            </article>
+            <article>
+              <span>Régimen tectónico fuente</span>
+              <strong>{projection.sourceTectonicContext ? tectonicRegimeLabel(projection.sourceTectonicContext.regime) : "—"}</strong>
+              <small>{projection.sourceTectonicContext?.available ? `Slab2 · confianza ${projection.sourceTectonicContext.confidence}` : "sin geometría Slab2 resuelta"}</small>
             </article>
             <article>
               <span>Soporte EarthScope</span>
@@ -288,17 +305,21 @@ export function ScopeProjection() {
 
           <section className={styles.tableSection}>
             <div className={styles.tableHeader}>
-              <div><span>Evidencia histórica</span><h2>Análogos + EarthScope</h2></div>
-              <p>EarthScope pondera la observabilidad de cada análogo; no decide por sí solo si hubo o no un terremoto posterior.</p>
+              <div><span>Evidencia histórica</span><h2>Análogos + Slab2 + EarthScope</h2></div>
+              <p>Slab2 ajusta compatibilidad tectónica; EarthScope pondera observabilidad. Ninguno decide por sí solo si habrá un terremoto posterior.</p>
             </div>
             <div className={styles.tableScroll}>
               <table>
-                <thead><tr><th>Análogo</th><th>Similitud</th><th>Evidencia EarthScope</th><th>Estaciones</th><th>Waveform</th><th>Países posteriores</th></tr></thead>
+                <thead><tr><th>Análogo</th><th>Similitud</th><th>Régimen 3D</th><th>Evidencia EarthScope</th><th>Estaciones</th><th>Waveform</th><th>Países posteriores</th></tr></thead>
                 <tbody>
                   {projection.analogs.map((analog) => (
                     <tr key={`analog:${analog.event.id}`}>
                       <td><strong>M{analog.event.magnitude.toFixed(1)} · {analog.event.place}</strong><small>{formatDate(analog.event.time)}</small></td>
-                      <td>{analog.similarityPct}%</td>
+                      <td>{analog.similarityPct}%<small>{analog.baseSimilarityPct === null ? "base no separada" : `base ${analog.baseSimilarityPct}% · tectónica ${analog.tectonicSimilarityPct ?? "—"}%`}</small></td>
+                      <td>
+                        <strong>{analog.tectonicRegime ? tectonicRegimeLabel(analog.tectonicRegime) : "—"}</strong>
+                        <small>{analog.slabContext?.available ? `losa ${analog.slabContext.slabDepthKm?.toFixed(0) ?? "—"} km · confianza ${analog.slabContext.confidence}` : analog.slabContext?.warning ?? "sin Slab2"}</small>
+                      </td>
                       <td><strong>{analog.earthScopeEvidencePct}%</strong><small>{analog.earthScopeStatus}</small></td>
                       <td>{analog.stationCount}<small>{analog.azimuthSectors}/8 sectores · cercana {analog.nearestStationKm === null ? "—" : `${analog.nearestStationKm.toFixed(0)} km`}</small></td>
                       <td>{analog.waveformConfirmed ? `Sí · ${analog.waveformStation}` : analog.waveformChecked ? "No confirmada" : "No sondeada"}</td>
@@ -332,6 +353,7 @@ export function ScopeProjection() {
 
           <section className={styles.notice}>
             <strong>Fuentes:</strong> {projection.providers.eventCatalog} aporta el catálogo de ocurrencias históricas;
+            {" "}{projection.providers.tectonicGeometry} aporta geometría 3D de subducción;
             {" "}{projection.providers.historicalObservation} aporta cobertura instrumental y archivo de formas de onda.
             {" "}{projection.providers.note}
           </section>

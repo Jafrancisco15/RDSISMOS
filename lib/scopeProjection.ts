@@ -1,4 +1,5 @@
 import type { ScopeHistoricalEvidence } from "@/lib/scopeHistoricalEvidence";
+import type { Slab2Context, TectonicRegime } from "@/lib/slab2";
 import type {
   HistoricalMigrationCapsule,
   HistoricalMigrationDestination,
@@ -8,6 +9,10 @@ import type {
 export interface ScopeProjectionAnalog {
   event: SeismicEvent;
   similarityPct: number;
+  baseSimilarityPct: number | null;
+  tectonicSimilarityPct: number | null;
+  tectonicRegime: TectonicRegime | null;
+  slabContext: Slab2Context | null;
   earthScopeEvidencePct: number;
   earthScopeStatus: ScopeHistoricalEvidence["status"];
   stationCount: number;
@@ -47,13 +52,15 @@ export interface ScopeProjectionDestination {
 }
 
 export interface ScopeProjectionResponse {
-  model: "scope-projection-v2";
+  model: "scope-projection-v3";
   generatedAt: string;
   source: SeismicEvent;
+  sourceTectonicContext: Slab2Context | null;
   targetCountry: HistoricalMigrationCapsule["targetCountry"];
   providers: {
     eventCatalog: "USGS/NEIC";
     historicalObservation: "EarthScope NSF SAGE";
+    tectonicGeometry: "USGS Slab2";
     note: string;
   };
   historyStart: string;
@@ -135,6 +142,10 @@ export function buildScopeProjection(
     return {
       event: analog.analogEvent,
       similarityPct: analog.similarityPct,
+      baseSimilarityPct: analog.baseSimilarityPct ?? null,
+      tectonicSimilarityPct: analog.tectonicSimilarityPct ?? null,
+      tectonicRegime: analog.tectonicRegime ?? null,
+      slabContext: analog.slabContext ?? null,
       earthScopeEvidencePct: scopeEvidence.evidencePct,
       earthScopeStatus: scopeEvidence.status,
       stationCount: scopeEvidence.stationCount,
@@ -226,23 +237,29 @@ export function buildScopeProjection(
   ));
   const earthScopeSupportedAnalogs = analogs.filter((analog) => analog.earthScopeEvidencePct >= 35).length;
   const waveformConfirmedAnalogs = analogs.filter((analog) => analog.waveformConfirmed).length;
+  const sourceTectonicContext = capsule.sourceTectonicContext ?? null;
   const warnings: string[] = [];
   if (earthScopeSupportedAnalogs < 3) {
     warnings.push("EarthScope aporta cobertura histórica limitada para varios análogos; la proyección conserva esos casos con peso reducido en lugar de descartarlos.");
   }
+  if (!sourceTectonicContext?.available) {
+    warnings.push("Slab2 no pudo resolver con confianza el contexto 3D del evento fuente; Scope conserva la similitud histórica original donde falta geometría tectónica.");
+  }
   if (!destinations.length) {
-    warnings.push("Los análogos evaluados no producen destinos con exceso positivo sobre la línea base después de ponderar la evidencia EarthScope.");
+    warnings.push("Los análogos evaluados no producen destinos con exceso positivo sobre la línea base después de ponderar evidencia EarthScope y contexto tectónico.");
   }
 
   return {
-    model: "scope-projection-v2",
+    model: "scope-projection-v3",
     generatedAt: new Date().toISOString(),
     source: capsule.sourceEvent,
+    sourceTectonicContext,
     targetCountry: capsule.targetCountry,
     providers: {
       eventCatalog: "USGS/NEIC",
       historicalObservation: "EarthScope NSF SAGE",
-      note: "EarthScope retiró su servicio FDSN Event en 2026; RDSISMOS usa el catálogo NEIC/USGS para la ocurrencia histórica y el archivo EarthScope para ponderar qué tan bien observado estuvo cada análogo.",
+      tectonicGeometry: "USGS Slab2",
+      note: "USGS/NEIC aporta ocurrencias; EarthScope pondera observabilidad histórica; Slab2 aporta geometría 3D de zonas de subducción. RDSISMOS accede a los puntos Slab2 mediante un espejo ArcGIS de solo lectura con atribución al dataset USGS Hayes et al. 2018.",
     },
     historyStart: capsule.historyStart,
     historyEnd: capsule.historyEnd,
@@ -263,13 +280,16 @@ export function buildScopeProjection(
     methodology: [
       `Se buscan análogos históricos del evento fuente con la misma lógica del Mapa 3D: hasta ${capsule.analogsEvaluated} análogos independientes dentro de ${capsule.sourceRadiusKm.toLocaleString()} km y M${capsule.analogMagnitudeMin.toFixed(1)}–M${capsule.analogMagnitudeMax.toFixed(1)}.`,
       `Para cada análogo se compara una ventana posterior de ${capsule.windowDays} días con una ventana de control anterior de igual duración.`,
+      "Slab2 compara la profundidad del hipocentro con la superficie 3D modelada de la losa. Cuando hay cobertura, la similitud final conserva 80% de la similitud histórica y añade 20% de compatibilidad tectónica; un evento de interfaz y uno intraslab dejan de ser equivalentes.",
       "La ocurrencia de eventos posteriores proviene del catálogo USGS/NEIC. Cada análogo recibe además un peso de observabilidad EarthScope basado en estaciones activas, cobertura azimutal y, para una muestra prioritaria, confirmación de forma de onda archivada.",
-      "Probabilidad Scope = suma de similitud × peso EarthScope de los análogos que tuvieron actividad posterior en el país / suma total de pesos de los análogos.",
+      "Probabilidad Scope = suma de similitud tectónicamente ajustada × peso EarthScope de los análogos que tuvieron actividad posterior en el país / suma total de pesos de los análogos.",
       "Base Scope usa la misma fórmula en las ventanas de control. Solo se muestran destinos con Probabilidad Scope mayor que la Base Scope.",
       "Un mismo país se consolida una sola vez aunque pertenezca a varias zonas sísmicas internas.",
     ],
     limitations: [
       "La Probabilidad Scope es recurrencia histórica ponderada, no una certeza ni una probabilidad física determinista de ruptura.",
+      "INTERFAZ, INTRASLAB y PLACA SUPERIOR son clasificaciones geométricas inferidas de Slab2; no identifican de forma definitiva la falla que rompió.",
+      "Slab2 no cubre por igual todas las regiones y su profundidad, espesor e incertidumbre son valores modelados. Si falta cobertura, Scope no inventa un régimen y conserva el peso histórico base.",
       "EarthScope no mantiene actualmente un catálogo global de eventos FDSN; su papel aquí es aportar evidencia observacional histórica del archivo de estaciones y formas de onda.",
       "La red EarthScope fue más escasa en décadas antiguas y en algunas regiones; por eso la falta de cobertura reduce peso pero no convierte un análogo en falso.",
       "Una forma de onda registrada demuestra observabilidad instrumental del análogo, no causalidad entre el evento fuente y un terremoto posterior distante.",
