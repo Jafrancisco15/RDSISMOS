@@ -1,3 +1,5 @@
+import type { Slab2Context, TectonicRegime } from "./slab2";
+
 export type EventSource = string;
 
 export type CatalogProvider =
@@ -114,6 +116,10 @@ export interface HistoricalMigrationDestination {
 export interface HistoricalAnalogEvidence {
   analogEvent: SeismicEvent;
   similarityPct: number;
+  baseSimilarityPct?: number;
+  tectonicSimilarityPct?: number;
+  tectonicRegime?: TectonicRegime;
+  slabContext?: Slab2Context | null;
   followerCount: number;
   controlFollowerCount?: number;
   hitZoneIds: string[];
@@ -126,6 +132,7 @@ export interface HistoricalMigrationCapsule {
   id: string;
   generatedAt: string;
   sourceEvent: SeismicEvent;
+  sourceTectonicContext?: Slab2Context | null;
   targetCountry: CountryTarget;
   historyStart: string;
   historyEnd: string;
