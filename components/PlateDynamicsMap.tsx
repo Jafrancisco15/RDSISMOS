@@ -9,6 +9,7 @@ import { horizontalAxisScale, type SeismicMechanism } from "@/lib/seismicMechani
 import { destinationPoint, type TectonicVector } from "@/lib/tectonicVectors";
 import { ActiveFaultOverlay, type FaultOverlayStatus } from "./ActiveFaultOverlay";
 import { EMPTY_MANTLE_STATUS, MantleTomographyOverlay, type MantleTomographyStatus } from "./MantleTomographyOverlay";
+import { EMPTY_STRESS_STATUS, StressBalanceOverlay, type StressBalanceStatus } from "./StressBalanceOverlay";
 import styles from "./PlateDynamicsDashboard.module.css";
 import faultStyles from "./PlateDynamicsFaults.module.css";
 import tomographyStyles from "./PlateDynamicsTomography.module.css";
@@ -126,6 +127,13 @@ function faultStatusText(status: FaultOverlayStatus) {
   return `${status.faultCount.toLocaleString("es-DO")} trazas · M6+ visibles: ${status.visibleStrongEvents} · ≤25 km: ${status.within25Km} · ≤75 km: ${status.within75Km} · mecanismos evaluados: ${status.mechanismMatches} · compatibilidad alta: ${status.highCompatibility}.`;
 }
 
+function stressStatusText(status: StressBalanceStatus) {
+  if (status.state === "zoom" || status.state === "error") return status.warning ?? "Balance de esfuerzos no disponible.";
+  if (status.state === "loading") return "Consultando fallas GEM y tensores de momento USGS para la región…";
+  if (status.state !== "ready") return "Activa el balance para sumar carga y relajación estática sobre fallas receptoras.";
+  return `${status.sourceCount} fuentes M6+ · ${status.evaluatedFaults} fallas evaluadas · carga ${status.loadedFaults} · relajación ${status.relaxedFaults} · casi neutras ${status.nearNeutralFaults} · cancelación alta ${status.highCancellationFaults} · mediana ${status.medianCancellationPct.toFixed(0)}%.`;
+}
+
 function mantleStatusText(status: MantleTomographyStatus) {
   if (status.state === "loading") return `Cargando SEISGLOB2 a ${status.depthKm.toLocaleString("es-DO")} km…`;
   if (status.state === "error") return status.warning ?? "Tomografía no disponible.";
@@ -170,6 +178,8 @@ export function PlateDynamicsMap({
   const guides = showBoundaryGuides ? guidePoints(boundaries) : [];
   const [showActiveFaults, setShowActiveFaults] = useState(false);
   const [faultStatus, setFaultStatus] = useState<FaultOverlayStatus>(EMPTY_FAULT_STATUS);
+  const [showStressBalance, setShowStressBalance] = useState(false);
+  const [stressStatus, setStressStatus] = useState<StressBalanceStatus>(EMPTY_STRESS_STATUS);
   const [showMantleTomography, setShowMantleTomography] = useState(false);
   const [mantleDepth, setMantleDepth] = useState(650);
   const [mantleStatus, setMantleStatus] = useState<MantleTomographyStatus>({ ...EMPTY_MANTLE_STATUS, depthKm: 650 });
@@ -225,6 +235,8 @@ export function PlateDynamicsMap({
           mechanisms={showMechanisms ? mechanisms : []}
           onStatus={setFaultStatus}
         />
+
+        <StressBalanceOverlay enabled={showStressBalance} onStatus={setStressStatus} />
 
         {showBoundaryGuides && guides.map((guide) => {
           const icon = interactionIcon(guide.type);
@@ -367,6 +379,35 @@ export function PlateDynamicsMap({
             <span><i style={{ background: "#c084fc" }} /> sin clasificar</span>
           </div>
         )}
+
+        <label className={faultStyles.faultToggle} style={{ marginTop: 10, paddingTop: 9, borderTop: "1px solid rgba(148,163,184,.16)" }}>
+          <input
+            type="checkbox"
+            checked={showStressBalance}
+            onChange={(event) => {
+              setShowStressBalance(event.target.checked);
+              if (!event.target.checked) setStressStatus(EMPTY_STRESS_STATUS);
+            }}
+          />
+          <span>
+            <strong>Balance de esfuerzos Coulomb</strong>
+            <small>Suma carga (+) y relajación (−) de sismos M6+ sobre fallas receptoras; permite visualizar cancelación parcial.</small>
+          </span>
+        </label>
+        {showStressBalance && (
+          <>
+            <div className={`${faultStyles.faultStatus} ${stressStatus.warning ? faultStyles.faultStatusWarning : ""}`}>
+              {stressStatusText(stressStatus)}
+              {stressStatus.warning && stressStatus.state === "ready" ? ` ${stressStatus.warning}` : ""}
+            </div>
+            <div className={faultStyles.faultPalette}>
+              <span><i style={{ background: "#dc2626" }} /> carga ΔCFS +</span>
+              <span><i style={{ background: "#cbd5e1" }} /> balance ≈ 0</span>
+              <span><i style={{ background: "#2563eb" }} /> relajación ΔCFS −</span>
+              <span><i style={{ background: "#94a3b8" }} /> geometría incierta</span>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={tomographyStyles.tomographyControl}>
@@ -416,6 +457,7 @@ export function PlateDynamicsMap({
         {showBoundaryGuides && <span><b className={vectorStyles.legendGlyph}>↔</b> Interacción del borde</span>}
         {showMechanisms && <span><b style={{ color: "#ef4444" }}>P</b>/<b style={{ color: "#38bdf8" }}>T</b> Compresión/extensión USGS</span>}
         {showActiveFaults && <span><b style={{ color: "#c084fc" }}>━</b> Fallas activas GEM</span>}
+        {showStressBalance && <span><b style={{ color: "#dc2626" }}>+</b>/<b style={{ color: "#2563eb" }}>−</b> Balance ΔCFS</span>}
         {showMantleTomography && <span><b style={{ color: "#60a5fa" }}>▦</b> Tomografía SEISGLOB2</span>}
       </div>
     </div>
