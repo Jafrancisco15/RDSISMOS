@@ -20,7 +20,7 @@ type GlobePoint = EarthquakeEvent & { lat:number; lng:number; altitude:number; r
 type ScenePath = { id:string; color:string; width:number; points:Array<[number,number,number]> };
 type SceneLabel = { id:string; lat:number; lng:number; altitude:number; text:string; color:string; size:number };
 type UsgsFeature = { id:string; geometry?:{coordinates?:number[]}; properties?:Record<string,unknown> };
-type RaisedBlock = { geometry:{type:"Polygon";coordinates:number[][][]}; altitude:number };
+type RaisedBlock = { geometry:any; altitude:number };
 
 function daysAgo(days:number){ const d=new Date(); d.setUTCDate(d.getUTCDate()-days); return d.toISOString(); }
 function formatUtc(value:string){ return new Intl.DateTimeFormat("es-DO",{dateStyle:"medium",timeStyle:"short",timeZone:"UTC"}).format(new Date(value)); }
