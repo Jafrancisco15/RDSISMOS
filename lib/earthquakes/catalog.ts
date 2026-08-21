@@ -146,7 +146,8 @@ function validateSourceAndReview(filters: EarthquakeFilters, source?: string) {
 export async function queryEarthquakeCatalog(filters: EarthquakeFilters, signal?: AbortSignal): Promise<EarthquakePage> {
   const source = filters.source?.toLowerCase();
   validateSourceAndReview(filters, source);
-  const useMultisource = recentEnough(filters) && source !== "usgs" && !filters.reviewedOnly;
+  const isExplicitSpatialQuery = filters.latitude !== undefined && filters.longitude !== undefined && filters.maxRadiusKm !== undefined;
+  const useMultisource = recentEnough(filters) && source !== "usgs" && !filters.reviewedOnly && !isExplicitSpatialQuery;
 
   if (useMultisource) {
     const result = await loadRecentMultisource(filters);
@@ -206,7 +207,8 @@ export async function queryEarthquakeCatalogAll(
 ) {
   const source = filters.source?.toLowerCase();
   validateSourceAndReview(filters, source);
-  if (recentEnough(filters) && source !== "usgs" && !filters.reviewedOnly) {
+  const isExplicitSpatialQuery = filters.latitude !== undefined && filters.longitude !== undefined && filters.maxRadiusKm !== undefined;
+  if (recentEnough(filters) && source !== "usgs" && !filters.reviewedOnly && !isExplicitSpatialQuery) {
     const result = await loadRecentMultisource(filters);
     if (result.events.length > maximum) {
       throw new Error(`La consulta supera ${maximum.toLocaleString()} eventos. Reduzca el rango o aumente la magnitud mínima.`);
