@@ -20,6 +20,7 @@ export interface SeismicMechanism {
   dip2Deg: number | null;
   rake2Deg: number | null;
   percentDoubleCouple: number | null;
+  scalarMomentNm: number | null;
   source: string;
   sourceUrl: string | null;
 }

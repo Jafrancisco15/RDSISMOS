@@ -51,6 +51,7 @@ const mechanism: SeismicMechanism = {
   dip2Deg: 88,
   rake2Deg: 5,
   percentDoubleCouple: 92,
+  scalarMomentNm: null,
   source: "USGS",
   sourceUrl: null,
 };

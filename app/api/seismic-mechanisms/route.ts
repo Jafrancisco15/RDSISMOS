@@ -25,6 +25,8 @@ type Feature = {
   properties?: Record<string, unknown>;
 };
 
+type Bounds = { west: number; south: number; east: number; north: number };
+
 function numberParam(value: string | null, fallback: number, min: number, max: number) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -33,6 +35,30 @@ function numberParam(value: string | null, fallback: number, min: number, max: n
 
 function text(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeLongitude(value: number) {
+  let longitude = value;
+  while (longitude > 180) longitude -= 360;
+  while (longitude < -180) longitude += 360;
+  return longitude;
+}
+
+function parseBounds(value: string | null): Bounds | null {
+  if (!value) return null;
+  const values = value.split(",").map(Number);
+  if (values.length !== 4 || !values.every(Number.isFinite)) return null;
+  const [westRaw, southRaw, eastRaw, northRaw] = values;
+  const south = Math.max(-89.9, Math.min(89.9, southRaw));
+  const north = Math.max(-89.9, Math.min(89.9, northRaw));
+  if (south >= north) return null;
+  return { west: normalizeLongitude(westRaw), south, east: normalizeLongitude(eastRaw), north };
+}
+
+function boundsSegments(bounds: Bounds | null) {
+  if (!bounds) return [null] as Array<{ west: number; east: number } | null>;
+  if (bounds.west <= bounds.east) return [{ west: bounds.west, east: bounds.east }];
+  return [{ west: bounds.west, east: 180 }, { west: -180, east: bounds.east }];
 }
 
 function productList(detail: unknown, type: string) {
@@ -102,6 +128,7 @@ async function mechanismFromFeature(feature: Feature, signal: AbortSignal): Prom
       dip2Deg: numericProperty(productProps, ["nodal-plane-2-dip", "nodalPlane2Dip", "np2-dip"]),
       rake2Deg: numericProperty(productProps, ["nodal-plane-2-rake", "nodalPlane2Rake", "np2-rake"]),
       percentDoubleCouple: numericProperty(productProps, ["percent-double-couple", "percentDoubleCouple", "double-couple-percent"]),
+      scalarMomentNm: numericProperty(productProps, ["scalar-moment", "scalarMoment", "seismic-moment", "seismicMoment", "moment"]),
       source,
       sourceUrl: text(properties.url),
     };
@@ -109,13 +136,30 @@ async function mechanismFromFeature(feature: Feature, signal: AbortSignal): Prom
   return null;
 }
 
-export async function GET(request: NextRequest) {
-  try {
-    const days = Math.round(numberParam(request.nextUrl.searchParams.get("days"), 365, 30, 730));
-    const minMagnitude = numberParam(request.nextUrl.searchParams.get("minMagnitude"), 6, 5.5, 8);
-    const limit = Math.round(numberParam(request.nextUrl.searchParams.get("limit"), 28, 5, 40));
-    const endTime = new Date();
-    const startTime = new Date(endTime.getTime() - days * DAY_MS);
+function featureSortValue(feature: Feature, orderBy: "time" | "magnitude") {
+  const properties = feature.properties ?? {};
+  return orderBy === "magnitude" ? Number(properties.mag ?? -Infinity) : Number(properties.time ?? -Infinity);
+}
+
+async function queryFeatures({
+  startTime,
+  endTime,
+  minMagnitude,
+  limit,
+  orderBy,
+  bounds,
+  signal,
+}: {
+  startTime: Date;
+  endTime: Date;
+  minMagnitude: number;
+  limit: number;
+  orderBy: "time" | "magnitude";
+  bounds: Bounds | null;
+  signal: AbortSignal;
+}) {
+  const segments = boundsSegments(bounds);
+  const results = await Promise.all(segments.map(async (segment) => {
     const params = new URLSearchParams({
       format: "geojson",
       starttime: startTime.toISOString(),
@@ -123,11 +167,40 @@ export async function GET(request: NextRequest) {
       minmagnitude: String(minMagnitude),
       producttype: "moment-tensor",
       eventtype: "earthquake",
-      orderby: "time",
+      orderby: orderBy,
       limit: String(limit),
     });
-    const summary = await fetchJson(`${USGS_QUERY}?${params}`, request.signal) as { features?: Feature[] };
-    const features = summary.features ?? [];
+    if (bounds && segment) {
+      params.set("minlatitude", bounds.south.toFixed(4));
+      params.set("maxlatitude", bounds.north.toFixed(4));
+      params.set("minlongitude", segment.west.toFixed(4));
+      params.set("maxlongitude", segment.east.toFixed(4));
+    }
+    return fetchJson(`${USGS_QUERY}?${params}`, signal) as Promise<{ features?: Feature[] }>;
+  }));
+
+  const unique = new Map<string, Feature>();
+  for (const result of results) {
+    for (const feature of result.features ?? []) {
+      const id = text(feature.id);
+      if (id) unique.set(id, feature);
+    }
+  }
+  return [...unique.values()]
+    .sort((a, b) => featureSortValue(b, orderBy) - featureSortValue(a, orderBy))
+    .slice(0, limit);
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const days = Math.round(numberParam(request.nextUrl.searchParams.get("days"), 365, 30, 1825));
+    const minMagnitude = numberParam(request.nextUrl.searchParams.get("minMagnitude"), 6, 5.5, 8);
+    const limit = Math.round(numberParam(request.nextUrl.searchParams.get("limit"), 28, 5, 60));
+    const orderBy = request.nextUrl.searchParams.get("orderBy") === "magnitude" ? "magnitude" as const : "time" as const;
+    const bounds = parseBounds(request.nextUrl.searchParams.get("bbox"));
+    const endTime = new Date();
+    const startTime = new Date(endTime.getTime() - days * DAY_MS);
+    const features = await queryFeatures({ startTime, endTime, minMagnitude, limit, orderBy, bounds, signal: request.signal });
     const settled = await Promise.allSettled(features.map((feature) => mechanismFromFeature(feature, request.signal)));
     const mechanisms = settled
       .filter((item): item is PromiseFulfilledResult<SeismicMechanism | null> => item.status === "fulfilled")
