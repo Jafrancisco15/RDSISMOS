@@ -4,6 +4,7 @@ import { buildHistoricalMigrationCapsuleV2 } from "@/lib/historicalMigrationV2";
 import { haversineKm } from "@/lib/regions";
 import { loadScopeHistoricalEvidence } from "@/lib/scopeHistoricalEvidence";
 import { buildScopeProjection } from "@/lib/scopeProjection";
+import { enrichHistoricalCapsuleWithSlab2 } from "@/lib/slab2";
 import type { CountryTarget, SeismicEvent } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -92,13 +93,14 @@ export async function POST(request: NextRequest) {
 
   try {
     const target = nearestCountry(source);
-    const capsule = await buildHistoricalMigrationCapsuleV2(source, target.code);
-    const analogs = capsule.analogs.slice(0, 10);
+    const historicalCapsule = await buildHistoricalMigrationCapsuleV2(source, target.code);
+    const slabAwareCapsule = await enrichHistoricalCapsuleWithSlab2(historicalCapsule, request.signal);
+    const analogs = slabAwareCapsule.analogs.slice(0, 10);
     const evidence = await mapWithConcurrency(analogs, 3, async (analog, index) => (
       loadScopeHistoricalEvidence(analog.analogEvent, { probeWaveform: index < 4 })
     ));
     const projection = buildScopeProjection(
-      { ...capsule, analogs },
+      { ...slabAwareCapsule, analogs, analogsEvaluated: analogs.length },
       evidence,
     );
     return NextResponse.json(projection, {
@@ -106,7 +108,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No fue posible construir Scope Projection con evidencia histórica EarthScope." },
+      { error: error instanceof Error ? error.message : "No fue posible construir Scope Projection con evidencia histórica EarthScope y contexto Slab2." },
       { status: 502, headers: { "Cache-Control": "no-store" } },
     );
   }
