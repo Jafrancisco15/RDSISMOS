@@ -14,6 +14,7 @@ import { RecentFulfilledProjections } from "./RecentFulfilledProjections";
 import { ScopeActiveCountrySearch } from "./ScopeActiveCountrySearch";
 import { ScopeProjection } from "./ScopeProjection";
 import { SeismicGlobe3D } from "./SeismicGlobe3D";
+import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicSimulator } from "./TectonicSimulator";
 
@@ -96,7 +97,12 @@ export function AppShell() {
         </>
       )}
       {tab === "simulator" && <TectonicSimulator />}
-      {tab === "about" && <AboutRdsismos />}
+      {tab === "about" && (
+        <>
+          <AboutRdsismos />
+          <Slab2AboutNote />
+        </>
+      )}
     </>
   );
 }
