@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
+import { BoundaryHistoryAboutNote } from "./BoundaryHistoryAboutNote";
 import { BoundaryHistoryPanel } from "./BoundaryHistoryPanel";
 import { HistoricalHeatmap } from "./HistoricalHeatmap";
 import { SeismicDashboard } from "./SeismicDashboard";
@@ -103,6 +104,7 @@ export function AppShell() {
       {tab === "about" && (
         <>
           <AboutRdsismos />
+          <BoundaryHistoryAboutNote />
           <Slab2AboutNote />
         </>
       )}
