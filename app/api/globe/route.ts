@@ -89,6 +89,17 @@ function regionalProjectionToGlobe(
 export async function GET(request: Request) {
   const now = new Date();
   const url = new URL(request.url);
+
+  // Older clients added a timestamp solely to defeat caches. Strip it so all
+  // visitors asking for the same country/date can share a CDN response instead
+  // of recalculating the 90-day multifuente catalog and ETAS model each time.
+  if (url.searchParams.has("_")) {
+    url.searchParams.delete("_");
+    return NextResponse.redirect(url, 307, {
+      headers: { "Cache-Control": "public, max-age=300, s-maxage=600" },
+    });
+  }
+
   const target = countryByCode(url.searchParams.get("country"));
   const viewEnd = asOfDate(url.searchParams.get("date"), now);
   const comparisonRaw = url.searchParams.get("compare");
@@ -162,7 +173,12 @@ export async function GET(request: Request) {
     warnings: [catalog?.warning, ...warnings].filter((value): value is string => Boolean(value)),
   };
 
+  const isHistorical = dateKey(viewEnd) !== dateKey(now) || Boolean(comparisonEnd);
   return NextResponse.json(payload, {
-    headers: { "Cache-Control": "private, no-store, max-age=0" },
+    headers: {
+      "Cache-Control": isHistorical
+        ? "public, max-age=600, s-maxage=86400, stale-while-revalidate=604800"
+        : "public, max-age=120, s-maxage=600, stale-while-revalidate=1800",
+    },
   });
 }
