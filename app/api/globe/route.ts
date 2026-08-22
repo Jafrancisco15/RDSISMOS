@@ -90,14 +90,11 @@ export async function GET(request: Request) {
   const now = new Date();
   const url = new URL(request.url);
 
-  // Older clients added a timestamp solely to defeat caches. Strip it so all
-  // visitors asking for the same country/date can share a CDN response instead
-  // of recalculating the 90-day multifuente catalog and ETAS model each time.
   if (url.searchParams.has("_")) {
     url.searchParams.delete("_");
-    return NextResponse.redirect(url, 307, {
-      headers: { "Cache-Control": "public, max-age=300, s-maxage=600" },
-    });
+    const redirect = NextResponse.redirect(url, 307);
+    redirect.headers.set("Cache-Control", "public, max-age=300, s-maxage=600");
+    return redirect;
   }
 
   const target = countryByCode(url.searchParams.get("country"));
