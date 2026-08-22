@@ -55,9 +55,6 @@ async function loadPipelineFreshness() {
 }
 
 export async function GET(request: NextRequest) {
-  // First obtain the compact learning snapshot. If the database is already
-  // unavailable, do not immediately open a second connection attempt just to
-  // ask for freshness: that used to multiply latency during transient outages.
   const status = await getLearningStatus();
   const pipeline = status.databaseConnected
     ? await loadPipelineFreshness()
@@ -71,8 +68,6 @@ export async function GET(request: NextRequest) {
     reconciliationCronSchedule: "15 17 * * *",
   };
 
-  // The backlog query scans predictions/outcomes and is not needed by the
-  // normal UI status badge. Keep it available explicitly for diagnostics.
   const includeBacklog = request.nextUrl.searchParams.get("includeBacklog") === "1";
   const reconciliation = includeBacklog && status.databaseConnected
     ? await loadProjectionBacklogState().catch(() => ({
@@ -106,12 +101,12 @@ export async function GET(request: NextRequest) {
           : "CRON_SECRET no está configurado. Las llamadas nativas de Vercel usan un fallback limitado; conviene configurar el secreto en Production.",
       };
 
-  // This is a diagnostic/status endpoint. A disconnected database is valid
-  // status information, not an HTTP transport failure. Consumers inspect the
-  // databaseConnected field instead of turning a degraded state into a generic
-  // fetch error.
   return NextResponse.json(response, {
     status: 200,
-    headers: { "Cache-Control": "no-store, max-age=0" },
+    headers: {
+      "Cache-Control": includeBacklog
+        ? "private, no-store, max-age=0"
+        : "public, max-age=60, s-maxage=300, stale-while-revalidate=600",
+    },
   });
 }
