@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
 import { BoundaryHistoryAboutNote } from "./BoundaryHistoryAboutNote";
@@ -32,6 +32,23 @@ type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "hea
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
   const [historicalProjectionOpen, setHistoricalProjectionOpen] = useState(false);
+  const [eventsRefreshKey, setEventsRefreshKey] = useState(0);
+
+  useEffect(() => {
+    if (tab !== "events") return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") setEventsRefreshKey((value) => value + 1);
+    };
+    const interval = window.setInterval(refresh, 5 * 60_000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [tab]);
 
   return (
     <>
@@ -99,7 +116,7 @@ export function AppShell() {
       {tab === "validation" && <AutoValidationPanel />}
       {tab === "history" && <ProjectionHistoryPanel />}
       {tab === "heatmap" && <HistoricalHeatmap />}
-      {tab === "events" && <EarthquakeEventsDashboard />}
+      {tab === "events" && <EarthquakeEventsDashboard key={eventsRefreshKey} />}
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
