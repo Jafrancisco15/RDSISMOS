@@ -16,6 +16,7 @@ type LearningStatus = {
 };
 
 const DEFAULT_GENERATION_CRON = "30 14 * * *";
+const STATUS_REFRESH_MS = 15 * 60_000;
 
 function parseDailyCron(value: string | undefined) {
   const parts = (value || DEFAULT_GENERATION_CRON).trim().split(/\s+/);
@@ -52,8 +53,9 @@ export function ProjectionUpdateStatus() {
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
+      if (document.visibilityState === "hidden") return;
       try {
-        const response = await fetch(`/api/migration/learning/status?_=${Date.now()}`, { cache: "no-store" });
+        const response = await fetch("/api/migration/learning/status", { cache: "default" });
         const payload = await response.json() as LearningStatus;
         if (!cancelled) {
           setStatus(payload);
@@ -64,12 +66,17 @@ export function ProjectionUpdateStatus() {
       }
     };
     void load();
-    const refresh = window.setInterval(() => void load(), 60_000);
-    const ticker = window.setInterval(() => setClock(Date.now()), 30_000);
+    const refresh = window.setInterval(() => void load(), STATUS_REFRESH_MS);
+    const ticker = window.setInterval(() => setClock(Date.now()), 60_000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       cancelled = true;
       window.clearInterval(refresh);
       window.clearInterval(ticker);
+      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, []);
 
@@ -125,7 +132,7 @@ export function ProjectionUpdateStatus() {
         </div>
 
         <p style={{ margin: 0, color: "#94a3b8", fontSize: 12, lineHeight: 1.55 }}>
-          La generación histórica automática está programada una vez al día. Que los números permanezcan iguales entre visitas no significa necesariamente que el sistema esté detenido: puede no haber aparecido un nuevo evento que cambie las cápsulas o proyecciones. Este indicador muestra la conexión de la memoria, el último cambio persistido y la próxima ventana programada. ETAS funciona de forma independiente de este horario.
+          La generación histórica automática está programada una vez al día. Que los números permanezcan iguales entre visitas no significa necesariamente que el sistema esté detenido: puede no haber aparecido un nuevo evento que cambie las cápsulas o proyecciones. Este indicador se consulta con baja frecuencia para no consumir cómputo innecesario. ETAS funciona de forma independiente de este horario.
         </p>
         {error && <small style={{ color: "#fbbf24" }}>Consulta de estado: {error}</small>}
       </div>
