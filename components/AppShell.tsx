@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
+import { BoundaryHistoryPanel } from "./BoundaryHistoryPanel";
 import { HistoricalHeatmap } from "./HistoricalHeatmap";
 import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
@@ -94,6 +95,7 @@ export function AppShell() {
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
+          <BoundaryHistoryPanel />
           <SlabContextExplorer />
         </>
       )}
