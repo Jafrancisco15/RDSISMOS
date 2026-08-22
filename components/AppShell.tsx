@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
@@ -21,7 +22,12 @@ import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "simulator" | "about";
+const LunarPhaseExperimental = dynamic(
+  () => import("./LunarPhaseExperimental").then((module) => module.LunarPhaseExperimental),
+  { ssr: false, loading: () => <div className="map-loading" style={{ margin: 28 }}>Inicializando globo lunar 3D…</div> },
+);
+
+type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -38,6 +44,7 @@ export function AppShell() {
         <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
         <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
+        <button className={tab === "lunar" ? "active" : ""} onClick={() => setTab("lunar")}>Lunar Phase Experimental</button>
         <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
         <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Acerca</button>
       </nav>
@@ -100,6 +107,7 @@ export function AppShell() {
           <SlabContextExplorer />
         </>
       )}
+      {tab === "lunar" && <LunarPhaseExperimental />}
       {tab === "simulator" && <TectonicSimulator />}
       {tab === "about" && (
         <>
