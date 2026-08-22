@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 type LearningStatus = {
   databaseConnected?: boolean;
   migrationPending?: boolean;
+  catchupCronSchedule?: string;
   generationCronSchedule?: string;
   pipeline?: {
     latestCapsuleCreatedAt?: string | null;
@@ -15,23 +16,27 @@ type LearningStatus = {
   message?: string;
 };
 
-const DEFAULT_GENERATION_CRON = "30 14 * * *";
+const DEFAULT_CATCHUP_CRON = "15 */3 * * *";
 const STATUS_REFRESH_MS = 15 * 60_000;
 
-function parseDailyCron(value: string | undefined) {
-  const parts = (value || DEFAULT_GENERATION_CRON).trim().split(/\s+/);
-  if (parts.length !== 5) return { minute: 30, hour: 14 };
+function nextThreeHourCatchup(value: string | undefined, now = new Date()) {
+  const parts = (value || DEFAULT_CATCHUP_CRON).trim().split(/\s+/);
   const minute = Number(parts[0]);
-  const hour = Number(parts[1]);
-  if (!Number.isInteger(minute) || !Number.isInteger(hour) || minute < 0 || minute > 59 || hour < 0 || hour > 23) {
-    return { minute: 30, hour: 14 };
-  }
-  return { minute, hour };
-}
+  const intervalMatch = parts[1]?.match(/^\*\/(\d+)$/);
+  const interval = intervalMatch ? Number(intervalMatch[1]) : 3;
+  const safeMinute = Number.isInteger(minute) && minute >= 0 && minute <= 59 ? minute : 15;
+  const safeInterval = Number.isInteger(interval) && interval > 0 && interval <= 24 ? interval : 3;
 
-function nextDailyUtc(hour: number, minute: number, now = new Date()) {
-  const next = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), hour, minute, 0, 0));
-  if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+  const next = new Date(now);
+  next.setUTCSeconds(0, 0);
+  next.setUTCMinutes(safeMinute);
+  let hour = Math.ceil((now.getUTCHours() + (now.getUTCMinutes() >= safeMinute ? 1 : 0)) / safeInterval) * safeInterval;
+  if (hour >= 24) {
+    next.setUTCDate(next.getUTCDate() + 1);
+    hour = 0;
+  }
+  next.setUTCHours(hour);
+  if (next.getTime() <= now.getTime()) next.setUTCHours(next.getUTCHours() + safeInterval);
   return next;
 }
 
@@ -80,9 +85,12 @@ export function ProjectionUpdateStatus() {
     };
   }, []);
 
-  const schedule = useMemo(() => parseDailyCron(status?.generationCronSchedule), [status?.generationCronSchedule]);
-  const nextUpdate = useMemo(() => nextDailyUtc(schedule.hour, schedule.minute, new Date(clock)), [clock, schedule.hour, schedule.minute]);
+  const nextUpdate = useMemo(
+    () => nextThreeHourCatchup(status?.catchupCronSchedule, new Date(clock)),
+    [clock, status?.catchupCronSchedule],
+  );
   const lastProjectionChange = status?.pipeline?.latestPredictionUpdatedAt ?? status?.pipeline?.latestCapsuleCreatedAt ?? null;
+  const latestSourceTime = status?.pipeline?.latestSourceTime ?? null;
   const timezone = typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "hora local";
 
   const stateLabel = status?.databaseConnected
@@ -122,7 +130,11 @@ export function ProjectionUpdateStatus() {
             <strong>{formatLocal(lastProjectionChange)}</strong>
           </div>
           <div style={{ padding: 12, borderRadius: 12, background: "rgba(2,6,23,.34)" }}>
-            <span style={{ display: "block", color: "#94a3b8", fontSize: 12 }}>Próxima generación automática</span>
+            <span style={{ display: "block", color: "#94a3b8", fontSize: 12 }}>Último evento precedente procesado</span>
+            <strong>{formatLocal(latestSourceTime)}</strong>
+          </div>
+          <div style={{ padding: 12, borderRadius: 12, background: "rgba(2,6,23,.34)" }}>
+            <span style={{ display: "block", color: "#94a3b8", fontSize: 12 }}>Próximo catch-up automático</span>
             <strong>{formatLocal(nextUpdate)}</strong>
           </div>
           <div style={{ padding: 12, borderRadius: 12, background: "rgba(2,6,23,.34)" }}>
@@ -132,7 +144,7 @@ export function ProjectionUpdateStatus() {
         </div>
 
         <p style={{ margin: 0, color: "#94a3b8", fontSize: 12, lineHeight: 1.55 }}>
-          La generación histórica automática está programada una vez al día. Que los números permanezcan iguales entre visitas no significa necesariamente que el sistema esté detenido: puede no haber aparecido un nuevo evento que cambie las cápsulas o proyecciones. Este indicador se consulta con baja frecuencia para no consumir cómputo innecesario. ETAS funciona de forma independiente de este horario.
+          El sistema busca nuevos eventos precedentes cada 3 horas y mantiene además una generación diaria de respaldo. Si no aparece un evento nuevo e independiente que cumpla los criterios, las proyecciones pueden permanecer iguales sin que el sistema esté detenido. Eventos Sísmicos se refresca cada 5 minutos mientras la pestaña está visible; ETAS y Mapa 3D usan sus propios ciclos de actualización.
         </p>
         {error && <small style={{ color: "#fbbf24" }}>Consulta de estado: {error}</small>}
       </div>

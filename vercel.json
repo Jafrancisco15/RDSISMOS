@@ -4,6 +4,10 @@
   "outputDirectory": null,
   "crons": [
     {
+      "path": "/api/migration/learning/generate?lookbackDays=3&minimumMagnitude=4.5&sourceLimit=1&candidateLimit=4",
+      "schedule": "15 */3 * * *"
+    },
+    {
       "path": "/api/migration/learning/generate?lookbackDays=14&minimumMagnitude=4.5&sourceLimit=1&candidateLimit=8",
       "schedule": "30 14 * * *"
     },
