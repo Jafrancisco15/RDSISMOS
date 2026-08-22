@@ -58,7 +58,6 @@ export function summarizeBoundaryRing(points: BoundaryPoint[]) {
   let cos2 = 0;
   let totalWeight = 0;
   const bearings: number[] = [];
-  const weights: number[] = [];
   for (let i = 1; i < cleaned.length; i += 1) {
     const [lon1, lat1] = cleaned[i - 1];
     const [lon2, lat2] = cleaned[i];
@@ -67,7 +66,6 @@ export function summarizeBoundaryRing(points: BoundaryPoint[]) {
     const bearing = initialBearingDeg(lat1, lon1, lat2, lon2);
     perimeterKm += length;
     bearings.push(bearing);
-    weights.push(length);
     const axial = (bearing % 180) * Math.PI / 180;
     sin2 += Math.sin(2 * axial) * length;
     cos2 += Math.cos(2 * axial) * length;
@@ -79,6 +77,7 @@ export function summarizeBoundaryRing(points: BoundaryPoint[]) {
   for (let i = 1; i < bearings.length; i += 1) {
     totalTurn += turnDifferenceDeg(bearings[i - 1], bearings[i]);
   }
+  if (bearings.length > 2) totalTurn += turnDifferenceDeg(bearings.at(-1)!, bearings[0]);
 
   const reference = cleaned[0][0];
   let lonSum = 0;
