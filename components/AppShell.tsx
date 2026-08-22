@@ -23,7 +23,7 @@ import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicSimulator } from "./TectonicSimulator";
 
 const LunarPhaseExperimental = dynamic(
-  () => import("./LunarPhaseExperimental").then((module) => module.LunarPhaseExperimental),
+  () => import("./LunarPhaseTemporalExperimental").then((module) => module.LunarPhaseTemporalExperimental),
   { ssr: false, loading: () => <div className="map-loading" style={{ margin: 28 }}>Inicializando globo lunar 3D…</div> },
 );
 
