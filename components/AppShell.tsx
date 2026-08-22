@@ -10,6 +10,7 @@ import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
 import { LearningStatusPanel } from "./LearningStatusPanel";
+import { LunarPhaseExperimental } from "./LunarPhaseExperimental";
 import { PlateDynamicsDashboard } from "./PlateDynamicsDashboard";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { ProjectionUpdateStatus } from "./ProjectionUpdateStatus";
@@ -21,7 +22,7 @@ import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicSimulator } from "./TectonicSimulator";
 
-type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "simulator" | "about";
+type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -38,6 +39,7 @@ export function AppShell() {
         <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
         <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
+        <button className={tab === "lunar" ? "active" : ""} onClick={() => setTab("lunar")}>Lunar Phase Experimental</button>
         <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
         <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Acerca</button>
       </nav>
@@ -100,6 +102,7 @@ export function AppShell() {
           <SlabContextExplorer />
         </>
       )}
+      {tab === "lunar" && <LunarPhaseExperimental />}
       {tab === "simulator" && <TectonicSimulator />}
       {tab === "about" && (
         <>
