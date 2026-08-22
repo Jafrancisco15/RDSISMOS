@@ -63,6 +63,7 @@ export async function GET(request: NextRequest) {
   const migrationPending = isMissingLearningSchema(status.message ?? pipeline.error ?? undefined);
   const cronSecretConfigured = Boolean(process.env.CRON_SECRET?.trim());
   const scheduler = {
+    catchupCronSchedule: "15 */3 * * *",
     generationCronSchedule: "30 14 * * *",
     evaluationCronSchedule: "0 15 * * *",
     reconciliationCronSchedule: "15 17 * * *",
