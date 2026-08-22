@@ -1,5 +1,6 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useState } from "react";
 import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
@@ -10,7 +11,6 @@ import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
 import { LearningStatusPanel } from "./LearningStatusPanel";
-import { LunarPhaseExperimental } from "./LunarPhaseExperimental";
 import { PlateDynamicsDashboard } from "./PlateDynamicsDashboard";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
 import { ProjectionUpdateStatus } from "./ProjectionUpdateStatus";
@@ -21,6 +21,11 @@ import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicSimulator } from "./TectonicSimulator";
+
+const LunarPhaseExperimental = dynamic(
+  () => import("./LunarPhaseExperimental").then((module) => module.LunarPhaseExperimental),
+  { ssr: false, loading: () => <div className="map-loading" style={{ margin: 28 }}>Inicializando globo lunar 3D…</div> },
+);
 
 type AppTab = "globe" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
