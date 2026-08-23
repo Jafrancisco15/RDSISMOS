@@ -27,6 +27,10 @@ interface LunarResponse {
   generatedAt: string;
   days: number;
   minMagnitude: number;
+  periodStart?: string;
+  periodEnd?: string;
+  periodHours?: number | null;
+  customPeriod?: boolean;
   events: LunarEarthquake[];
   error?: string;
 }
@@ -58,6 +62,10 @@ function formatUtc(value: Date | string) {
   return new Intl.DateTimeFormat("es-DO", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" }).format(date);
 }
 
+function inputUtcValue(date: Date) {
+  return date.toISOString().slice(0, 16);
+}
+
 function coincidenceLabel(kind: CoincidenceKind) {
   if (kind === "direct") return "DIRECTA";
   if (kind === "antipode") return "ANTÍPODA";
@@ -87,9 +95,9 @@ export function LunarPhaseExperimental() {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 1000, height: 720 });
-  const [days, setDays] = useState(14);
   const [minMagnitude, setMinMagnitude] = useState(4.5);
   const [windowHours, setWindowHours] = useState(24);
+  const [periodStartInput, setPeriodStartInput] = useState(() => inputUtcValue(new Date(Date.now() - 24 * HOUR_MS)));
   const [analysisRadiusKm, setAnalysisRadiusKm] = useState(1800);
   const [shadowMode, setShadowMode] = useState<ShadowMode>("both");
   const [cameraFollow, setCameraFollow] = useState<CameraFollow>("off");
@@ -97,7 +105,7 @@ export function LunarPhaseExperimental() {
   const [mapLayers, setMapLayers] = useState<GlobeMapLayersResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTime, setSelectedTime] = useState(() => Date.now());
+  const [selectedTime, setSelectedTime] = useState(() => Date.now() - 12 * HOUR_MS);
   const [playing, setPlaying] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<LunarEarthquake | null>(null);
 
@@ -116,14 +124,22 @@ export function LunarPhaseExperimental() {
   }, []);
 
   useEffect(() => {
+    const parsedStart = new Date(`${periodStartInput}:00Z`);
+    if (Number.isNaN(parsedStart.getTime())) return;
     const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/lunar-earthquakes?days=${days}&minmag=${minMagnitude}`, { signal: controller.signal, cache: "default" })
+    const params = new URLSearchParams({
+      start: parsedStart.toISOString(),
+      hours: String(windowHours),
+      minmag: String(minMagnitude),
+    });
+    fetch(`/api/lunar-earthquakes?${params}`, { signal: controller.signal, cache: "default" })
       .then(async (response) => {
         const payload = await response.json() as LunarResponse;
         if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
         setData(payload);
-        setSelectedTime(Date.now());
+        const start = payload.periodStart ? new Date(payload.periodStart).getTime() : parsedStart.getTime();
+        setSelectedTime(start);
         setError(null);
       })
       .catch((cause) => {
@@ -132,7 +148,7 @@ export function LunarPhaseExperimental() {
       })
       .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [days, minMagnitude]);
+  }, [periodStartInput, windowHours, minMagnitude]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -143,26 +159,25 @@ export function LunarPhaseExperimental() {
     return () => controller.abort();
   }, []);
 
-  const startTime = useMemo(() => Date.now() - days * 86_400_000, [days, data?.generatedAt]);
-  const endTime = useMemo(() => data ? new Date(data.generatedAt).getTime() : Date.now(), [data]);
-  const halfWindowMs = windowHours * HOUR_MS / 2;
-  const windowStart = selectedTime - halfWindowMs;
-  const windowEnd = selectedTime + halfWindowMs;
+  const periodStart = useMemo(() => data?.periodStart ? new Date(data.periodStart).getTime() : new Date(`${periodStartInput}:00Z`).getTime(), [data?.periodStart, periodStartInput]);
+  const periodEnd = useMemo(() => data?.periodEnd ? new Date(data.periodEnd).getTime() : periodStart + windowHours * HOUR_MS, [data?.periodEnd, periodStart, windowHours]);
+  const windowStart = periodStart;
+  const windowEnd = periodEnd;
 
   useEffect(() => {
     if (!playing) return;
     const timer = window.setInterval(() => {
       setSelectedTime((value) => {
         const next = value + 30 * 60_000;
-        if (next >= endTime) {
+        if (next >= periodEnd) {
           setPlaying(false);
-          return endTime;
+          return periodEnd;
         }
         return next;
       });
     }, 450);
     return () => window.clearInterval(timer);
-  }, [playing, endTime]);
+  }, [playing, periodEnd]);
 
   const moon = useMemo(() => lunarPosition(new Date(selectedTime)), [selectedTime]);
 
@@ -174,10 +189,7 @@ export function LunarPhaseExperimental() {
     globeRef.current?.pointOfView(target, playing ? 380 : 650);
   }, [cameraFollow, moon.latitude, moon.longitude, moon.antipodeLatitude, moon.antipodeLongitude, playing]);
 
-  const visibleEvents = useMemo(() => (data?.events ?? []).filter((event) => {
-    const time = new Date(event.time).getTime();
-    return time >= windowStart && time <= windowEnd;
-  }), [data, windowStart, windowEnd]);
+  const visibleEvents = useMemo(() => data?.events ?? [], [data]);
 
   const analysis = useMemo<EventAnalysis[]>(() => visibleEvents.map((event): EventAnalysis => {
     const eventMoon = lunarPosition(new Date(event.time));
@@ -186,11 +198,11 @@ export function LunarPhaseExperimental() {
     const directHit = moonKm <= analysisRadiusKm;
     const antipodeHit = antipodeKm <= analysisRadiusKm;
     const coincidence: CoincidenceKind = directHit && antipodeHit ? "both" : directHit ? "direct" : antipodeHit ? "antipode" : "none";
-    const deltaMinutes = Math.round((new Date(event.time).getTime() - selectedTime) / 60_000);
+    const deltaMinutes = Math.round((new Date(event.time).getTime() - periodStart) / 60_000);
     const closest: "sublunar" | "antípoda" = shadowMode === "direct" ? "sublunar" : shadowMode === "antipode" ? "antípoda" : moonKm <= antipodeKm ? "sublunar" : "antípoda";
     const closestKm = shadowMode === "direct" ? moonKm : shadowMode === "antipode" ? antipodeKm : Math.min(moonKm, antipodeKm);
     return { event, moonKm, antipodeKm, directHit, antipodeHit, coincidence, deltaMinutes, closest, closestKm };
-  }).sort((a, b) => Math.abs(a.deltaMinutes) - Math.abs(b.deltaMinutes) || a.closestKm - b.closestKm), [visibleEvents, selectedTime, analysisRadiusKm, shadowMode]);
+  }).sort((a, b) => new Date(a.event.time).getTime() - new Date(b.event.time).getTime()), [visibleEvents, periodStart, analysisRadiusKm, shadowMode]);
 
   const analysisById = useMemo(() => new Map(analysis.map((item) => [item.event.id, item])), [analysis]);
   const directCount = analysis.filter((item) => item.directHit).length;
@@ -248,33 +260,42 @@ export function LunarPhaseExperimental() {
   const lunarTrackPaths = useMemo<RenderPath[]>(() => {
     const moonPoints: Array<GlobeMapPoint & { altitude: number }> = [];
     const antipodePoints: Array<GlobeMapPoint & { altitude: number }> = [];
-    for (let time = windowStart; time <= windowEnd; time += HOUR_MS) {
+    for (let time = periodStart; time <= periodEnd; time += HOUR_MS) {
       const position = lunarPosition(new Date(time));
       moonPoints.push({ lat: position.latitude, lng: position.longitude, altitude: 0.026 });
       antipodePoints.push({ lat: position.antipodeLatitude, lng: position.antipodeLongitude, altitude: 0.024 });
     }
-    const endPosition = lunarPosition(new Date(windowEnd));
+    const endPosition = lunarPosition(new Date(periodEnd));
     moonPoints.push({ lat: endPosition.latitude, lng: endPosition.longitude, altitude: 0.026 });
     antipodePoints.push({ lat: endPosition.antipodeLatitude, lng: endPosition.antipodeLongitude, altitude: 0.024 });
     const paths: RenderPath[] = [];
     if (shadowMode === "direct" || shadowMode === "both") paths.push({ id: "lunar-track", name: `Recorrido sublunar ${windowHours} h`, points: moonPoints, color: "#f8fafc", stroke: 0.9, dashLength: 0.12, dashGap: 0.035 });
     if (shadowMode === "antipode" || shadowMode === "both") paths.push({ id: "antipode-track", name: `Recorrido antípoda ${windowHours} h`, points: antipodePoints, color: "#c084fc", stroke: 0.95, dashLength: 0.12, dashGap: 0.035 });
     return paths;
-  }, [windowStart, windowEnd, windowHours, shadowMode]);
+  }, [periodStart, periodEnd, windowHours, shadowMode]);
 
   const displayPaths = useMemo(() => [...platePaths, ...lunarTrackPaths], [platePaths, lunarTrackPaths]);
   const selectedProximity = selectedEvent ? analysisById.get(selectedEvent.id) ?? null : null;
 
+  const handleDuration = (hours: number) => {
+    setPlaying(false);
+    setWindowHours(hours);
+    const currentStart = new Date(`${periodStartInput}:00Z`);
+    if (Number.isNaN(currentStart.getTime()) || currentStart.getTime() + hours * HOUR_MS > Date.now()) {
+      setPeriodStartInput(inputUtcValue(new Date(Date.now() - hours * HOUR_MS)));
+    }
+  };
+
   return (
     <main style={{ maxWidth: 1540, margin: "0 auto", padding: "18px clamp(10px,2vw,24px) 34px", color: "#e5edf5" }}>
       <header style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 12, alignItems: "end", marginBottom: 14 }}>
-        <div><div className="brand-line"><span className="pulse-dot" /> RDSISMOS · EXPERIMENTAL</div><h1 style={{ marginBottom: 4 }}>Lunar Phase Experimental</h1><p style={{ maxWidth: 850, margin: 0, color: "#94a3b8" }}>Análisis exploratorio de coincidencia temporal y espacial entre el recorrido lunar, su antípoda y la sismicidad observada.</p></div>
-        <div style={{ ...panelStyle, padding: "10px 14px", minWidth: 220, textAlign: "center" }}><strong>{formatUtc(new Date(selectedTime))} UTC</strong><small style={{ display: "block", color: "#64748b", marginTop: 4 }}>Centro de la ventana</small></div>
+        <div><div className="brand-line"><span className="pulse-dot" /> RDSISMOS · EXPERIMENTAL</div><h1 style={{ marginBottom: 4 }}>Lunar Phase Experimental</h1><p style={{ maxWidth: 850, margin: 0, color: "#94a3b8" }}>Elige una fecha/hora UTC y analiza exactamente las 12, 24 o 72 horas siguientes con el recorrido lunar, su antípoda y la sismicidad observada.</p></div>
+        <div style={{ ...panelStyle, padding: "10px 14px", minWidth: 220, textAlign: "center" }}><strong>{formatUtc(new Date(selectedTime))} UTC</strong><small style={{ display: "block", color: "#64748b", marginTop: 4 }}>Instante de reproducción</small></div>
       </header>
 
       <section style={{ display: "grid", gridTemplateColumns: "repeat(4,minmax(150px,1fr))", gap: 10, marginBottom: 12 }}>
         {[
-          ["Sismos en ventana", analysis.length, "#ef4444"],
+          ["Sismos en período", analysis.length, "#ef4444"],
           ["Coincidencia directa", directCount, "#facc15"],
           ["Coincidencia antípoda", antipodeCount, "#c084fc"],
           ["Coincidencia ambas", bothCount, "#fb7185"],
@@ -283,13 +304,13 @@ export function LunarPhaseExperimental() {
 
       <section style={{ display: "grid", gridTemplateColumns: "minmax(230px,280px) minmax(0,1fr)", gap: 12, alignItems: "start" }}>
         <aside style={{ ...panelStyle, padding: 14, display: "grid", gap: 14 }}>
-          <div><strong style={{ fontSize: 13 }}>VENTANA LUNA–SISMOS</strong><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginTop: 8 }}>{[12,24].map((hours) => <button key={hours} type="button" onClick={() => setWindowHours(hours)} style={{ padding: 10, borderRadius: 9, border: windowHours === hours ? "1px solid #3b82f6" : "1px solid rgba(148,163,184,.18)", background: windowHours === hours ? "#0b4ea2" : "#101824", color: "white" }}>{hours} horas<br/><small>± {hours / 2} h</small></button>)}</div></div>
-          <label style={labelStyle}>Rango disponible<select value={days} onChange={(e) => setDays(Number(e.target.value))} style={selectStyle}><option value={7}>7 días</option><option value={14}>14 días</option><option value={30}>30 días</option></select></label>
+          <div><strong style={{ fontSize: 13 }}>PERÍODO LUNA–SISMOS</strong><div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 6, marginTop: 8 }}>{[12,24,72].map((hours) => <button key={hours} type="button" onClick={() => handleDuration(hours)} style={{ padding: 10, borderRadius: 9, border: windowHours === hours ? "1px solid #3b82f6" : "1px solid rgba(148,163,184,.18)", background: windowHours === hours ? "#0b4ea2" : "#101824", color: "white" }}>{hours} h</button>)}</div></div>
+          <label style={labelStyle}>Fecha/hora de inicio · UTC<input type="datetime-local" value={periodStartInput} max={inputUtcValue(new Date(Date.now() - windowHours * HOUR_MS))} onChange={(e) => { setPlaying(false); setPeriodStartInput(e.target.value); }} style={selectStyle} /><small style={{ color: "#64748b", textTransform: "none", letterSpacing: 0 }}>Se analizarán exactamente las {windowHours} h posteriores.</small></label>
           <label style={labelStyle}>Sombra analizada<select value={shadowMode} onChange={(e) => setShadowMode(e.target.value as ShadowMode)} style={selectStyle}><option value="direct">Directa · punto sublunar</option><option value="antipode">Opuesta · antípoda</option><option value="both">Ambas sombras</option></select></label>
           <label style={labelStyle}>Seguir con cámara<select value={cameraFollow} onChange={(e) => setCameraFollow(e.target.value as CameraFollow)} style={selectStyle}><option value="off">Libre</option><option value="direct">Seguir sombra directa</option><option value="antipode">Seguir antípoda</option></select></label>
           <label style={labelStyle}>Magnitud mínima<select value={minMagnitude} onChange={(e) => setMinMagnitude(Number(e.target.value))} style={selectStyle}><option value={4}>M4.0+</option><option value={4.5}>M4.5+</option><option value={5}>M5.0+</option><option value={5.5}>M5.5+</option></select></label>
           <label style={labelStyle}>Radio de coincidencia<select value={analysisRadiusKm} onChange={(e) => setAnalysisRadiusKm(Number(e.target.value))} style={selectStyle}><option value={1000}>1,000 km</option><option value={1800}>1,800 km</option><option value={3000}>3,000 km</option></select></label>
-          <div style={{ borderTop: "1px solid rgba(148,163,184,.14)", paddingTop: 12, display: "grid", gap: 7, fontSize: 12, color: "#cbd5e1" }}><strong>LEYENDA</strong><span>🔴 Sismo en la ventana</span><span style={{ color: "#facc15" }}>◉ Coincidencia directa</span><span style={{ color: "#c084fc" }}>◉ Coincidencia antípoda</span><span style={{ color: "#fb7185" }}>◉ Coincidencia con ambas</span><span>▬ Recorrido directo</span><span style={{ color: "#c084fc" }}>▬ Recorrido antípoda</span></div>
+          <div style={{ borderTop: "1px solid rgba(148,163,184,.14)", paddingTop: 12, display: "grid", gap: 7, fontSize: 12, color: "#cbd5e1" }}><strong>LEYENDA</strong><span>🔴 Sismo en el período</span><span style={{ color: "#facc15" }}>◉ Coincidencia directa</span><span style={{ color: "#c084fc" }}>◉ Coincidencia antípoda</span><span style={{ color: "#fb7185" }}>◉ Coincidencia con ambas</span><span>▬ Recorrido directo</span><span style={{ color: "#c084fc" }}>▬ Recorrido antípoda</span></div>
         </aside>
 
         <div style={{ minWidth: 0 }}>
@@ -297,20 +318,20 @@ export function LunarPhaseExperimental() {
             <div ref={containerRef} style={{ width: "100%", minHeight: 540, borderRadius: 13, overflow: "hidden", background: "radial-gradient(circle at 50% 35%,#10243b,#030711 68%)" }}>
               <Globe ref={globeRef} width={size.width} height={size.height} globeImageUrl={EARTH_TEXTURE} backgroundColor="rgba(0,0,0,0)" atmosphereColor="#8ccff5" atmosphereAltitude={0.14} showGraticules polygonsData={shadowPolygons} polygonGeoJsonGeometry="geometry" polygonCapColor={(item: unknown) => String((item as { color: string }).color)} polygonSideColor={() => "rgba(255,255,255,.02)"} polygonStrokeColor={() => "rgba(255,255,255,.28)"} polygonAltitude={0.005} pointsData={points} pointLat="lat" pointLng="lng" pointAltitude="altitude" pointRadius="radius" pointColor="color" pointResolution={24} pointLabel={(point: unknown) => { const item = point as (typeof points)[number]; if (item.kind === "moon") return `<div class="globe-tooltip"><strong>Punto sublunar</strong></div>`; if (item.kind === "antipode") return `<div class="globe-tooltip"><strong>Antípoda lunar</strong></div>`; return eventLabel(item.event, analysisById.get(item.event.id)); }} onPointClick={(point: unknown) => { const item = point as (typeof points)[number]; if (item.kind === "event") setSelectedEvent(item.event); }} ringsData={rings} ringLat="lat" ringLng="lng" ringColor={(item: unknown) => String((item as { color: string }).color)} ringMaxRadius="maxRadius" ringPropagationSpeed="propagationSpeed" ringRepeatPeriod="repeatPeriod" pathsData={displayPaths} pathPoints="points" pathPointLat="lat" pathPointLng="lng" pathPointAlt="altitude" pathColor={(path: unknown) => (path as RenderPath).color} pathStroke={(path: unknown) => (path as RenderPath).stroke} pathDashLength={(path: unknown) => (path as RenderPath).dashLength} pathDashGap={(path: unknown) => (path as RenderPath).dashGap} pathTransitionDuration={0} enablePointerInteraction />
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, alignItems: "center", padding: "10px 8px 4px" }}><button type="button" onClick={() => setPlaying((v) => !v)} style={{ border: "1px solid #2563eb", background: "#0b4ea2", color: "white", borderRadius: 999, width: 42, height: 42 }}>{playing ? "Ⅱ" : "▶"}</button><input type="range" min={startTime} max={endTime} step={30 * 60_000} value={Math.min(endTime, Math.max(startTime, selectedTime))} onChange={(e) => { setPlaying(false); setSelectedTime(Number(e.target.value)); }} /><span style={{ fontSize: 12, color: "#94a3b8" }}>{windowHours} h</span></div>
-            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, padding: "0 8px 8px", fontSize: 12, color: "#64748b" }}><span>{formatUtc(new Date(windowStart))} → {formatUtc(new Date(windowEnd))} UTC</span><span>{cameraFollow === "off" ? "Cámara libre" : cameraFollow === "direct" ? "Siguiendo directa" : "Siguiendo antípoda"}</span></div>
+            <div style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", gap: 10, alignItems: "center", padding: "10px 8px 4px" }}><button type="button" onClick={() => setPlaying((v) => !v)} style={{ border: "1px solid #2563eb", background: "#0b4ea2", color: "white", borderRadius: 999, width: 42, height: 42 }}>{playing ? "Ⅱ" : "▶"}</button><input type="range" min={periodStart} max={periodEnd} step={30 * 60_000} value={Math.min(periodEnd, Math.max(periodStart, selectedTime))} onChange={(e) => { setPlaying(false); setSelectedTime(Number(e.target.value)); }} /><span style={{ fontSize: 12, color: "#94a3b8" }}>{windowHours} h</span></div>
+            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8, padding: "0 8px 8px", fontSize: 12, color: "#64748b" }}><span>{formatUtc(new Date(periodStart))} → {formatUtc(new Date(periodEnd))} UTC</span><span>{cameraFollow === "off" ? "Cámara libre" : cameraFollow === "direct" ? "Siguiendo directa" : "Siguiendo antípoda"}</span></div>
           </div>
 
           <section style={{ ...panelStyle, marginTop: 12, overflow: "hidden" }}>
-            <div style={{ padding: "12px 14px", borderBottom: "1px solid rgba(148,163,184,.14)" }}><strong>SISMOS EN LA VENTANA ({windowHours} HORAS)</strong><small style={{ display: "block", color: "#64748b", marginTop: 3 }}>Distancias calculadas con la posición lunar exacta en la hora de cada sismo.</small></div>
-            <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 760 }}><thead><tr style={{ color: "#94a3b8", textAlign: "left" }}><th style={{ padding: 10 }}>UTC</th><th>Mag</th><th>Ubicación</th><th>Δt</th><th>Directa</th><th>Antípoda</th><th>Coincidencia</th></tr></thead><tbody>{analysis.slice(0,30).map((item) => <tr key={item.event.id} onClick={() => setSelectedEvent(item.event)} style={{ borderTop: "1px solid rgba(148,163,184,.09)", cursor: "pointer" }}><td style={{ padding: 10, whiteSpace: "nowrap" }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "#ef4444", marginRight: 7 }} />{formatUtc(item.event.time)}</td><td>M{item.event.magnitude.toFixed(1)}</td><td>{item.event.place}</td><td>{item.deltaMinutes >= 0 ? "+" : ""}{item.deltaMinutes}m</td><td>{Math.round(item.moonKm).toLocaleString()} km</td><td>{Math.round(item.antipodeKm).toLocaleString()} km</td><td><span style={{ color: coincidenceColor(item.coincidence), fontWeight: 700 }}>{coincidenceLabel(item.coincidence)}</span></td></tr>)}{!analysis.length && <tr><td colSpan={7} style={{ padding: 18, color: "#64748b" }}>No hay sismos con los filtros actuales dentro de esta ventana.</td></tr>}</tbody></table></div>
+            <div style={{ padding: "12px 14px", borderBottom: "1px solid rgba(148,163,184,.14)" }}><strong>SISMOS EN EL PERÍODO ({windowHours} HORAS)</strong><small style={{ display: "block", color: "#64748b", marginTop: 3 }}>Distancias calculadas con la posición lunar exacta en la hora de cada sismo.</small></div>
+            <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, minWidth: 760 }}><thead><tr style={{ color: "#94a3b8", textAlign: "left" }}><th style={{ padding: 10 }}>UTC</th><th>Mag</th><th>Ubicación</th><th>Desde inicio</th><th>Directa</th><th>Antípoda</th><th>Coincidencia</th></tr></thead><tbody>{analysis.slice(0,50).map((item) => <tr key={item.event.id} onClick={() => setSelectedEvent(item.event)} style={{ borderTop: "1px solid rgba(148,163,184,.09)", cursor: "pointer" }}><td style={{ padding: 10, whiteSpace: "nowrap" }}><span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "#ef4444", marginRight: 7 }} />{formatUtc(item.event.time)}</td><td>M{item.event.magnitude.toFixed(1)}</td><td>{item.event.place}</td><td>+{Math.max(0, Math.round(item.deltaMinutes / 60 * 10) / 10)} h</td><td>{Math.round(item.moonKm).toLocaleString()} km</td><td>{Math.round(item.antipodeKm).toLocaleString()} km</td><td><span style={{ color: coincidenceColor(item.coincidence), fontWeight: 700 }}>{coincidenceLabel(item.coincidence)}</span></td></tr>)}{!analysis.length && <tr><td colSpan={7} style={{ padding: 18, color: "#64748b" }}>No hay sismos con los filtros actuales dentro de este período.</td></tr>}</tbody></table></div>
           </section>
         </div>
       </section>
 
       {selectedEvent && selectedProximity && <section style={{ ...panelStyle, marginTop: 12, padding: 14 }}><strong>M{selectedEvent.magnitude.toFixed(1)} · {selectedEvent.place}</strong><p style={{ margin: "6px 0 0", color: "#94a3b8" }}>{formatUtc(selectedEvent.time)} UTC · {selectedEvent.depthKm.toFixed(1)} km de profundidad · directa {Math.round(selectedProximity.moonKm).toLocaleString()} km · antípoda {Math.round(selectedProximity.antipodeKm).toLocaleString()} km · <span style={{ color: coincidenceColor(selectedProximity.coincidence) }}>{coincidenceLabel(selectedProximity.coincidence)}</span>.</p></section>}
       <div className="quality-warning" style={{ marginTop: 12 }}><strong>Experimental:</strong> las sombras representan radios geométricos de análisis. Una coincidencia espacial/temporal no demuestra que la Luna haya causado o disparado un terremoto.</div>
-      {loading && <div className="info-banner" style={{ marginTop: 12 }}>Cargando historial sísmico USGS…</div>}
+      {loading && <div className="info-banner" style={{ marginTop: 12 }}>Cargando sismos USGS del período seleccionado…</div>}
       {error && <div className="warning-banner" style={{ marginTop: 12 }}>{error}</div>}
       <style>{`@media (max-width: 900px){main > section:nth-of-type(2){grid-template-columns:1fr!important} main > section:first-of-type{grid-template-columns:repeat(2,minmax(0,1fr))!important}} @media (max-width:560px){main > section:first-of-type{grid-template-columns:1fr 1fr!important}}`}</style>
     </main>
