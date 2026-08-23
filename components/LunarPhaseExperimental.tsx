@@ -179,7 +179,7 @@ export function LunarPhaseExperimental() {
     return time >= windowStart && time <= windowEnd;
   }), [data, windowStart, windowEnd]);
 
-  const analysis = useMemo<EventAnalysis[]>(() => visibleEvents.map((event) => {
+  const analysis = useMemo<EventAnalysis[]>(() => visibleEvents.map((event): EventAnalysis => {
     const eventMoon = lunarPosition(new Date(event.time));
     const moonKm = greatCircleDistanceKm(event.latitude, event.longitude, eventMoon.latitude, eventMoon.longitude);
     const antipodeKm = greatCircleDistanceKm(event.latitude, event.longitude, eventMoon.antipodeLatitude, eventMoon.antipodeLongitude);
@@ -187,7 +187,7 @@ export function LunarPhaseExperimental() {
     const antipodeHit = antipodeKm <= analysisRadiusKm;
     const coincidence: CoincidenceKind = directHit && antipodeHit ? "both" : directHit ? "direct" : antipodeHit ? "antipode" : "none";
     const deltaMinutes = Math.round((new Date(event.time).getTime() - selectedTime) / 60_000);
-    const closest = shadowMode === "direct" ? "sublunar" : shadowMode === "antipode" ? "antípoda" : moonKm <= antipodeKm ? "sublunar" : "antípoda";
+    const closest: "sublunar" | "antípoda" = shadowMode === "direct" ? "sublunar" : shadowMode === "antipode" ? "antípoda" : moonKm <= antipodeKm ? "sublunar" : "antípoda";
     const closestKm = shadowMode === "direct" ? moonKm : shadowMode === "antipode" ? antipodeKm : Math.min(moonKm, antipodeKm);
     return { event, moonKm, antipodeKm, directHit, antipodeHit, coincidence, deltaMinutes, closest, closestKm };
   }).sort((a, b) => Math.abs(a.deltaMinutes) - Math.abs(b.deltaMinutes) || a.closestKm - b.closestKm), [visibleEvents, selectedTime, analysisRadiusKm, shadowMode]);
