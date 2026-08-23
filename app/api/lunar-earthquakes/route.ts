@@ -20,10 +20,29 @@ interface UsgsFeatureCollection {
 export async function GET(request: NextRequest) {
   const rawDays = Number(request.nextUrl.searchParams.get("days") ?? 14);
   const rawMinMag = Number(request.nextUrl.searchParams.get("minmag") ?? 4.5);
+  const rawHours = Number(request.nextUrl.searchParams.get("hours") ?? 0);
+  const rawStart = request.nextUrl.searchParams.get("start");
+
   const days = Math.min(30, Math.max(1, Number.isFinite(rawDays) ? Math.round(rawDays) : 14));
   const minMagnitude = Math.min(8, Math.max(4, Number.isFinite(rawMinMag) ? rawMinMag : 4.5));
-  const end = new Date();
-  const start = new Date(end.getTime() - days * 86_400_000);
+  const customHours = Number.isFinite(rawHours) && rawHours > 0 ? Math.min(168, Math.max(1, Math.round(rawHours))) : null;
+  const parsedStart = rawStart ? new Date(rawStart) : null;
+  const hasCustomPeriod = Boolean(parsedStart && !Number.isNaN(parsedStart.getTime()) && customHours);
+
+  const end = hasCustomPeriod
+    ? new Date(parsedStart!.getTime() + customHours! * 3_600_000)
+    : new Date();
+  const start = hasCustomPeriod
+    ? parsedStart!
+    : new Date(end.getTime() - days * 86_400_000);
+
+  if (start.getTime() >= end.getTime()) {
+    return NextResponse.json({ error: "El período lunar solicitado no es válido." }, { status: 400 });
+  }
+  if (end.getTime() > Date.now() + 5 * 60_000) {
+    return NextResponse.json({ error: "El período seleccionado termina en el futuro. Elige una fecha/hora de inicio anterior." }, { status: 400 });
+  }
+
   const params = new URLSearchParams({
     format: "geojson",
     starttime: start.toISOString(),
@@ -36,7 +55,7 @@ export async function GET(request: NextRequest) {
   try {
     const response = await fetch(`https://earthquake.usgs.gov/fdsnws/event/1/query?${params}`, {
       headers: { Accept: "application/geo+json, application/json" },
-      next: { revalidate: 900 },
+      next: { revalidate: hasCustomPeriod ? 86_400 : 900 },
     });
     if (!response.ok) throw new Error(`USGS HTTP ${response.status}`);
     const payload = await response.json() as UsgsFeatureCollection;
@@ -57,8 +76,21 @@ export async function GET(request: NextRequest) {
       }];
     });
 
-    return NextResponse.json({ generatedAt: end.toISOString(), days, minMagnitude, events }, {
-      headers: { "Cache-Control": "public, max-age=300, s-maxage=900, stale-while-revalidate=3600" },
+    return NextResponse.json({
+      generatedAt: new Date().toISOString(),
+      days,
+      minMagnitude,
+      periodStart: start.toISOString(),
+      periodEnd: end.toISOString(),
+      periodHours: customHours,
+      customPeriod: hasCustomPeriod,
+      events,
+    }, {
+      headers: {
+        "Cache-Control": hasCustomPeriod
+          ? "public, max-age=3600, s-maxage=86400, stale-while-revalidate=604800"
+          : "public, max-age=300, s-maxage=900, stale-while-revalidate=3600",
+      },
     });
   } catch (error) {
     return NextResponse.json({
