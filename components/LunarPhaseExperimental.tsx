@@ -159,7 +159,8 @@ export function LunarPhaseExperimental() {
   const points = useMemo(() => {
     const items: Array<
       | { kind: "event"; event: LunarEarthquake; lat: number; lng: number; altitude: number; radius: number; color: string }
-      | { kind: "moon" | "antipode"; lat: number; lng: number; altitude: number; radius: number; color: string }
+      | { kind: "moon"; lat: number; lng: number; altitude: number; radius: number; color: string }
+      | { kind: "antipode"; lat: number; lng: number; altitude: number; radius: number; color: string }
     > = visibleEvents.map((event) => ({
       kind: "event" as const,
       event,
