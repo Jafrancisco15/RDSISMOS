@@ -39,6 +39,8 @@ export interface SeismicGlobeResponse {
   generatedAt: string;
   viewDate: string;
   comparisonDate: string | null;
+  periodStart: string;
+  periodEnd: string;
   observedWindowDays: number;
   observedMinimumMagnitude: number;
   observedTotal: number;
@@ -46,6 +48,8 @@ export interface SeismicGlobeResponse {
   provider: CatalogProvider;
   providerStatus: string[];
   projectionsTotal: number;
+  projectionsLoaded: number;
+  projectionsTruncated: boolean;
   projections: GlobeProjection[];
   comparisonProjections: GlobeProjection[];
   target: CountryTarget;
