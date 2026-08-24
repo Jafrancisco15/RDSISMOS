@@ -401,7 +401,7 @@ export function SeismicGlobe3D() {
               <div><ParameterLabel label="Exceso vs. base" help={PROJECTION_PARAMETER_HELP.lift} /><strong>{selected.projection.projectionKind === "regional-etas" ? "No aplica" : formatSignedPercentagePoints(selected.projection.liftPct)}</strong></div>
               <div><ParameterLabel label="Ventana de tiempo" help={PROJECTION_PARAMETER_HELP.window} /><strong>{formatDate(selected.projection.surveillanceStart)}–{formatDate(selected.projection.surveillanceEnd)}</strong></div>
               <div><ParameterLabel label="Magnitud" help={PROJECTION_PARAMETER_HELP.magnitude} /><strong>M{selected.projection.magnitudeMin.toFixed(1)}–M{selected.projection.magnitudeMax.toFixed(1)}</strong></div>
-              <div><ParameterLabel label="Radio" help={PROJECTION_PARAMETER_HELP.radius} /><strong>{selected.projection.radiusKm.toLocaleString()} km</strong></div>
+              <div><span>Radio</span><strong>{selected.projection.radiusKm.toLocaleString()} km</strong></div>
               <div><span>Precedente</span><strong>M{selected.projection.sourceEvent.magnitude.toFixed(1)} · {selected.projection.sourceEvent.place}</strong></div>
             </div>
           </>
