@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { COUNTRIES, countryByCode } from "@/lib/countries";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { GlobeProjection, SeismicGlobeResponse } from "@/lib/globeTypes";
-import { loadGlobeProjectionsAt } from "@/lib/learning/globeStore";
+import { loadGlobeProjectionsForPeriod } from "@/lib/learning/globeStore";
 import { generateMigrationProjections } from "@/lib/projections";
 import { fetchExpandedSeismicCatalog } from "@/lib/providers/multisource";
 import type { SeismicEvent } from "@/lib/types";
@@ -11,9 +11,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const WINDOW_DAYS = 90;
+const DEFAULT_WINDOW_DAYS = 15;
+const MAX_WINDOW_DAYS = 60;
 const MINIMUM_MAGNITUDE = 4.2;
 const DAY_MS = 86_400_000;
+const PROJECTION_LIMIT = 5_000;
 
 function dateKey(value: Date) {
   return value.toISOString().slice(0, 10);
@@ -24,6 +26,21 @@ function asOfDate(raw: string | null, now: Date) {
   const endOfDay = new Date(`${raw}T23:59:59.999Z`);
   if (Number.isNaN(endOfDay.getTime())) return now;
   return endOfDay.getTime() > now.getTime() ? now : endOfDay;
+}
+
+function parsePeriodStart(raw: string | null, fallbackEnd: Date, rawDays: string | null) {
+  if (raw) {
+    const parsed = new Date(raw);
+    if (!Number.isNaN(parsed.getTime())) {
+      const earliest = new Date(fallbackEnd.getTime() - MAX_WINDOW_DAYS * DAY_MS);
+      return parsed.getTime() < earliest.getTime() ? earliest : parsed.getTime() > fallbackEnd.getTime() ? fallbackEnd : parsed;
+    }
+  }
+  const requested = Number(rawDays ?? DEFAULT_WINDOW_DAYS);
+  const days = [7, 15, 30].includes(requested)
+    ? requested
+    : Math.min(MAX_WINDOW_DAYS, Math.max(1, Number.isFinite(requested) ? Math.round(requested) : DEFAULT_WINDOW_DAYS));
+  return new Date(fallbackEnd.getTime() - days * DAY_MS);
 }
 
 function toEarthquakeEvent(event: SeismicEvent): EarthquakeEvent {
@@ -99,15 +116,19 @@ export async function GET(request: Request) {
 
   const target = countryByCode(url.searchParams.get("country"));
   const viewEnd = asOfDate(url.searchParams.get("date"), now);
+  const periodStart = parsePeriodStart(url.searchParams.get("start"), viewEnd, url.searchParams.get("days"));
+  const windowDays = Math.max(1, Math.min(MAX_WINDOW_DAYS, Math.ceil((viewEnd.getTime() - periodStart.getTime()) / DAY_MS)));
   const comparisonRaw = url.searchParams.get("compare");
   const comparisonEnd = comparisonRaw ? asOfDate(comparisonRaw, now) : null;
-  const startTime = new Date(viewEnd.getTime() - WINDOW_DAYS * DAY_MS);
+  const comparisonStart = comparisonEnd ? new Date(comparisonEnd.getTime() - windowDays * DAY_MS) : null;
   const warnings: string[] = [];
 
   const [catalogResult, primaryStoredResult, comparisonStoredResult] = await Promise.allSettled([
-    fetchExpandedSeismicCatalog(startTime, viewEnd, target, MINIMUM_MAGNITUDE),
-    loadGlobeProjectionsAt(viewEnd, 300),
-    comparisonEnd ? loadGlobeProjectionsAt(comparisonEnd, 300) : Promise.resolve(null),
+    fetchExpandedSeismicCatalog(periodStart, viewEnd, target, MINIMUM_MAGNITUDE),
+    loadGlobeProjectionsForPeriod(periodStart, viewEnd, PROJECTION_LIMIT),
+    comparisonEnd && comparisonStart
+      ? loadGlobeProjectionsForPeriod(comparisonStart, comparisonEnd, PROJECTION_LIMIT)
+      : Promise.resolve(null),
   ]);
 
   const catalog = catalogResult.status === "fulfilled" ? catalogResult.value : null;
@@ -117,19 +138,16 @@ export async function GET(request: Request) {
       : "No fue posible cargar el catálogo observado.");
   }
 
-  const primaryStored = primaryStoredResult.status === "fulfilled"
-    ? primaryStoredResult.value
-    : null;
+  const primaryStored = primaryStoredResult.status === "fulfilled" ? primaryStoredResult.value : null;
   if (primaryStoredResult.status === "rejected") {
     warnings.push(primaryStoredResult.reason instanceof Error
       ? `Proyecciones: ${primaryStoredResult.reason.message}`
       : "No fue posible cargar las proyecciones históricas.");
   }
   if (primaryStored?.warning) warnings.push(`Proyecciones: ${primaryStored.warning}`);
+  if (primaryStored?.truncated) warnings.push(`Proyecciones: se cargaron ${primaryStored.projections.length.toLocaleString()} de ${primaryStored.total.toLocaleString()} registros disponibles para el período.`);
 
-  const comparisonStored = comparisonStoredResult.status === "fulfilled"
-    ? comparisonStoredResult.value
-    : null;
+  const comparisonStored = comparisonStoredResult.status === "fulfilled" ? comparisonStoredResult.value : null;
   if (comparisonStoredResult.status === "rejected") {
     warnings.push(comparisonStoredResult.reason instanceof Error
       ? `Comparación: ${comparisonStoredResult.reason.message}`
@@ -150,17 +168,23 @@ export async function GET(request: Request) {
     ...regionalProjections,
   ].sort((a, b) => b.probabilityPct - a.probabilityPct || b.liftPct - a.liftPct);
 
+  const storedTotal = primaryStored?.total ?? 0;
+  const projectionsTotal = storedTotal + regionalProjections.length;
   const payload: SeismicGlobeResponse = {
     generatedAt: now.toISOString(),
     viewDate: dateKey(viewEnd),
     comparisonDate: comparisonEnd ? dateKey(comparisonEnd) : null,
-    observedWindowDays: WINDOW_DAYS,
+    periodStart: periodStart.toISOString(),
+    periodEnd: viewEnd.toISOString(),
+    observedWindowDays: windowDays,
     observedMinimumMagnitude: MINIMUM_MAGNITUDE,
     observedTotal: observedEvents.length,
     observedEvents,
     provider: catalog?.provider ?? "EMSC",
     providerStatus: catalog?.providerStatus ?? [],
-    projectionsTotal: projections.length,
+    projectionsTotal,
+    projectionsLoaded: projections.length,
+    projectionsTruncated: Boolean(primaryStored?.truncated),
     projections,
     comparisonProjections: comparisonStored?.projections ?? [],
     target,
@@ -170,7 +194,7 @@ export async function GET(request: Request) {
     warnings: [catalog?.warning, ...warnings].filter((value): value is string => Boolean(value)),
   };
 
-  const isHistorical = dateKey(viewEnd) !== dateKey(now) || Boolean(comparisonEnd);
+  const isHistorical = dateKey(viewEnd) !== dateKey(now) || Boolean(comparisonEnd) || windowDays !== DEFAULT_WINDOW_DAYS;
   return NextResponse.json(payload, {
     headers: {
       "Cache-Control": isHistorical
