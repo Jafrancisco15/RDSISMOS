@@ -11,6 +11,7 @@ import type {
 } from "@/lib/globeLayers";
 
 const EARTH_TEXTURE = "https://cdn.jsdelivr.net/npm/three-globe@2.45.2/example/img/earth-blue-marble.jpg";
+const EARTH_RADIUS_KM = 6371;
 
 export type SeismicGlobePoint =
   | {
@@ -43,6 +44,13 @@ interface GlobeArc {
   endLng: number;
   color: string;
   altitude: number;
+}
+
+interface EpicenterPolygon {
+  id: string;
+  event: EarthquakeEvent;
+  color: string;
+  geometry: { type: "Polygon"; coordinates: number[][][] };
 }
 
 interface FocusTarget {
@@ -105,6 +113,11 @@ function pointLabel(point: SeismicGlobePoint) {
   return `<div class="globe-tooltip"><strong>${point.comparison ? "Comparación" : "Proyección"} · ${escapeHtml(projection.countryName)}</strong><span>${projection.probabilityPct}% · M${projection.magnitudeMin.toFixed(1)}–M${projection.magnitudeMax.toFixed(1)}</span><small>${formatDate(projection.surveillanceStart)}–${formatDate(projection.surveillanceEnd)} · ${model}</small></div>`;
 }
 
+function epicenterLabel(item: EpicenterPolygon) {
+  const event = item.event;
+  return `<div class="globe-tooltip"><strong>Epicentro observado · M${event.magnitude.toFixed(1)}</strong><span>${escapeHtml(event.place)}</span><small>${formatDate(event.timeUtc)} UTC · profundidad hipocentral ${event.depthKm.toFixed(0)} km</small></div>`;
+}
+
 function pathLabel(path: RenderPath) {
   const category = path.kind === "active-fault"
     ? "Falla activa"
@@ -128,11 +141,26 @@ function decoratePaths(
   }));
 }
 
+function surfaceCircle(latitude: number, longitude: number, radiusKm: number, segments = 14) {
+  const angular = radiusKm / EARTH_RADIUS_KM;
+  const lat1 = latitude * Math.PI / 180;
+  const lon1 = longitude * Math.PI / 180;
+  const coordinates: number[][] = [];
+  for (let index = 0; index <= segments; index += 1) {
+    const bearing = index / segments * Math.PI * 2;
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(angular) + Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing));
+    const lon2 = lon1 + Math.atan2(Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1), Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2));
+    coordinates.push([((lon2 * 180 / Math.PI + 540) % 360) - 180, lat2 * 180 / Math.PI]);
+  }
+  return coordinates;
+}
+
 export function SeismicGlobeRenderer({
   observedEvents,
   projections,
   comparisonProjections,
   showObserved,
+  showEpicenters,
   showProjected,
   showComparison,
   showFaults,
@@ -147,6 +175,7 @@ export function SeismicGlobeRenderer({
   projections: GlobeProjection[];
   comparisonProjections: GlobeProjection[];
   showObserved: boolean;
+  showEpicenters: boolean;
   showProjected: boolean;
   showComparison: boolean;
   showFaults: boolean;
@@ -167,10 +196,7 @@ export function SeismicGlobeRenderer({
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
-    const update = () => setSize({
-      width: Math.max(320, element.clientWidth),
-      height: Math.max(480, Math.min(760, element.clientWidth * 0.72)),
-    });
+    const update = () => setSize({ width: Math.max(320, element.clientWidth), height: Math.max(480, Math.min(760, element.clientWidth * 0.72)) });
     update();
     const observer = new ResizeObserver(update);
     observer.observe(element);
@@ -182,28 +208,17 @@ export function SeismicGlobeRenderer({
     let disposed = false;
     async function loadMapLayers() {
       try {
-        const response = await fetch("/api/globe/layers", {
-          cache: "force-cache",
-          signal: controller.signal,
-        });
+        const response = await fetch("/api/globe/layers", { cache: "force-cache", signal: controller.signal });
         const payload = await response.json() as GlobeMapLayersResponse & { error?: string };
         if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
-        if (!disposed) {
-          setMapLayers(payload);
-          setMapLayersError(null);
-        }
+        if (!disposed) { setMapLayers(payload); setMapLayersError(null); }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
         if (!disposed) setMapLayersError(error instanceof Error ? error.message : "Capas geológicas no disponibles.");
-      } finally {
-        if (!disposed) setMapLayersLoading(false);
-      }
+      } finally { if (!disposed) setMapLayersLoading(false); }
     }
     void loadMapLayers();
-    return () => {
-      disposed = true;
-      controller.abort();
-    };
+    return () => { disposed = true; controller.abort(); };
   }, []);
 
   useEffect(() => {
@@ -215,118 +230,41 @@ export function SeismicGlobeRenderer({
     controls.dampingFactor = 0.08;
   }, [autoRotate]);
 
-  useEffect(() => {
-    globeRef.current?.pointOfView({ lat: 15, lng: -25, altitude: 2.15 }, 900);
-  }, []);
+  useEffect(() => { globeRef.current?.pointOfView({ lat: 15, lng: -25, altitude: 2.15 }, 900); }, []);
 
   useEffect(() => {
     if (!focusTarget) return;
-    globeRef.current?.pointOfView({
-      lat: focusTarget.latitude,
-      lng: focusTarget.longitude,
-      altitude: 1.35,
-    }, 850);
+    globeRef.current?.pointOfView({ lat: focusTarget.latitude, lng: focusTarget.longitude, altitude: 1.35 }, 850);
   }, [focusTarget]);
 
   const points = useMemo<SeismicGlobePoint[]>(() => {
-    const observed: SeismicGlobePoint[] = showObserved
-      ? observedEvents.map((event) => ({
-          kind: "observed",
-          id: `observed:${event.id}`,
-          lat: event.latitude,
-          lng: event.longitude,
-          altitude: 0.018 + clamp((event.magnitude - 4.2) / 4.3, 0, 1) * 0.11,
-          radius: 0.12 + clamp((event.magnitude - 4.2) / 4.3, 0, 1) * 0.38,
-          color: observedColor(event.magnitude),
-          event,
-        }))
-      : [];
-    const projected: SeismicGlobePoint[] = showProjected
-      ? projections.map((projection) => ({
-          kind: "projected",
-          id: `projected:${projection.id}`,
-          lat: projection.latitude,
-          lng: projection.longitude,
-          altitude: 0.15 + clamp(projection.probabilityPct / 100, 0, 1) * 0.25,
-          radius: 0.24 + clamp(projection.magnitudeMax / 9, 0, 1) * 0.3,
-          color: projectionColor(projection),
-          comparison: false,
-          projection,
-        }))
-      : [];
-    const comparison: SeismicGlobePoint[] = showComparison
-      ? comparisonProjections.map((projection) => ({
-          kind: "projected",
-          id: `comparison:${projection.id}`,
-          lat: projection.latitude,
-          lng: projection.longitude,
-          altitude: 0.11 + clamp(projection.probabilityPct / 100, 0, 1) * 0.19,
-          radius: 0.2 + clamp(projection.magnitudeMax / 9, 0, 1) * 0.24,
-          color: projectionColor(projection, true),
-          comparison: true,
-          projection,
-        }))
-      : [];
+    const observed: SeismicGlobePoint[] = showObserved ? observedEvents.map((event) => ({ kind: "observed", id: `observed:${event.id}`, lat: event.latitude, lng: event.longitude, altitude: 0.018 + clamp((event.magnitude - 4.2) / 4.3, 0, 1) * 0.11, radius: 0.12 + clamp((event.magnitude - 4.2) / 4.3, 0, 1) * 0.38, color: observedColor(event.magnitude), event })) : [];
+    const projected: SeismicGlobePoint[] = showProjected ? projections.map((projection) => ({ kind: "projected", id: `projected:${projection.id}`, lat: projection.latitude, lng: projection.longitude, altitude: 0.15 + clamp(projection.probabilityPct / 100, 0, 1) * 0.25, radius: 0.24 + clamp(projection.magnitudeMax / 9, 0, 1) * 0.3, color: projectionColor(projection), comparison: false, projection })) : [];
+    const comparison: SeismicGlobePoint[] = showComparison ? comparisonProjections.map((projection) => ({ kind: "projected", id: `comparison:${projection.id}`, lat: projection.latitude, lng: projection.longitude, altitude: 0.11 + clamp(projection.probabilityPct / 100, 0, 1) * 0.19, radius: 0.2 + clamp(projection.magnitudeMax / 9, 0, 1) * 0.24, color: projectionColor(projection, true), comparison: true, projection })) : [];
     return [...observed, ...projected, ...comparison];
   }, [observedEvents, projections, comparisonProjections, showObserved, showProjected, showComparison]);
+
+  const epicenters = useMemo<EpicenterPolygon[]>(() => showEpicenters ? observedEvents.map((event) => {
+    const radiusKm = 22 + clamp((event.magnitude - 4.2) / 3.8, 0, 1) * 28;
+    return { id: `epicenter:${event.id}`, event, color: observedColor(event.magnitude), geometry: { type: "Polygon", coordinates: [surfaceCircle(event.latitude, event.longitude, radiusKm)] } };
+  }) : [], [observedEvents, showEpicenters]);
 
   const arcs = useMemo<GlobeArc[]>(() => {
     if (!selectedPoint || selectedPoint.kind !== "projected") return [];
     const projection = selectedPoint.projection;
-    return [{
-      id: `selected-arc:${selectedPoint.id}`,
-      startLat: projection.sourceEvent.latitude,
-      startLng: projection.sourceEvent.longitude,
-      endLat: projection.latitude,
-      endLng: projection.longitude,
-      color: projectionColor(projection, selectedPoint.comparison),
-      altitude: selectedPoint.comparison
-        ? 0.13 + clamp(projection.probabilityPct / 100, 0, 1) * 0.13
-        : 0.18 + clamp(projection.probabilityPct / 100, 0, 1) * 0.18,
-    }];
+    return [{ id: `selected-arc:${selectedPoint.id}`, startLat: projection.sourceEvent.latitude, startLng: projection.sourceEvent.longitude, endLat: projection.latitude, endLng: projection.longitude, color: projectionColor(projection, selectedPoint.comparison), altitude: selectedPoint.comparison ? 0.13 + clamp(projection.probabilityPct / 100, 0, 1) * 0.13 : 0.18 + clamp(projection.probabilityPct / 100, 0, 1) * 0.18 }];
   }, [selectedPoint]);
 
   const rings = useMemo(() => {
-    const primary = showProjected ? projections.map((projection) => ({
-      ...projection,
-      color: projectionColor(projection),
-    })) : [];
-    const comparison = showComparison ? comparisonProjections.map((projection) => ({
-      ...projection,
-      id: `comparison:${projection.id}`,
-      color: projectionColor(projection, true),
-    })) : [];
+    const primary = showProjected ? projections.map((projection) => ({ ...projection, color: projectionColor(projection) })) : [];
+    const comparison = showComparison ? comparisonProjections.map((projection) => ({ ...projection, id: `comparison:${projection.id}`, color: projectionColor(projection, true) })) : [];
     return [...primary, ...comparison];
   }, [comparisonProjections, projections, showComparison, showProjected]);
 
   const geographicPaths = useMemo<RenderPath[]>(() => {
-    const countryBorders = showCountryBorders
-      ? decoratePaths(mapLayers?.countryBorders ?? [], {
-          color: "rgba(15,23,42,.48)",
-          stroke: 0.32,
-          dashLength: 1,
-          dashGap: 0,
-          altitude: 0.006,
-        })
-      : [];
-    const plateBoundaries = showPlateBoundaries
-      ? decoratePaths(mapLayers?.plateBoundaries ?? [], {
-          color: "#0284c7",
-          stroke: 0.54,
-          dashLength: 0.035,
-          dashGap: 0.025,
-          altitude: 0.011,
-        })
-      : [];
-    const faults = showFaults
-      ? decoratePaths(mapLayers?.activeFaults ?? [], {
-          color: "#e11d48",
-          stroke: 0.45,
-          dashLength: 0.022,
-          dashGap: 0.018,
-          altitude: 0.014,
-        })
-      : [];
+    const countryBorders = showCountryBorders ? decoratePaths(mapLayers?.countryBorders ?? [], { color: "rgba(15,23,42,.48)", stroke: 0.32, dashLength: 1, dashGap: 0, altitude: 0.006 }) : [];
+    const plateBoundaries = showPlateBoundaries ? decoratePaths(mapLayers?.plateBoundaries ?? [], { color: "#0284c7", stroke: 0.54, dashLength: 0.035, dashGap: 0.025, altitude: 0.011 }) : [];
+    const faults = showFaults ? decoratePaths(mapLayers?.activeFaults ?? [], { color: "#e11d48", stroke: 0.45, dashLength: 0.022, dashGap: 0.018, altitude: 0.014 }) : [];
     return [...countryBorders, ...plateBoundaries, ...faults];
   }, [mapLayers, showCountryBorders, showFaults, showPlateBoundaries]);
 
@@ -341,6 +279,18 @@ export function SeismicGlobeRenderer({
         atmosphereColor="#8bd5ff"
         atmosphereAltitude={0.16}
         showGraticules
+        polygonsData={epicenters}
+        polygonGeoJsonGeometry="geometry"
+        polygonCapColor={(item: unknown) => String((item as EpicenterPolygon).color)}
+        polygonSideColor={() => "rgba(0,0,0,0)"}
+        polygonStrokeColor={() => "rgba(127,29,29,.9)"}
+        polygonAltitude={0.007}
+        polygonLabel={(item: unknown) => epicenterLabel(item as EpicenterPolygon)}
+        onPolygonClick={(item: unknown) => {
+          const epicenter = item as EpicenterPolygon;
+          const event = epicenter.event;
+          onSelect({ kind: "observed", id: `observed:${event.id}`, lat: event.latitude, lng: event.longitude, altitude: 0, radius: 0, color: epicenter.color, event });
+        }}
         pathsData={geographicPaths}
         pathPoints="points"
         pathPointLat="lat"
@@ -385,9 +335,7 @@ export function SeismicGlobeRenderer({
       />
       {mapLayersLoading && <div className="globe-layer-status">Cargando fallas, placas y fronteras…</div>}
       {!mapLayersLoading && mapLayersError && <div className="globe-layer-status error">Capas cartográficas: {mapLayersError}</div>}
-      {!mapLayersLoading && !mapLayersError && (mapLayers?.warnings.length ?? 0) > 0 && (
-        <div className="globe-layer-status warning">{mapLayers?.warnings.join(" · ")}</div>
-      )}
+      {!mapLayersLoading && !mapLayersError && (mapLayers?.warnings.length ?? 0) > 0 && <div className="globe-layer-status warning">{mapLayers?.warnings.join(" · ")}</div>}
     </div>
   );
 }
