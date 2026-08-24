@@ -160,7 +160,6 @@ export function SeismicGlobeRenderer({
   projections,
   comparisonProjections,
   showObserved,
-  showEpicenters,
   showProjected,
   showComparison,
   showFaults,
@@ -175,7 +174,6 @@ export function SeismicGlobeRenderer({
   projections: GlobeProjection[];
   comparisonProjections: GlobeProjection[];
   showObserved: boolean;
-  showEpicenters: boolean;
   showProjected: boolean;
   showComparison: boolean;
   showFaults: boolean;
@@ -192,6 +190,7 @@ export function SeismicGlobeRenderer({
   const [mapLayers, setMapLayers] = useState<GlobeMapLayersResponse | null>(null);
   const [mapLayersLoading, setMapLayersLoading] = useState(true);
   const [mapLayersError, setMapLayersError] = useState<string | null>(null);
+  const [showEpicenters, setShowEpicenters] = useState(false);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -269,7 +268,15 @@ export function SeismicGlobeRenderer({
   }, [mapLayers, showCountryBorders, showFaults, showPlateBoundaries]);
 
   return (
-    <div className="seismic-globe-canvas" ref={containerRef}>
+    <div className="seismic-globe-canvas" ref={containerRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setShowEpicenters((value) => !value)}
+        aria-pressed={showEpicenters}
+        style={{ position: "absolute", zIndex: 4, top: 12, left: 12, border: "1px solid rgba(15,23,42,.28)", borderRadius: 999, padding: "8px 12px", background: showEpicenters ? "rgba(185,28,28,.92)" : "rgba(248,250,252,.9)", color: showEpicenters ? "white" : "#0f172a", fontWeight: 700, fontSize: 12, boxShadow: "0 5px 18px rgba(15,23,42,.18)" }}
+      >
+        Epicentros {showEpicenters ? "ON" : "OFF"}
+      </button>
       <Globe
         ref={globeRef}
         width={size.width}
