@@ -19,6 +19,8 @@ const SeismicGlobeRenderer = dynamic(
 );
 
 const PROJECTION_PAGE_SIZE = 20;
+const DAY_MS = 86_400_000;
+type PeriodPreset = "7" | "15" | "30" | "custom";
 
 function formatDate(value: string, withTime = false) {
   return new Intl.DateTimeFormat("es-DO", {
@@ -30,6 +32,11 @@ function formatDate(value: string, withTime = false) {
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function daysAgoKey(days: number, endKey = todayKey()) {
+  const end = new Date(`${endKey}T23:59:59.999Z`);
+  return new Date(end.getTime() - days * DAY_MS).toISOString().slice(0, 10);
 }
 
 function projectionPoint(projection: GlobeProjection, comparison: boolean): SeismicGlobePoint {
@@ -58,6 +65,9 @@ export function SeismicGlobe3D() {
   const [comparisonDraft, setComparisonDraft] = useState(today);
   const [viewDate, setViewDate] = useState(today);
   const [comparisonDate, setComparisonDate] = useState(today);
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("15");
+  const [customStartDraft, setCustomStartDraft] = useState(daysAgoKey(15, today));
+  const [customStart, setCustomStart] = useState(daysAgoKey(15, today));
   const [compareEnabled, setCompareEnabled] = useState(false);
   const [showObserved, setShowObserved] = useState(true);
   const [showProjected, setShowProjected] = useState(true);
@@ -78,6 +88,10 @@ export function SeismicGlobe3D() {
   const [projectionMinProbability, setProjectionMinProbability] = useState("");
   const [projectionMinMagnitude, setProjectionMinMagnitude] = useState("");
 
+  const periodDays = periodPreset === "custom"
+    ? Math.max(1, Math.min(60, Math.ceil((new Date(`${viewDate}T23:59:59.999Z`).getTime() - new Date(`${customStart}T00:00:00.000Z`).getTime()) / DAY_MS)))
+    : Number(periodPreset);
+
   useEffect(() => {
     const controller = new AbortController();
     let disposed = false;
@@ -86,6 +100,8 @@ export function SeismicGlobe3D() {
       if (showLoader) setLoading(true);
       try {
         const params = new URLSearchParams({ country: countryCode, date: viewDate, _: String(Date.now()) });
+        if (periodPreset === "custom") params.set("start", `${customStart}T00:00:00.000Z`);
+        else params.set("days", periodPreset);
         if (compareEnabled) params.set("compare", comparisonDate);
         const response = await fetch(`/api/globe?${params}`, {
           cache: "no-store",
@@ -99,6 +115,7 @@ export function SeismicGlobe3D() {
           setShowComparison(compareEnabled && payload.comparisonProjections.length > 0);
           setProjectionPage(1);
           setComparisonPage(1);
+          setSelected(null);
         }
       } catch (loadError) {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
@@ -116,7 +133,7 @@ export function SeismicGlobe3D() {
       controller.abort();
       if (interval) window.clearInterval(interval);
     };
-  }, [comparisonDate, compareEnabled, countryCode, today, viewDate]);
+  }, [comparisonDate, compareEnabled, countryCode, customStart, periodPreset, today, viewDate]);
 
   const strongestObserved = useMemo(
     () => [...(data?.observedEvents ?? [])].sort((a, b) => b.magnitude - a.magnitude)[0] ?? null,
@@ -187,6 +204,7 @@ export function SeismicGlobe3D() {
   function applyDates() {
     setViewDate(dateDraft || today);
     setComparisonDate(comparisonDraft || today);
+    if (periodPreset === "custom") setCustomStart(customStartDraft || daysAgoKey(15, dateDraft || today));
     setSelected(null);
   }
 
@@ -209,13 +227,19 @@ export function SeismicGlobe3D() {
     setComparisonPage(1);
   }
 
+  const projectionsCounter = data
+    ? data.projectionsTruncated
+      ? `${data.projectionsLoaded.toLocaleString()} de ${data.projectionsTotal.toLocaleString()}`
+      : data.projectionsTotal.toLocaleString()
+    : "—";
+
   return (
     <main className="globe-dashboard">
       <header className="globe-head">
         <div>
           <div className="brand-line"><span className="pulse-dot" /> RDSISMOS</div>
           <h1>Mapa sísmico 3D interactivo</h1>
-          <p>Explora sismos M4.2+, proyecciones activas, fallas, placas tectónicas y el estado histórico que tenía el modelo en cualquier fecha disponible.</p>
+          <p>Explora sismos M4.2+, proyecciones activas, fallas, placas tectónicas y períodos históricos de hasta 60 días.</p>
         </div>
         <div className="globe-update-chip">
           <span>Actualización</span>
@@ -240,8 +264,8 @@ export function SeismicGlobe3D() {
         </div>
 
         <section className="panel globe-controls globe-layer-controls" aria-label="Capas del mapa 3D">
-          <label className="globe-switch"><input type="checkbox" checked={showObserved} onChange={(event) => setShowObserved(event.target.checked)} /><span className="globe-switch-track" aria-hidden="true" /><div><strong>Sismos observados</strong><small>90 días · magnitud M4.2+</small></div></label>
-          <label className="globe-switch"><input type="checkbox" checked={showProjected} onChange={(event) => setShowProjected(event.target.checked)} /><span className="globe-switch-track projected" aria-hidden="true" /><div><strong>Proyecciones</strong><small>Analogía histórica y ETAS regional</small></div></label>
+          <label className="globe-switch"><input type="checkbox" checked={showObserved} onChange={(event) => setShowObserved(event.target.checked)} /><span className="globe-switch-track" aria-hidden="true" /><div><strong>Sismos observados</strong><small>{data?.observedWindowDays ?? periodDays} días · M4.2+</small></div></label>
+          <label className="globe-switch"><input type="checkbox" checked={showProjected} onChange={(event) => setShowProjected(event.target.checked)} /><span className="globe-switch-track projected" aria-hidden="true" /><div><strong>Proyecciones</strong><small>Mismo período · analogía histórica + ETAS</small></div></label>
           <label className="globe-switch" aria-disabled={!compareEnabled}><input type="checkbox" disabled={!compareEnabled} checked={showComparison} onChange={(event) => setShowComparison(event.target.checked)} /><span className="globe-switch-track comparison" aria-hidden="true" /><div><strong>Fecha comparada</strong><small>{compareEnabled ? comparisonDate : "Actívala debajo del mapa"}</small></div></label>
           <label className="globe-switch"><input type="checkbox" checked={showFaults} onChange={(event) => setShowFaults(event.target.checked)} /><span className="globe-switch-track fault" aria-hidden="true" /><div><strong>Fallas activas</strong><small>Líneas rosadas puntuadas · GEM</small></div></label>
           <label className="globe-switch"><input type="checkbox" checked={showPlateBoundaries} onChange={(event) => setShowPlateBoundaries(event.target.checked)} /><span className="globe-switch-track plate" aria-hidden="true" /><div><strong>Placas tectónicas</strong><small>Límites azules puntuados · PB2002</small></div></label>
@@ -266,14 +290,15 @@ export function SeismicGlobe3D() {
                 showCountryBorders={showCountryBorders}
                 autoRotate={autoRotate}
                 focusTarget={focusTarget}
+                selectedPoint={selected}
                 onSelect={setSelected}
               />
             ) : null}
           </div>
 
           <aside className="globe-projection-list" aria-label="Listado de proyecciones">
-            <div className="globe-list-head"><span className="eyebrow">Proyecciones activas</span><strong>{filteredProjections.length}/{data?.projections.length ?? 0}</strong></div>
-            <p>Listado limitado a {PROJECTION_PAGE_SIZE} por página. Los filtros afectan la lista, no ocultan las capas del globo.</p>
+            <div className="globe-list-head"><span className="eyebrow">Proyecciones del período</span><strong>{filteredProjections.length}/{data?.projectionsLoaded ?? 0}</strong></div>
+            <p>{projectionsCounter} proyecciones disponibles en el período. Las líneas de procedencia aparecen únicamente al seleccionar una proyección.</p>
 
             <div className={`${controls.filterBar} ${controls.compact}`} aria-label="Filtros de proyecciones activas">
               <label className={controls.field}><span>Buscar</span><input type="search" value={projectionSearch} onChange={(event) => { setProjectionPage(1); setComparisonPage(1); setProjectionSearch(event.target.value); }} placeholder="País, precedente, ID" /></label>
@@ -299,7 +324,7 @@ export function SeismicGlobe3D() {
                   </button>
                 );
               })}
-              {!filteredProjections.length && <div className="globe-list-empty">No hay proyecciones activas que coincidan con los filtros.</div>}
+              {!filteredProjections.length && <div className="globe-list-empty">No hay proyecciones que coincidan con los filtros para este período.</div>}
             </div>
             <nav className={controls.pagination} aria-label="Paginación de proyecciones activas">
               <button type="button" disabled={projectionPage <= 1} onClick={() => setProjectionPage((value) => Math.max(1, value - 1))}>Anterior</button>
@@ -326,21 +351,23 @@ export function SeismicGlobe3D() {
           </aside>
         </div>
 
-        <p className="globe-help">Arrastra para girar · usa la rueda o gesto de pinza para acercar · toca una columna o una proyección del listado. Capas: GEM GAF-DB, PB2002 y Natural Earth.</p>
+        <p className="globe-help">Arrastra para girar · usa la rueda o gesto de pinza para acercar · toca una columna o una proyección del listado. El arco de procedencia se muestra solo para la proyección seleccionada.</p>
       </section>
 
-      <section className="panel globe-time-controls globe-time-controls-after-map" aria-label="Fecha y país de análisis">
+      <section className="panel globe-time-controls globe-time-controls-after-map" aria-label="Fecha, período y país de análisis">
         <label><span>País de estudio</span><select value={countryCode} onChange={(event) => setCountryCode(event.target.value)}>{(data?.countries ?? []).map((country) => <option key={country.code} value={country.code}>{country.name}</option>)}{!data && <option value="DO">República Dominicana</option>}</select></label>
-        <label><span>Estado del modelo en</span><input type="date" value={dateDraft} max={today} onChange={(event) => setDateDraft(event.target.value)} /></label>
+        <label><span>Fin del período</span><input type="date" value={dateDraft} max={today} onChange={(event) => setDateDraft(event.target.value)} /></label>
+        <label><span>Período</span><select value={periodPreset} onChange={(event) => { const value = event.target.value as PeriodPreset; setPeriodPreset(value); if (value !== "custom") setCustomStartDraft(daysAgoKey(Number(value), dateDraft || today)); }}><option value="7">Últimos 7 días</option><option value="15">Últimos 15 días</option><option value="30">Últimos 30 días</option><option value="custom">Personalizado · máx. 60 días</option></select></label>
+        {periodPreset === "custom" && <label><span>Inicio personalizado</span><input type="date" value={customStartDraft} max={dateDraft || today} min={daysAgoKey(60, dateDraft || today)} onChange={(event) => setCustomStartDraft(event.target.value)} /></label>}
         <label><span>Comparar con</span><input type="date" value={comparisonDraft} max={today} disabled={!compareEnabled} onChange={(event) => setComparisonDraft(event.target.value)} /></label>
         <label className="globe-compare-check"><input type="checkbox" checked={compareEnabled} onChange={(event) => setCompareEnabled(event.target.checked)} /><span>Activar comparación histórica</span></label>
         <button type="button" onClick={applyDates}>Aplicar</button>
       </section>
 
       <section className="globe-summary-grid">
-        <article className="metric-card"><span>Eventos observados</span><strong className="viz-stat-value">{data?.observedEvents.length.toLocaleString() ?? "—"}</strong><small>{data?.provider ?? "Multifuente"} · M{data?.observedMinimumMagnitude ?? 4.2}+</small></article>
+        <article className="metric-card"><span>Eventos observados</span><strong className="viz-stat-value">{data?.observedEvents.length.toLocaleString() ?? "—"}</strong><small>{data ? `${formatDate(data.periodStart)}–${formatDate(data.periodEnd)} · M${data.observedMinimumMagnitude}+` : "Multifuente"}</small></article>
         <article className="metric-card"><span>Mayor magnitud observada</span><strong className="viz-stat-value">{strongestObserved ? `M${strongestObserved.magnitude.toFixed(1)}` : "—"}</strong><small>{strongestObserved?.place ?? "Sin datos"}</small></article>
-        <article className="metric-card"><span>Proyecciones de {data?.viewDate ?? viewDate}</span><strong className="viz-stat-value">{data?.projections.length.toLocaleString() ?? "—"}</strong><small>{data?.databaseConnected ? "Supabase + cálculo regional" : "Cálculo regional sin memoria"}</small></article>
+        <article className="metric-card"><span>Proyecciones del período</span><strong className="viz-stat-value">{projectionsCounter}</strong><small>{data?.databaseConnected ? "Supabase + cálculo regional" : "Cálculo regional sin memoria"}</small></article>
         <article className="metric-card"><span>Mayor recurrencia proyectada</span><strong className="viz-stat-value">{strongestProjection ? formatProbability(strongestProjection.probabilityPct) : "—"}</strong><small>{strongestProjection?.countryName ?? "Sin proyección activa"}</small></article>
       </section>
 
@@ -350,7 +377,7 @@ export function SeismicGlobe3D() {
 
       <section className="panel globe-detail" aria-live="polite">
         {!selected ? (
-          <div className="globe-detail-empty"><span className="eyebrow">Detalle interactivo</span><h2>Selecciona un punto del globo</h2><p>Los cilindros bajos son eventos registrados; los elevados representan proyecciones con escala M4.2 o superior.</p></div>
+          <div className="globe-detail-empty"><span className="eyebrow">Detalle interactivo</span><h2>Selecciona un punto del globo</h2><p>Los cilindros bajos son eventos registrados; los elevados representan proyecciones. La línea de procedencia solo aparece al seleccionar una proyección.</p></div>
         ) : selected.kind === "observed" ? (
           <>
             <div className="globe-detail-title observed"><span>Evento observado</span><h2>M{selected.event.magnitude.toFixed(1)} · {selected.event.place}</h2></div>
@@ -373,21 +400,13 @@ export function SeismicGlobe3D() {
               <div><ParameterLabel label="Línea base" help={PROJECTION_PARAMETER_HELP.baseline} /><strong>{selected.projection.projectionKind === "regional-etas" ? "No aplica" : formatProbability(selected.projection.baselinePct)}</strong></div>
               <div><ParameterLabel label="Exceso vs. base" help={PROJECTION_PARAMETER_HELP.lift} /><strong>{selected.projection.projectionKind === "regional-etas" ? "No aplica" : formatSignedPercentagePoints(selected.projection.liftPct)}</strong></div>
               <div><ParameterLabel label="Ventana de tiempo" help={PROJECTION_PARAMETER_HELP.window} /><strong>{formatDate(selected.projection.surveillanceStart)}–{formatDate(selected.projection.surveillanceEnd)}</strong></div>
-              <div><ParameterLabel label="Escala orientativa" help={PROJECTION_PARAMETER_HELP.magnitude} /><strong>M{selected.projection.magnitudeMin.toFixed(1)}–M{selected.projection.magnitudeMax.toFixed(1)}</strong></div>
-              <div><span>Evento precedente</span><strong>M{selected.projection.sourceEvent.magnitude.toFixed(1)} · {selected.projection.sourceEvent.place}</strong></div>
-              <div><ParameterLabel label="Evidencia" help={PROJECTION_PARAMETER_HELP.analogs} /><strong>{selected.projection.projectionKind === "regional-etas" ? "Tasa regional espacio-tiempo" : `${selected.projection.analogHits}/${selected.projection.analogsEvaluated ?? "—"} análogos · control ${selected.projection.controlHits}`}</strong></div>
-              <div><ParameterLabel label="Calidad de evidencia" help={PROJECTION_PARAMETER_HELP.confidence} /><strong>{selected.projection.projectionKind === "regional-etas" ? "No aplica" : `${selected.projection.confidencePct.toFixed(0)}%`}</strong></div>
+              <div><ParameterLabel label="Magnitud" help={PROJECTION_PARAMETER_HELP.magnitude} /><strong>M{selected.projection.magnitudeMin.toFixed(1)}–M{selected.projection.magnitudeMax.toFixed(1)}</strong></div>
+              <div><ParameterLabel label="Radio" help={PROJECTION_PARAMETER_HELP.radius} /><strong>{selected.projection.radiusKm.toLocaleString()} km</strong></div>
+              <div><span>Precedente</span><strong>M{selected.projection.sourceEvent.magnitude.toFixed(1)} · {selected.projection.sourceEvent.place}</strong></div>
             </div>
-            {selected.projection.projectionKind !== "regional-etas" && (
-              <div className={projectionInfoStyles.inlineExplanation}>
-                <strong>Cómo interpretarla:</strong> {formatProbability(selected.projection.probabilityPct)} es la recurrencia histórica ponderada para el destino. La calidad de evidencia de {selected.projection.confidencePct.toFixed(0)}% describe el respaldo muestral del escenario y no la certeza de que ocurra un terremoto. Para verificarse como cumplida, un evento debe coincidir con zona, ventana y rango de magnitud.
-              </div>
-            )}
           </>
         )}
       </section>
-
-      <footer>Las proyecciones son estimaciones probabilísticas y reconstrucciones históricas del modelo. Las capas tectónicas son cartográficas y no sustituyen mapas oficiales de amenaza.</footer>
     </main>
   );
 }
