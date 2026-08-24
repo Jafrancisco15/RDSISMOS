@@ -10,7 +10,7 @@ import type {
   GlobeMapPoint,
 } from "@/lib/globeLayers";
 
-const EARTH_TEXTURE = "https://cdn.jsdelivr.net/npm/three-globe@2.45.2/example/img/earth-night.jpg";
+const EARTH_TEXTURE = "https://cdn.jsdelivr.net/npm/three-globe@2.45.2/example/img/earth-blue-marble.jpg";
 
 export type SeismicGlobePoint =
   | {
@@ -88,11 +88,11 @@ function observedColor(magnitude: number) {
 }
 
 function projectionColor(projection: GlobeProjection, comparison = false) {
-  if (comparison) return "#22c55e";
-  if (projection.projectionKind === "regional-etas") return "#22d3ee";
-  if (projection.probabilityPct >= 65) return "#d946ef";
-  if (projection.probabilityPct >= 35) return "#8b5cf6";
-  return "#60a5fa";
+  if (comparison) return "#16a34a";
+  if (projection.projectionKind === "regional-etas") return "#0891b2";
+  if (projection.probabilityPct >= 65) return "#c026d3";
+  if (projection.probabilityPct >= 35) return "#7c3aed";
+  return "#2563eb";
 }
 
 function pointLabel(point: SeismicGlobePoint) {
@@ -140,6 +140,7 @@ export function SeismicGlobeRenderer({
   showCountryBorders,
   autoRotate,
   focusTarget,
+  selectedPoint,
   onSelect,
 }: {
   observedEvents: EarthquakeEvent[];
@@ -153,6 +154,7 @@ export function SeismicGlobeRenderer({
   showCountryBorders: boolean;
   autoRotate: boolean;
   focusTarget: FocusTarget | null;
+  selectedPoint: SeismicGlobePoint | null;
   onSelect: (point: SeismicGlobePoint) => void;
 }) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
@@ -269,26 +271,20 @@ export function SeismicGlobeRenderer({
   }, [observedEvents, projections, comparisonProjections, showObserved, showProjected, showComparison]);
 
   const arcs = useMemo<GlobeArc[]>(() => {
-    const primary = showProjected ? projections.map((projection) => ({
-      id: `arc:${projection.id}`,
+    if (!selectedPoint || selectedPoint.kind !== "projected") return [];
+    const projection = selectedPoint.projection;
+    return [{
+      id: `selected-arc:${selectedPoint.id}`,
       startLat: projection.sourceEvent.latitude,
       startLng: projection.sourceEvent.longitude,
       endLat: projection.latitude,
       endLng: projection.longitude,
-      color: projectionColor(projection),
-      altitude: 0.18 + clamp(projection.probabilityPct / 100, 0, 1) * 0.18,
-    })) : [];
-    const comparison = showComparison ? comparisonProjections.map((projection) => ({
-      id: `comparison-arc:${projection.id}`,
-      startLat: projection.sourceEvent.latitude,
-      startLng: projection.sourceEvent.longitude,
-      endLat: projection.latitude,
-      endLng: projection.longitude,
-      color: projectionColor(projection, true),
-      altitude: 0.13 + clamp(projection.probabilityPct / 100, 0, 1) * 0.13,
-    })) : [];
-    return [...primary, ...comparison];
-  }, [comparisonProjections, projections, showComparison, showProjected]);
+      color: projectionColor(projection, selectedPoint.comparison),
+      altitude: selectedPoint.comparison
+        ? 0.13 + clamp(projection.probabilityPct / 100, 0, 1) * 0.13
+        : 0.18 + clamp(projection.probabilityPct / 100, 0, 1) * 0.18,
+    }];
+  }, [selectedPoint]);
 
   const rings = useMemo(() => {
     const primary = showProjected ? projections.map((projection) => ({
@@ -306,7 +302,7 @@ export function SeismicGlobeRenderer({
   const geographicPaths = useMemo<RenderPath[]>(() => {
     const countryBorders = showCountryBorders
       ? decoratePaths(mapLayers?.countryBorders ?? [], {
-          color: "rgba(226,232,240,.48)",
+          color: "rgba(15,23,42,.48)",
           stroke: 0.32,
           dashLength: 1,
           dashGap: 0,
@@ -315,7 +311,7 @@ export function SeismicGlobeRenderer({
       : [];
     const plateBoundaries = showPlateBoundaries
       ? decoratePaths(mapLayers?.plateBoundaries ?? [], {
-          color: "#38bdf8",
+          color: "#0284c7",
           stroke: 0.54,
           dashLength: 0.035,
           dashGap: 0.025,
@@ -324,7 +320,7 @@ export function SeismicGlobeRenderer({
       : [];
     const faults = showFaults
       ? decoratePaths(mapLayers?.activeFaults ?? [], {
-          color: "#fb7185",
+          color: "#e11d48",
           stroke: 0.45,
           dashLength: 0.022,
           dashGap: 0.018,
@@ -342,8 +338,8 @@ export function SeismicGlobeRenderer({
         height={size.height}
         globeImageUrl={EARTH_TEXTURE}
         backgroundColor="rgba(0,0,0,0)"
-        atmosphereColor="#69c7ff"
-        atmosphereAltitude={0.18}
+        atmosphereColor="#8bd5ff"
+        atmosphereAltitude={0.16}
         showGraticules
         pathsData={geographicPaths}
         pathPoints="points"
@@ -373,7 +369,7 @@ export function SeismicGlobeRenderer({
         arcEndLng="endLng"
         arcAltitude="altitude"
         arcColor="color"
-        arcStroke={0.32}
+        arcStroke={0.38}
         arcDashLength={0.42}
         arcDashGap={0.18}
         arcDashAnimateTime={2_200}
