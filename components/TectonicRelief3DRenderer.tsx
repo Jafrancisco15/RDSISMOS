@@ -465,6 +465,7 @@ export function TectonicRelief3DRenderer({
       if (!region) setError("No fue posible calcular la extensión geográfica de esta placa.");
       return;
     }
+    const activeRegion = region;
     let disposed = false;
     let frame = 0;
     const isMobile = window.matchMedia("(max-width: 700px)").matches;
@@ -520,10 +521,10 @@ export function TectonicRelief3DRenderer({
         setError(null);
         setFaultCount(null);
         setQuakeCount(0);
-        setStatus(`Cargando relieve de ${region.name}…`);
+        setStatus(`Cargando relieve de ${activeRegion.name}…`);
         const [grid, faultsResponse] = await Promise.all([
-          loadReliefGrid(region, isMobile),
-          fetch(`/api/faults?bbox=${encodeURIComponent(faultBboxForRegion(region))}&limit=1200`, { cache: "force-cache" }),
+          loadReliefGrid(activeRegion, isMobile),
+          fetch(`/api/faults?bbox=${encodeURIComponent(faultBboxForRegion(activeRegion))}&limit=1200`, { cache: "force-cache" }),
         ]);
         if (disposed) return;
         const faults = faultsResponse.ok ? await faultsResponse.json() as ActiveFaultCollection : null;
@@ -538,15 +539,15 @@ export function TectonicRelief3DRenderer({
         controls.update();
 
         const terrainGroup = new THREE.Group();
-        terrainGroup.add(createTerrainMesh(grid, region));
-        terrainGroup.add(createBlockSkirt(grid, region));
+        terrainGroup.add(createTerrainMesh(grid, activeRegion));
+        terrainGroup.add(createBlockSkirt(grid, activeRegion));
         terrainGroup.scale.y = reliefExaggeration;
         scene.add(terrainGroup);
         terrainGroupRef.current = terrainGroup;
 
         const plateGroup = new THREE.Group();
-        plateGroup.add(createLineSegments(plateLines(tectonic.platePolygons.features, region), grid, region, "#a9b8c8", 0.44, 0.52));
-        plateGroup.add(createLineSegments(plateLines(selectedPlateFeatures, region), grid, region, "#fff6d6", 0.7, 1));
+        plateGroup.add(createLineSegments(plateLines(tectonic.platePolygons.features, activeRegion), grid, activeRegion, "#a9b8c8", 0.44, 0.52));
+        plateGroup.add(createLineSegments(plateLines(selectedPlateFeatures, activeRegion), grid, activeRegion, "#fff6d6", 0.7, 1));
         plateGroup.scale.y = reliefExaggeration;
         plateGroup.visible = showPlates;
         scene.add(plateGroup);
@@ -554,11 +555,11 @@ export function TectonicRelief3DRenderer({
 
         const faultGroup = new THREE.Group();
         if (faults) {
-          const grouped = faultLines(faults.features, region);
-          faultGroup.add(createLineSegments(grouped.reverse, grid, region, "#ff4d4f", 0.66));
-          faultGroup.add(createLineSegments(grouped.normal, grid, region, "#4dd7ff", 0.63));
-          faultGroup.add(createLineSegments(grouped.strike, grid, region, "#ffbf47", 0.7));
-          faultGroup.add(createLineSegments(grouped.other, grid, region, "#e96fff", 0.62));
+          const grouped = faultLines(faults.features, activeRegion);
+          faultGroup.add(createLineSegments(grouped.reverse, grid, activeRegion, "#ff4d4f", 0.66));
+          faultGroup.add(createLineSegments(grouped.normal, grid, activeRegion, "#4dd7ff", 0.63));
+          faultGroup.add(createLineSegments(grouped.strike, grid, activeRegion, "#ffbf47", 0.7));
+          faultGroup.add(createLineSegments(grouped.other, grid, activeRegion, "#e96fff", 0.62));
           setFaultCount(faults.features.length);
         } else {
           setFaultCount(0);
@@ -569,14 +570,14 @@ export function TectonicRelief3DRenderer({
         faultGroupRef.current = faultGroup;
 
         const slabGroup = new THREE.Group();
-        slabGroup.add(slabLines(tectonic.slabContours, grid, region));
+        slabGroup.add(slabLines(tectonic.slabContours, grid, activeRegion));
         slabGroup.scale.y = depthExaggeration;
         slabGroup.visible = showSlabs;
         scene.add(slabGroup);
         slabGroupRef.current = slabGroup;
 
         const quakeGroup = new THREE.Group();
-        const quakes = createEarthquakes(earthquakes, grid, region, isMobile);
+        const quakes = createEarthquakes(earthquakes, grid, activeRegion, isMobile);
         quakeGroup.add(quakes.mesh);
         quakeGroup.scale.y = depthExaggeration;
         quakeGroup.visible = showEarthquakes;
