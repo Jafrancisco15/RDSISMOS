@@ -1,7 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { GeoFeature } from "./plateDynamics";
-import { buildPlateOptions, computePlateReliefRegion, preferredReliefPlateId, unwrapLongitude } from "./plateRelief";
+import {
+  buildPlateOptions,
+  computePlateReliefRegion,
+  plateFeatures,
+  preferredReliefPlateId,
+  unwrapLongitude,
+} from "./plateRelief";
 
 function polygon(id: string, name: string, coordinates: number[][]): GeoFeature {
   return {
@@ -22,6 +28,30 @@ test("buildPlateOptions groups repeated plate polygons", () => {
   assert.equal(options.length, 2);
   assert.equal(options.find((item) => item.id === "202")?.featureCount, 2);
   assert.equal(preferredReliefPlateId(options), "202");
+});
+
+test("synthetic GPlates fragment ids collapse into one named tectonic plate", () => {
+  const features = [
+    polygon("gplates-4", "Caribbean", [[-72, 16], [-66, 16], [-66, 21], [-72, 21]]),
+    polygon("gplates-41", "Caribbean", [[-84, 10], [-72, 10], [-72, 18], [-84, 18]]),
+    polygon("gplates-9", "North American", [[-100, 20], [-70, 20], [-70, 55], [-100, 55]]),
+  ];
+
+  const options = buildPlateOptions(features);
+  assert.equal(options.length, 2);
+  const caribbean = options.find((item) => item.name === "Caribbean");
+  assert.ok(caribbean);
+  assert.equal(caribbean.id, "name:caribbean");
+  assert.equal(caribbean.featureCount, 2);
+  assert.equal(plateFeatures(features, caribbean.id).length, 2);
+  assert.equal(preferredReliefPlateId(options), "name:caribbean");
+
+  const region = computePlateReliefRegion(features, caribbean.id);
+  assert.ok(region);
+  assert.ok(region.west < -84);
+  assert.ok(region.east > -66);
+  assert.ok(region.south < 10);
+  assert.ok(region.north > 21);
 });
 
 test("computePlateReliefRegion keeps a dateline plate compact", () => {
