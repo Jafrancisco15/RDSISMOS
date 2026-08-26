@@ -67,6 +67,42 @@
   font-size: 1.05rem;
 }
 
+.viewModePanel {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 15px;
+  background: rgba(2, 6, 23, 0.48);
+}
+
+.viewModePanel button {
+  min-width: 92px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 11px;
+  padding: 9px 13px;
+  background: rgba(15, 23, 42, 0.8);
+  color: #cbd5e1;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.viewModePanel .activeViewMode {
+  border-color: rgba(56, 189, 248, 0.78);
+  background: linear-gradient(135deg, rgba(3, 105, 161, 0.78), rgba(14, 116, 144, 0.7));
+  color: #f0f9ff;
+  box-shadow: 0 8px 28px rgba(14, 116, 144, 0.18);
+}
+
+.viewModePanel span {
+  margin-left: auto;
+  color: #94a3b8;
+  font-size: 0.78rem;
+}
+
 .scienceNote,
 .warning,
 .error {
@@ -389,6 +425,14 @@
   }
   .modelChip {
     width: 100%;
+  }
+  .viewModePanel span {
+    width: 100%;
+    margin-left: 0;
+    padding: 2px 3px;
+  }
+  .viewModePanel button {
+    flex: 1 1 0;
   }
   .periodPanel,
   .metrics,
