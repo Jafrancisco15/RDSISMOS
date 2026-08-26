@@ -11,8 +11,14 @@ const TectonicDepth3DRenderer = dynamic(
   { ssr: false, loading: () => <div className={styles.loading}>Inicializando vista tectónica 3D…</div> },
 );
 
+const TectonicRelief3DRenderer = dynamic(
+  () => import("./TectonicRelief3DRenderer").then((module) => module.TectonicRelief3DRenderer),
+  { ssr: false, loading: () => <div className={styles.loading}>Inicializando relieve topobatimétrico…</div> },
+);
+
 const DAY_MS = 86_400_000;
 type PeriodPreset = "7" | "15" | "30" | "60" | "custom";
+type ViewMode = "globe" | "relief";
 
 type DepthEventsResponse = {
   events: EarthquakeEvent[];
@@ -77,6 +83,7 @@ async function loadEarthquakes({
 
 export function TectonicDepth3D() {
   const today = todayKey();
+  const [viewMode, setViewMode] = useState<ViewMode>("globe");
   const [tectonic, setTectonic] = useState<TectonicDepth3DResponse | null>(null);
   const [earthquakes, setEarthquakes] = useState<EarthquakeEvent[]>([]);
   const [eventTotal, setEventTotal] = useState(0);
@@ -87,7 +94,9 @@ export function TectonicDepth3D() {
   const [applied, setApplied] = useState({ start: daysAgoKey(30, today), end: today, minMagnitude: 4.5 });
   const [exploded, setExploded] = useState(true);
   const [depthExaggeration, setDepthExaggeration] = useState(4);
+  const [reliefExaggeration, setReliefExaggeration] = useState(3.5);
   const [showPlates, setShowPlates] = useState(true);
+  const [showFaults, setShowFaults] = useState(true);
   const [showSlabs, setShowSlabs] = useState(true);
   const [showEarthquakes, setShowEarthquakes] = useState(true);
   const [autoRotate, setAutoRotate] = useState(false);
@@ -172,26 +181,39 @@ export function TectonicDepth3D() {
   }
 
   const warnings = [...(tectonic?.warnings ?? []), ...eventWarnings];
+  const isRelief = viewMode === "relief";
 
   return (
     <main className={styles.dashboard}>
       <header className={styles.hero}>
         <div>
-          <span className={styles.eyebrow}>GPLATES + USGS SLAB2 + HIPOCENTROS</span>
+          <span className={styles.eyebrow}>{isRelief ? "RELIEVE + GEM + GPLATES + SLAB2" : "GPLATES + USGS SLAB2 + HIPOCENTROS"}</span>
           <h1>Placas tectónicas en profundidad · 3D</h1>
           <p>
-            Vista global explotada para comparar las placas actuales, las superficies de subducción Slab2 y los hipocentros del período seleccionado.
+            {isRelief
+              ? "Bloque topobatimétrico regional para leer el relieve del Caribe, las fallas activas, los límites de placa y los hipocentros bajo la superficie."
+              : "Vista global explotada para comparar las placas actuales, las superficies de subducción Slab2 y los hipocentros del período seleccionado."}
           </p>
         </div>
         <div className={styles.modelChip}>
-          <span>Modelo superficial</span>
-          <strong>{tectonic?.gplatesModel ?? "ZAHIROVIC2022"}</strong>
-          <small>GPlates · presente (0 Ma)</small>
+          <span>{isRelief ? "Región inicial" : "Modelo superficial"}</span>
+          <strong>{isRelief ? "CARIBE" : tectonic?.gplatesModel ?? "ZAHIROVIC2022"}</strong>
+          <small>{isRelief ? "Puerto Rico · La Española · Antillas" : "GPlates · presente (0 Ma)"}</small>
         </div>
       </header>
 
+      <section className={styles.viewModePanel} aria-label="Modo de visualización 3D">
+        <button type="button" className={!isRelief ? styles.activeViewMode : ""} onClick={() => setViewMode("globe")}>Globo</button>
+        <button type="button" className={isRelief ? styles.activeViewMode : ""} onClick={() => setViewMode("relief")}>Relieve 3D</button>
+        <span>{isRelief ? "Vista regional en bloque · optimizada para móvil" : "Vista tectónica global ligera"}</span>
+      </section>
+
       <section className={styles.scienceNote}>
-        <strong>Cómo leer la vista explotada.</strong> Los valores en kilómetros conservan la profundidad física de Slab2 y de cada hipocentro. Para evitar que las capas internas queden ocultas dentro de la esfera, Exploded view las separa radialmente hacia afuera; esa separación y su exageración son únicamente visuales. GPlates representa todas las placas en superficie y Slab2 añade profundidad solo donde existe una losa modelada.
+        {isRelief ? (
+          <><strong>Cómo leer el bloque de relieve.</strong> La topografía y la batimetría usan elevación real, con exageración vertical únicamente visual. Las fallas GEM y los límites de GPlates se proyectan sobre el relieve; Slab2 y los hipocentros se muestran por debajo del nivel de referencia según su profundidad. La vista inicial está limitada al Caribe para mantener una sola malla WebGL y evitar sobrecargar el navegador móvil.</>
+        ) : (
+          <><strong>Cómo leer la vista explotada.</strong> Los valores en kilómetros conservan la profundidad física de Slab2 y de cada hipocentro. Para evitar que las capas internas queden ocultas dentro de la esfera, Exploded view las separa radialmente hacia afuera; esa separación y su exageración son únicamente visuales. GPlates representa todas las placas en superficie y Slab2 añade profundidad solo donde existe una losa modelada.</>
+        )}
       </section>
 
       <section className={styles.periodPanel} aria-label="Período sísmico">
@@ -229,34 +251,52 @@ export function TectonicDepth3D() {
       </section>
 
       <section className={styles.metrics}>
-        <article><span>Placas GPlates</span><strong>{tectonic?.platePolygons.features.length ?? "—"}</strong><small>geometría global superficial</small></article>
+        <article><span>Placas GPlates</span><strong>{tectonic?.platePolygons.features.length ?? "—"}</strong><small>{isRelief ? "límites proyectados sobre relieve" : "geometría global superficial"}</small></article>
         <article><span>Regiones Slab2</span><strong>{tectonic?.slabRegions.length ?? "—"}</strong><small>{tectonic ? `${tectonic.slabContours.length.toLocaleString("es-DO")} contornos` : "cargando"}</small></article>
         <article><span>Sismos 3D</span><strong>{loadingEvents ? "…" : earthquakes.length.toLocaleString("es-DO")}</strong><small>{loadingEvents ? "cargando hipocentros" : eventTotal > earthquakes.length ? `de ${eventTotal.toLocaleString("es-DO")}` : `M${applied.minMagnitude.toFixed(1)}+`}</small></article>
         <article><span>Máxima profundidad</span><strong>{loadingEvents ? "…" : deepestEvent ? `${deepestEvent.depthKm.toFixed(0)} km` : "—"}</strong><small>Slab2 hasta {tectonic?.slabDepthMaxKm?.toFixed(0) ?? "—"} km</small></article>
       </section>
 
       <section className={styles.layerPanel}>
-        <label><input type="checkbox" checked={exploded} onChange={(event) => setExploded(event.target.checked)} /><span><strong>Exploded view</strong><small>Separa las capas profundas para hacerlas visibles.</small></span></label>
-        <label><input type="checkbox" checked={showPlates} onChange={(event) => setShowPlates(event.target.checked)} /><span><strong>Placas GPlates</strong><small>Piezas superficiales globales.</small></span></label>
-        <label><input type="checkbox" checked={showSlabs} onChange={(event) => setShowSlabs(event.target.checked)} /><span><strong>Losas Slab2</strong><small>Superficie triangulada + isolíneas de profundidad.</small></span></label>
+        {!isRelief && <label><input type="checkbox" checked={exploded} onChange={(event) => setExploded(event.target.checked)} /><span><strong>Exploded view</strong><small>Separa las capas profundas para hacerlas visibles.</small></span></label>}
+        <label><input type="checkbox" checked={showPlates} onChange={(event) => setShowPlates(event.target.checked)} /><span><strong>Placas GPlates</strong><small>{isRelief ? "Límites blancos sobre el relieve." : "Piezas superficiales globales."}</small></span></label>
+        {isRelief && <label><input type="checkbox" checked={showFaults} onChange={(event) => setShowFaults(event.target.checked)} /><span><strong>Fallas activas</strong><small>GEM · trazas ajustadas al relieve.</small></span></label>}
+        <label><input type="checkbox" checked={showSlabs} onChange={(event) => setShowSlabs(event.target.checked)} /><span><strong>Losas Slab2</strong><small>{isRelief ? "Contornos bajo el bloque topográfico." : "Superficie triangulada + isolíneas de profundidad."}</small></span></label>
         <label><input type="checkbox" checked={showEarthquakes} onChange={(event) => setShowEarthquakes(event.target.checked)} /><span><strong>Hipocentros</strong><small>Sismos del período aplicado.</small></span></label>
-        <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} /><span><strong>Rotación</strong><small>Exploración automática lenta.</small></span></label>
+        {!isRelief && <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} /><span><strong>Rotación</strong><small>Exploración automática lenta.</small></span></label>}
       </section>
 
       <section className={styles.depthControls}>
-        <label>
-          <span>Exageración visual de profundidad <strong>{depthExaggeration.toFixed(1)}×</strong></span>
-          <input type="range" min="1" max="8" step="0.5" value={depthExaggeration} onChange={(event) => setDepthExaggeration(Number(event.target.value))} />
-          <small>Modifica la separación de las capas en la vista explotada; no altera los kilómetros de profundidad de Slab2 ni de los sismos.</small>
-        </label>
-        <label>
-          <span>Zona Slab2</span>
-          <select value={slabRegion} onChange={(event) => setSlabRegion(event.target.value)} disabled={!tectonic}>
-            <option value="">Todas las zonas de subducción</option>
-            {tectonic?.slabRegions.map((region) => <option value={region} key={region}>{region}</option>)}
-          </select>
-          <small>Filtra solamente la losa; los sismos siguen mostrando el período global.</small>
-        </label>
+        {isRelief ? (
+          <>
+            <label>
+              <span>Exageración del relieve <strong>{reliefExaggeration.toFixed(1)}×</strong></span>
+              <input type="range" min="1" max="6" step="0.5" value={reliefExaggeration} onChange={(event) => setReliefExaggeration(Number(event.target.value))} />
+              <small>Amplifica visualmente montañas, fosas y fondo oceánico; las elevaciones originales no cambian.</small>
+            </label>
+            <label>
+              <span>Exageración de profundidad <strong>{depthExaggeration.toFixed(1)}×</strong></span>
+              <input type="range" min="1" max="8" step="0.5" value={depthExaggeration} onChange={(event) => setDepthExaggeration(Number(event.target.value))} />
+              <small>Separa visualmente hipocentros y contornos Slab2 bajo el bloque.</small>
+            </label>
+          </>
+        ) : (
+          <>
+            <label>
+              <span>Exageración visual de profundidad <strong>{depthExaggeration.toFixed(1)}×</strong></span>
+              <input type="range" min="1" max="8" step="0.5" value={depthExaggeration} onChange={(event) => setDepthExaggeration(Number(event.target.value))} />
+              <small>Modifica la separación de las capas en la vista explotada; no altera los kilómetros de profundidad de Slab2 ni de los sismos.</small>
+            </label>
+            <label>
+              <span>Zona Slab2</span>
+              <select value={slabRegion} onChange={(event) => setSlabRegion(event.target.value)} disabled={!tectonic}>
+                <option value="">Todas las zonas de subducción</option>
+                {tectonic?.slabRegions.map((region) => <option value={region} key={region}>{region}</option>)}
+              </select>
+              <small>Filtra solamente la losa; los sismos siguen mostrando el período global.</small>
+            </label>
+          </>
+        )}
       </section>
 
       {(geometryError || eventError) && <div className={styles.error}>{geometryError ?? eventError}</div>}
@@ -265,8 +305,8 @@ export function TectonicDepth3D() {
       <section className={styles.viewerPanel}>
         <div className={styles.viewerHead}>
           <div>
-            <span className={styles.eyebrow}>VISTA RADIAL EXPLOTADA</span>
-            <h2>Superficie → subducción → hipocentros</h2>
+            <span className={styles.eyebrow}>{isRelief ? "BLOQUE TOPOBATIMÉTRICO" : "VISTA RADIAL EXPLOTADA"}</span>
+            <h2>{isRelief ? "Relieve → fallas → Slab2 → hipocentros" : "Superficie → subducción → hipocentros"}</h2>
           </div>
           <div className={styles.legend}>
             <span><i className={styles.shallow} /> 0–70 km</span>
@@ -275,19 +315,32 @@ export function TectonicDepth3D() {
           </div>
         </div>
         {loadingGeometry && !tectonic ? (
-          <div className={styles.loading}>Descargando geometría global GPlates y Slab2…</div>
+          <div className={styles.loading}>Descargando geometría GPlates y Slab2…</div>
         ) : tectonic ? (
-          <TectonicDepth3DRenderer
-            tectonic={tectonic}
-            earthquakes={earthquakes}
-            exploded={exploded}
-            depthExaggeration={depthExaggeration}
-            showPlates={showPlates}
-            showSlabs={showSlabs}
-            showEarthquakes={showEarthquakes}
-            slabRegion={slabRegion}
-            autoRotate={autoRotate}
-          />
+          isRelief ? (
+            <TectonicRelief3DRenderer
+              tectonic={tectonic}
+              earthquakes={earthquakes}
+              reliefExaggeration={reliefExaggeration}
+              depthExaggeration={depthExaggeration}
+              showPlates={showPlates}
+              showFaults={showFaults}
+              showSlabs={showSlabs}
+              showEarthquakes={showEarthquakes}
+            />
+          ) : (
+            <TectonicDepth3DRenderer
+              tectonic={tectonic}
+              earthquakes={earthquakes}
+              exploded={exploded}
+              depthExaggeration={depthExaggeration}
+              showPlates={showPlates}
+              showSlabs={showSlabs}
+              showEarthquakes={showEarthquakes}
+              slabRegion={slabRegion}
+              autoRotate={autoRotate}
+            />
+          )
         ) : null}
       </section>
 
@@ -304,8 +357,8 @@ export function TectonicDepth3D() {
         </article>
         <article>
           <span>Fuentes geométricas</span>
-          <strong>GPlates + Slab2</strong>
-          <small>{tectonic?.sources.slabs ?? "USGS Slab2"}</small>
+          <strong>{isRelief ? "DEM + GEM + GPlates + Slab2" : "GPlates + Slab2"}</strong>
+          <small>{isRelief ? "Terrarium elevation tiles · GEM Active Faults" : tectonic?.sources.slabs ?? "USGS Slab2"}</small>
         </article>
       </section>
     </main>
