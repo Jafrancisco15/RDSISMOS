@@ -10,6 +10,7 @@ import { HistoricalHeatmap } from "./HistoricalHeatmap";
 import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
+import { ExtractionDashboard } from "./ExtractionDashboard";
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { PlateDynamicsDashboard } from "./PlateDynamicsDashboard";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
@@ -28,7 +29,7 @@ const LunarPhaseExperimental = dynamic(
   { ssr: false, loading: () => <div className="map-loading" style={{ margin: 28 }}>Inicializando globo lunar 3D…</div> },
 );
 
-type AppTab = "globe" | "depth3d" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
+type AppTab = "globe" | "depth3d" | "extractions" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -59,6 +60,7 @@ export function AppShell() {
         <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>ETAS Projection</button>
         <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Placas 3D</button>
+        <button className={tab === "extractions" ? "active" : ""} onClick={() => setTab("extractions")}>Extracciones</button>
         <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
         <button className={tab === "validation" ? "active" : ""} onClick={() => setTab("validation")}>Auto-Validación</button>
         <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
@@ -118,6 +120,7 @@ export function AppShell() {
       )}
 
       {tab === "depth3d" && <TectonicDepth3D />}
+      {tab === "extractions" && <ExtractionDashboard />}
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
