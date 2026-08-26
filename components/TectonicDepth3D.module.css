@@ -1,0 +1,411 @@
+.dashboard {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 28px 18px 52px;
+  color: #e2e8f0;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  padding: 26px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(8, 47, 73, 0.76));
+  box-shadow: 0 24px 80px rgba(2, 6, 23, 0.28);
+}
+
+.hero h1,
+.viewerHead h2 {
+  margin: 7px 0 8px;
+  color: #f8fafc;
+}
+
+.hero h1 {
+  font-size: clamp(1.8rem, 4vw, 3.4rem);
+  line-height: 1.02;
+}
+
+.hero p {
+  max-width: 860px;
+  margin: 0;
+  color: #b8c8da;
+  line-height: 1.6;
+}
+
+.eyebrow {
+  color: #38bdf8;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.modelChip {
+  min-width: 210px;
+  padding: 15px 17px;
+  border: 1px solid rgba(125, 211, 252, 0.22);
+  border-radius: 17px;
+  background: rgba(2, 6, 23, 0.42);
+}
+
+.modelChip span,
+.modelChip small,
+.metrics span,
+.metrics small,
+.summaryGrid span,
+.summaryGrid small {
+  display: block;
+  color: #94a3b8;
+}
+
+.modelChip strong {
+  display: block;
+  margin: 5px 0;
+  color: #e0f2fe;
+  font-size: 1.05rem;
+}
+
+.scienceNote,
+.warning,
+.error {
+  margin-top: 16px;
+  padding: 15px 17px;
+  border-radius: 16px;
+  line-height: 1.55;
+}
+
+.scienceNote {
+  border: 1px solid rgba(250, 204, 21, 0.2);
+  background: rgba(120, 53, 15, 0.18);
+  color: #fde68a;
+}
+
+.periodPanel,
+.layerPanel,
+.depthControls,
+.metrics,
+.summaryGrid {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.periodPanel {
+  grid-template-columns: minmax(240px, 1.4fr) repeat(3, minmax(150px, 0.72fr)) auto;
+  align-items: end;
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.72);
+}
+
+.presetRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.presetRow button,
+.applyButton {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 11px;
+  padding: 9px 12px;
+  background: rgba(2, 6, 23, 0.54);
+  color: #e2e8f0;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.presetRow button:hover,
+.presetRow .activePreset {
+  border-color: #38bdf8;
+  background: rgba(14, 116, 144, 0.25);
+  color: #e0f2fe;
+}
+
+.periodPanel label,
+.depthControls label {
+  display: grid;
+  gap: 6px;
+}
+
+.periodPanel label span,
+.depthControls label span {
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.periodPanel input,
+.periodPanel select,
+.depthControls select {
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+.periodPanel input:disabled {
+  opacity: 0.48;
+}
+
+.applyButton {
+  min-height: 42px;
+  border-color: rgba(56, 189, 248, 0.62);
+  background: linear-gradient(135deg, #0369a1, #0e7490);
+  color: white;
+}
+
+.metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metrics article,
+.summaryGrid article {
+  padding: 16px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.66);
+}
+
+.metrics strong,
+.summaryGrid strong {
+  display: block;
+  margin: 5px 0;
+  color: #f8fafc;
+  font-size: clamp(1.15rem, 2.6vw, 1.8rem);
+}
+
+.layerPanel {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.layerPanel label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 13px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 14px;
+  background: rgba(2, 6, 23, 0.38);
+}
+
+.layerPanel input {
+  margin-top: 3px;
+  accent-color: #38bdf8;
+}
+
+.layerPanel strong,
+.layerPanel small {
+  display: block;
+}
+
+.layerPanel small {
+  margin-top: 4px;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+.depthControls {
+  grid-template-columns: 1.1fr 0.9fr;
+  padding: 16px;
+  border: 1px solid rgba(56, 189, 248, 0.16);
+  border-radius: 16px;
+  background: rgba(8, 47, 73, 0.22);
+}
+
+.depthControls input[type="range"] {
+  width: 100%;
+  accent-color: #38bdf8;
+}
+
+.depthControls small {
+  color: #94a3b8;
+}
+
+.error {
+  border: 1px solid rgba(248, 113, 113, 0.32);
+  background: rgba(127, 29, 29, 0.28);
+  color: #fecaca;
+}
+
+.warning {
+  border: 1px solid rgba(251, 191, 36, 0.24);
+  background: rgba(120, 53, 15, 0.2);
+  color: #fde68a;
+}
+
+.viewerPanel {
+  margin-top: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+  border-radius: 22px;
+  background: radial-gradient(circle at 50% 40%, rgba(14, 116, 144, 0.16), rgba(2, 6, 23, 0.94) 62%);
+}
+
+.viewerHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: center;
+  padding: 17px 19px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.13);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.shallow { background: #f43f5e; }
+.intermediate { background: #f59e0b; }
+.deep { background: #60a5fa; }
+
+.renderer {
+  position: relative;
+  min-height: 560px;
+}
+
+.loading {
+  display: grid;
+  min-height: 420px;
+  place-items: center;
+  padding: 28px;
+  color: #bae6fd;
+  text-align: center;
+}
+
+.depthScale {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  background: rgba(2, 6, 23, 0.8);
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  backdrop-filter: blur(10px);
+}
+
+.depthScale i {
+  width: 16px;
+  height: 2px;
+  background: rgba(148, 163, 184, 0.5);
+}
+
+.selectedCard {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  z-index: 4;
+  width: min(330px, calc(100% - 32px));
+  padding: 14px;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 15px;
+  background: rgba(2, 6, 23, 0.88);
+  box-shadow: 0 18px 50px rgba(2, 6, 23, 0.38);
+  backdrop-filter: blur(12px);
+}
+
+.selectedCard > button {
+  float: right;
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  font-size: 1.35rem;
+  cursor: pointer;
+}
+
+.selectedCard > span {
+  color: #38bdf8;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.selectedCard strong,
+.selectedCard p,
+.selectedCard small {
+  display: block;
+  margin-top: 6px;
+}
+
+.selectedCard small {
+  color: #94a3b8;
+}
+
+.summaryGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.summaryGrid strong {
+  font-size: 1.05rem;
+}
+
+@media (max-width: 1050px) {
+  .periodPanel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .presetRow {
+    grid-column: 1 / -1;
+  }
+  .layerPanel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .dashboard {
+    padding: 18px 10px 40px;
+  }
+  .hero,
+  .viewerHead {
+    flex-direction: column;
+  }
+  .modelChip {
+    width: 100%;
+  }
+  .periodPanel,
+  .metrics,
+  .layerPanel,
+  .depthControls,
+  .summaryGrid {
+    grid-template-columns: 1fr;
+  }
+  .presetRow {
+    grid-column: auto;
+  }
+  .renderer {
+    min-height: 520px;
+  }
+  .depthScale {
+    left: 10px;
+    right: 10px;
+    justify-content: center;
+  }
+}
