@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { GeoFeature, GeoFeatureCollection, GeoGeometry } from "@/lib/plateDynamics";
-import type { SlabContour3D, TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
+import {
+  buildSlabSurfaceTriangles,
+  type SlabContour3D,
+  type TectonicDepth3DResponse,
+} from "@/lib/tectonicDepth3d";
 
 export const runtime = "nodejs";
 export const revalidate = 43_200;
@@ -231,12 +235,21 @@ export async function GET(request: NextRequest) {
       warnings.push(slabResult.reason instanceof Error ? slabResult.reason.message : "Slab2 no está disponible temporalmente.");
     }
 
+    const mesh = buildSlabSurfaceTriangles(slabContours);
+    if (slabContours.length && !mesh.triangles.length) {
+      warnings.push("Slab2 devolvió contornos, pero no fue posible emparejar isolíneas adyacentes con seguridad para construir superficies.");
+    }
+    if (mesh.capped) {
+      warnings.push("La malla Slab2 alcanzó el límite de 22,000 triángulos para mantener la vista WebGL fluida; las isolíneas originales siguen completas.");
+    }
+
     const depths = slabContours.map((item) => item.depthKm);
     const payload: TectonicDepth3DResponse = {
       generatedAt: new Date().toISOString(),
       gplatesModel: GPLATES_MODEL,
       platePolygons: plateResult.value,
       slabContours,
+      slabSurfaceTriangles: mesh.triangles,
       slabRegions: [...new Set(slabContours.map((item) => item.region))].sort((a, b) => a.localeCompare(b)),
       slabDepthMinKm: depths.length ? Math.min(...depths) : null,
       slabDepthMaxKm: depths.length ? Math.max(...depths) : null,

@@ -4,7 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { GeoFeature } from "@/lib/plateDynamics";
-import type { SlabContour3D, TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
+import type {
+  SlabContour3D,
+  SlabSurfaceTriangle3D,
+  TectonicDepth3DResponse,
+} from "@/lib/tectonicDepth3d";
 import styles from "./TectonicDepth3D.module.css";
 
 const EARTH_TEXTURE = "https://cdn.jsdelivr.net/npm/three-globe@2.45.2/example/img/earth-blue-marble.jpg";
@@ -26,6 +30,10 @@ type QuakePoint = {
   color: string;
   event: EarthquakeEvent;
 };
+
+type PlateRenderItem = GeoFeature & { renderKind: "plate" };
+type SlabSurfaceRenderItem = SlabSurfaceTriangle3D & { renderKind: "slab-surface"; color: string };
+type PolygonRenderItem = PlateRenderItem | SlabSurfaceRenderItem;
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -79,6 +87,10 @@ function escapeHtml(value: string) {
     .replaceAll("'", "&#039;");
 }
 
+function isSlabSurface(item: unknown): item is SlabSurfaceRenderItem {
+  return (item as { renderKind?: string } | null)?.renderKind === "slab-surface";
+}
+
 function plateLabel(feature: GeoFeature) {
   const name = String(feature.properties?.plateName ?? "Placa tectónica");
   const id = String(feature.properties?.plateId ?? feature.id ?? "—");
@@ -86,12 +98,26 @@ function plateLabel(feature: GeoFeature) {
 }
 
 function slabLabel(path: SlabPath) {
-  return `<div class="globe-tooltip"><strong>Slab2 · ${escapeHtml(path.region)}</strong><span>Contorno de ${path.depthKm.toFixed(0)} km</span><small>Profundidad geométrica de la superficie de la losa subducida.</small></div>`;
+  return `<div class="globe-tooltip"><strong>Slab2 · ${escapeHtml(path.region)}</strong><span>Isolínea de ${path.depthKm.toFixed(0)} km</span><small>Contorno original usado como control de la superficie triangulada.</small></div>`;
+}
+
+function slabSurfaceLabel(surface: SlabSurfaceRenderItem) {
+  return `<div class="globe-tooltip"><strong>Superficie Slab2 · ${escapeHtml(surface.region)}</strong><span>≈${surface.depthKm.toFixed(0)} km</span><small>Triangulación interpolada entre isolíneas Slab2 de ${surface.minDepthKm.toFixed(0)}–${surface.maxDepthKm.toFixed(0)} km.</small></div>`;
 }
 
 function quakeLabel(point: QuakePoint) {
   const event = point.event;
   return `<div class="globe-tooltip"><strong>Sismo · M${event.magnitude.toFixed(1)}</strong><span>${escapeHtml(event.place)}</span><small>${formatUtc(event.timeUtc)} UTC · hipocentro ${event.depthKm.toFixed(1)} km</small></div>`;
+}
+
+function surfaceCenter(surface: SlabSurfaceTriangle3D) {
+  const ring = surface.geometry.coordinates[0] ?? [];
+  const points = ring.length > 1 ? ring.slice(0, -1) : ring;
+  if (!points.length) return { lat: 0, lng: 0 };
+  return {
+    lat: points.reduce((sum, point) => sum + Number(point[1] ?? 0), 0) / points.length,
+    lng: points.reduce((sum, point) => sum + Number(point[0] ?? 0), 0) / points.length,
+  };
 }
 
 export function TectonicDepth3DRenderer({
@@ -119,6 +145,7 @@ export function TectonicDepth3DRenderer({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 980, height: 720 });
   const [selectedEvent, setSelectedEvent] = useState<EarthquakeEvent | null>(null);
+  const [selectedSlab, setSelectedSlab] = useState<SlabSurfaceTriangle3D | null>(null);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -146,10 +173,17 @@ export function TectonicDepth3DRenderer({
     globeRef.current?.pointOfView({ lat: 12, lng: -35, altitude: exploded ? 2.45 : 2.1 }, 700);
   }, [exploded]);
 
-  const plates = useMemo(
-    () => showPlates ? tectonic.platePolygons.features : [],
-    [showPlates, tectonic.platePolygons.features],
-  );
+  const polygonItems = useMemo<PolygonRenderItem[]>(() => {
+    const plates: PlateRenderItem[] = showPlates
+      ? tectonic.platePolygons.features.map((feature) => ({ ...feature, renderKind: "plate" as const }))
+      : [];
+    const surfaces: SlabSurfaceRenderItem[] = showSlabs
+      ? tectonic.slabSurfaceTriangles
+        .filter((surface) => !slabRegion || surface.region === slabRegion)
+        .map((surface) => ({ ...surface, renderKind: "slab-surface" as const, color: slabColor(surface.depthKm) }))
+      : [];
+    return [...plates, ...surfaces];
+  }, [showPlates, showSlabs, slabRegion, tectonic.platePolygons.features, tectonic.slabSurfaceTriangles]);
 
   const slabPaths = useMemo<SlabPath[]>(() => {
     if (!showSlabs) return [];
@@ -158,7 +192,7 @@ export function TectonicDepth3DRenderer({
       .map((contour) => ({
         ...contour,
         color: slabColor(contour.depthKm),
-        stroke: contour.depthKm % 100 === 0 ? 0.62 : 0.42,
+        stroke: contour.depthKm % 100 === 0 ? 0.58 : 0.34,
         renderPoints: contour.points.map((point) => ({
           ...point,
           altitude: altitudeForDepth(contour.depthKm, depthExaggeration, exploded),
@@ -194,14 +228,28 @@ export function TectonicDepth3DRenderer({
         atmosphereColor="#7dd3fc"
         atmosphereAltitude={0.13}
         showGraticules={!exploded}
-        polygonsData={plates}
+        polygonsData={polygonItems}
         polygonGeoJsonGeometry="geometry"
-        polygonCapColor={(item: unknown) => `${plateColor(item as GeoFeature)}${exploded ? "99" : "55"}`}
-        polygonSideColor={(item: unknown) => `${plateColor(item as GeoFeature)}44`}
-        polygonStrokeColor={(item: unknown) => plateColor(item as GeoFeature)}
-        polygonAltitude={plateLift}
-        polygonLabel={(item: unknown) => plateLabel(item as GeoFeature)}
+        polygonCapColor={(item: unknown) => {
+          if (isSlabSurface(item)) return `${item.color}${exploded ? "78" : "4d"}`;
+          return `${plateColor(item as GeoFeature)}${exploded ? "99" : "55"}`;
+        }}
+        polygonSideColor={(item: unknown) => isSlabSurface(item) ? `${item.color}30` : `${plateColor(item as GeoFeature)}44`}
+        polygonStrokeColor={(item: unknown) => isSlabSurface(item) ? `${item.color}70` : plateColor(item as GeoFeature)}
+        polygonAltitude={(item: unknown) => isSlabSurface(item)
+          ? altitudeForDepth(item.depthKm, depthExaggeration, exploded)
+          : plateLift}
+        polygonLabel={(item: unknown) => isSlabSurface(item)
+          ? slabSurfaceLabel(item)
+          : plateLabel(item as GeoFeature)}
         polygonsTransitionDuration={250}
+        onPolygonClick={(item: unknown) => {
+          if (!isSlabSurface(item)) return;
+          setSelectedSlab(item);
+          setSelectedEvent(null);
+          const center = surfaceCenter(item);
+          globeRef.current?.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.35 }, 650);
+        }}
         pathsData={slabPaths}
         pathPoints="renderPoints"
         pathPointLat="lat"
@@ -224,6 +272,7 @@ export function TectonicDepth3DRenderer({
         onPointClick={(item: unknown) => {
           const point = item as QuakePoint;
           setSelectedEvent(point.event);
+          setSelectedSlab(null);
           globeRef.current?.pointOfView({ lat: point.lat, lng: point.lng, altitude: 1.25 }, 650);
         }}
         enablePointerInteraction
@@ -246,6 +295,16 @@ export function TectonicDepth3DRenderer({
           <strong>M{selectedEvent.magnitude.toFixed(1)} · {selectedEvent.depthKm.toFixed(1)} km</strong>
           <p>{selectedEvent.place}</p>
           <small>{formatUtc(selectedEvent.timeUtc)} UTC · {selectedEvent.latitude.toFixed(2)}°, {selectedEvent.longitude.toFixed(2)}°</small>
+        </div>
+      )}
+
+      {selectedSlab && (
+        <div className={styles.selectedCard}>
+          <button type="button" onClick={() => setSelectedSlab(null)} aria-label="Cerrar detalle">×</button>
+          <span>SUPERFICIE SLAB2</span>
+          <strong>{selectedSlab.region} · ≈{selectedSlab.depthKm.toFixed(0)} km</strong>
+          <p>Triángulo interpolado entre isolíneas de {selectedSlab.minDepthKm.toFixed(0)} y {selectedSlab.maxDepthKm.toFixed(0)} km.</p>
+          <small>La malla representa una interpolación visual de la geometría publicada por Slab2; las isolíneas coloreadas permanecen visibles como referencia.</small>
         </div>
       )}
     </div>
