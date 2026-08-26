@@ -4,7 +4,9 @@ import type { GeoFeature } from "./plateDynamics";
 import {
   buildPlateOptions,
   computePlateReliefRegion,
+  computePlatesReliefRegion,
   plateFeatures,
+  plateFeaturesForIds,
   preferredReliefPlateId,
   unwrapLongitude,
 } from "./plateRelief";
@@ -52,6 +54,25 @@ test("synthetic GPlates fragment ids collapse into one named tectonic plate", ()
   assert.ok(region.east > -66);
   assert.ok(region.south < 10);
   assert.ok(region.north > 21);
+});
+
+test("multi-plate relief combines up to four logical plates into one region", () => {
+  const features = [
+    polygon("gplates-4", "Caribbean", [[-84, 10], [-60, 10], [-60, 22], [-84, 22]]),
+    polygon("gplates-9", "North American", [[-100, 20], [-65, 20], [-65, 55], [-100, 55]]),
+    polygon("gplates-12", "South American", [[-82, -25], [-50, -25], [-50, 12], [-82, 12]]),
+  ];
+  const options = buildPlateOptions(features);
+  const ids = options.map((option) => option.id);
+  assert.equal(plateFeaturesForIds(features, ids).length, 3);
+  const region = computePlatesReliefRegion(features, ids);
+  assert.ok(region);
+  assert.match(region.name, /Caribbean/);
+  assert.match(region.name, /North American/);
+  assert.ok(region.west < -100);
+  assert.ok(region.east > -50);
+  assert.ok(region.south < -25);
+  assert.ok(region.north > 55);
 });
 
 test("computePlateReliefRegion keeps a dateline plate compact", () => {
