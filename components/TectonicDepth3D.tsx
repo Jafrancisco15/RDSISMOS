@@ -1,0 +1,320 @@
+"use client";
+
+import dynamic from "next/dynamic";
+import { useEffect, useMemo, useState } from "react";
+import type { EarthquakeEvent, EarthquakePage } from "@/lib/earthquakes/types";
+import type { TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
+import styles from "./TectonicDepth3D.module.css";
+
+const TectonicDepth3DRenderer = dynamic(
+  () => import("./TectonicDepth3DRenderer").then((module) => module.TectonicDepth3DRenderer),
+  { ssr: false, loading: () => <div className={styles.loading}>Inicializando vista tectónica 3D…</div> },
+);
+
+const DAY_MS = 86_400_000;
+const PAGE_SIZE = 500;
+const MAX_EVENT_PAGES = 12;
+type PeriodPreset = "7" | "15" | "30" | "60" | "custom";
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function daysAgoKey(days: number, endKey = todayKey()) {
+  const end = new Date(`${endKey}T23:59:59.999Z`);
+  return new Date(end.getTime() - days * DAY_MS).toISOString().slice(0, 10);
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("es-DO", {
+    dateStyle: "medium",
+    timeZone: "UTC",
+  }).format(new Date(value));
+}
+
+async function readJson<T>(response: Response) {
+  const raw = await response.text();
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    throw new Error(raw || `HTTP ${response.status}`);
+  }
+}
+
+async function loadEarthquakes({
+  start,
+  end,
+  minMagnitude,
+  signal,
+}: {
+  start: string;
+  end: string;
+  minMagnitude: number;
+  signal: AbortSignal;
+}) {
+  const events = new Map<string, EarthquakeEvent>();
+  let offset = 1;
+  let total = 0;
+  let hasMore = false;
+  const warnings: string[] = [];
+
+  for (let pageIndex = 0; pageIndex < MAX_EVENT_PAGES; pageIndex += 1) {
+    const params = new URLSearchParams({
+      starttime: start,
+      endtime: end,
+      minmagnitude: String(minMagnitude),
+      eventtype: "earthquake",
+      orderby: "time",
+      limit: String(PAGE_SIZE),
+      offset: String(offset),
+    });
+    const response = await fetch(`/api/earthquakes?${params}`, { cache: "no-store", signal });
+    const page = await readJson<EarthquakePage & { error?: string }>(response);
+    if (!response.ok) throw new Error(page.error ?? `HTTP ${response.status}`);
+    if (pageIndex === 0) total = page.total;
+    for (const event of page.events) events.set(event.id, event);
+    if (page.warnings?.length) warnings.push(...page.warnings);
+    hasMore = page.hasMore;
+    if (!page.hasMore || page.events.length === 0) break;
+    offset += page.events.length;
+  }
+
+  const list = [...events.values()];
+  if (hasMore || list.length < total) {
+    warnings.push(`Por rendimiento 3D se cargaron ${list.length.toLocaleString("es-DO")} de ${total.toLocaleString("es-DO")} eventos del período.`);
+  }
+  return { events: list, total, warnings: [...new Set(warnings)] };
+}
+
+export function TectonicDepth3D() {
+  const today = todayKey();
+  const [tectonic, setTectonic] = useState<TectonicDepth3DResponse | null>(null);
+  const [earthquakes, setEarthquakes] = useState<EarthquakeEvent[]>([]);
+  const [eventTotal, setEventTotal] = useState(0);
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("30");
+  const [endDraft, setEndDraft] = useState(today);
+  const [startDraft, setStartDraft] = useState(daysAgoKey(30, today));
+  const [minMagnitude, setMinMagnitude] = useState(4.5);
+  const [applied, setApplied] = useState({ start: daysAgoKey(30, today), end: today, minMagnitude: 4.5 });
+  const [exploded, setExploded] = useState(true);
+  const [depthExaggeration, setDepthExaggeration] = useState(4);
+  const [showPlates, setShowPlates] = useState(true);
+  const [showSlabs, setShowSlabs] = useState(true);
+  const [showEarthquakes, setShowEarthquakes] = useState(true);
+  const [autoRotate, setAutoRotate] = useState(false);
+  const [slabRegion, setSlabRegion] = useState("");
+  const [loadingGeometry, setLoadingGeometry] = useState(true);
+  const [loadingEvents, setLoadingEvents] = useState(true);
+  const [geometryError, setGeometryError] = useState<string | null>(null);
+  const [eventError, setEventError] = useState<string | null>(null);
+  const [eventWarnings, setEventWarnings] = useState<string[]>([]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    async function loadGeometry() {
+      setLoadingGeometry(true);
+      try {
+        const response = await fetch("/api/tectonic-depth-3d", { cache: "force-cache", signal: controller.signal });
+        const payload = await readJson<TectonicDepth3DResponse & { error?: string }>(response);
+        if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+        if (!disposed) {
+          setTectonic(payload);
+          setGeometryError(null);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (!disposed) setGeometryError(error instanceof Error ? error.message : "No fue posible cargar GPlates + Slab2.");
+      } finally {
+        if (!disposed) setLoadingGeometry(false);
+      }
+    }
+    void loadGeometry();
+    return () => { disposed = true; controller.abort(); };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let disposed = false;
+    async function loadEvents() {
+      setLoadingEvents(true);
+      try {
+        const result = await loadEarthquakes({ ...applied, signal: controller.signal });
+        if (!disposed) {
+          setEarthquakes(result.events);
+          setEventTotal(result.total);
+          setEventWarnings(result.warnings);
+          setEventError(null);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        if (!disposed) setEventError(error instanceof Error ? error.message : "No fue posible cargar los sismos del período.");
+      } finally {
+        if (!disposed) setLoadingEvents(false);
+      }
+    }
+    void loadEvents();
+    return () => { disposed = true; controller.abort(); };
+  }, [applied]);
+
+  const deepestEvent = useMemo(
+    () => earthquakes.reduce<EarthquakeEvent | null>((deepest, event) => !deepest || event.depthKm > deepest.depthKm ? event : deepest, null),
+    [earthquakes],
+  );
+  const strongestEvent = useMemo(
+    () => earthquakes.reduce<EarthquakeEvent | null>((strongest, event) => !strongest || event.magnitude > strongest.magnitude ? event : strongest, null),
+    [earthquakes],
+  );
+
+  function choosePreset(next: Exclude<PeriodPreset, "custom">) {
+    setPeriodPreset(next);
+    setStartDraft(daysAgoKey(Number(next), endDraft || today));
+  }
+
+  function applyPeriod() {
+    const end = endDraft || today;
+    const start = periodPreset === "custom" ? startDraft : daysAgoKey(Number(periodPreset), end);
+    setStartDraft(start);
+    setApplied({ start, end, minMagnitude });
+  }
+
+  const warnings = [...(tectonic?.warnings ?? []), ...eventWarnings];
+
+  return (
+    <main className={styles.dashboard}>
+      <header className={styles.hero}>
+        <div>
+          <span className={styles.eyebrow}>GPLATES + USGS SLAB2 + HIPOCENTROS</span>
+          <h1>Placas tectónicas en profundidad · 3D</h1>
+          <p>
+            Vista global explotada para comparar la geometría actual de las placas con las losas subducidas de Slab2 y los sismos del período escogido a su profundidad hipocentral.
+          </p>
+        </div>
+        <div className={styles.modelChip}>
+          <span>Modelo superficial</span>
+          <strong>{tectonic?.gplatesModel ?? "ZAHIROVIC2022"}</strong>
+          <small>GPlates · presente (0 Ma)</small>
+        </div>
+      </header>
+
+      <section className={styles.scienceNote}>
+        <strong>Qué significa “profundidad de placa” aquí.</strong> GPlates aporta los polígonos de todas las placas en superficie. Slab2 aporta geometría 3D solamente en zonas de subducción modeladas; por eso una placa sin losa subducida no se dibuja artificialmente cientos de kilómetros hacia abajo. La exageración vertical es solo visual.
+      </section>
+
+      <section className={styles.periodPanel} aria-label="Período sísmico">
+        <div className={styles.presetRow}>
+          {(["7", "15", "30", "60"] as const).map((value) => (
+            <button key={value} type="button" className={periodPreset === value ? styles.activePreset : ""} onClick={() => choosePreset(value)}>
+              {value} días
+            </button>
+          ))}
+          <button type="button" className={periodPreset === "custom" ? styles.activePreset : ""} onClick={() => setPeriodPreset("custom")}>Personalizado</button>
+        </div>
+        <label>
+          <span>Desde</span>
+          <input type="date" value={startDraft} disabled={periodPreset !== "custom"} onChange={(event) => setStartDraft(event.target.value)} />
+        </label>
+        <label>
+          <span>Hasta</span>
+          <input type="date" value={endDraft} max={today} onChange={(event) => {
+            const next = event.target.value;
+            setEndDraft(next);
+            if (periodPreset !== "custom" && next) setStartDraft(daysAgoKey(Number(periodPreset), next));
+          }} />
+        </label>
+        <label>
+          <span>Magnitud mínima</span>
+          <select value={minMagnitude} onChange={(event) => setMinMagnitude(Number(event.target.value))}>
+            <option value={4.2}>M4.2+</option>
+            <option value={4.5}>M4.5+</option>
+            <option value={5}>M5.0+</option>
+            <option value={5.5}>M5.5+</option>
+            <option value={6}>M6.0+</option>
+          </select>
+        </label>
+        <button type="button" className={styles.applyButton} onClick={applyPeriod} disabled={loadingEvents}>{loadingEvents ? "Cargando…" : "Aplicar período"}</button>
+      </section>
+
+      <section className={styles.metrics}>
+        <article><span>Placas GPlates</span><strong>{tectonic?.platePolygons.features.length ?? "—"}</strong><small>geometría global superficial</small></article>
+        <article><span>Regiones Slab2</span><strong>{tectonic?.slabRegions.length ?? "—"}</strong><small>{tectonic ? `${tectonic.slabContours.length.toLocaleString("es-DO")} contornos` : "cargando"}</small></article>
+        <article><span>Sismos 3D</span><strong>{earthquakes.length.toLocaleString("es-DO")}</strong><small>{eventTotal > earthquakes.length ? `de ${eventTotal.toLocaleString("es-DO")}` : `M${applied.minMagnitude.toFixed(1)}+`}</small></article>
+        <article><span>Máxima profundidad</span><strong>{deepestEvent ? `${deepestEvent.depthKm.toFixed(0)} km` : "—"}</strong><small>Slab2 hasta {tectonic?.slabDepthMaxKm?.toFixed(0) ?? "—"} km</small></article>
+      </section>
+
+      <section className={styles.layerPanel}>
+        <label><input type="checkbox" checked={exploded} onChange={(event) => setExploded(event.target.checked)} /><span><strong>Exploded view</strong><small>Retira la esfera sólida para ver el interior.</small></span></label>
+        <label><input type="checkbox" checked={showPlates} onChange={(event) => setShowPlates(event.target.checked)} /><span><strong>Placas GPlates</strong><small>Piezas superficiales elevadas.</small></span></label>
+        <label><input type="checkbox" checked={showSlabs} onChange={(event) => setShowSlabs(event.target.checked)} /><span><strong>Losas Slab2</strong><small>Contornos globales a profundidad real.</small></span></label>
+        <label><input type="checkbox" checked={showEarthquakes} onChange={(event) => setShowEarthquakes(event.target.checked)} /><span><strong>Hipocentros</strong><small>Sismos del período aplicado.</small></span></label>
+        <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} /><span><strong>Rotación</strong><small>Exploración automática lenta.</small></span></label>
+      </section>
+
+      <section className={styles.depthControls}>
+        <label>
+          <span>Exageración de profundidad <strong>{depthExaggeration.toFixed(1)}×</strong></span>
+          <input type="range" min="1" max="8" step="0.5" value={depthExaggeration} onChange={(event) => setDepthExaggeration(Number(event.target.value))} />
+          <small>1× conserva la proporción radial del planeta; valores mayores separan visualmente los niveles.</small>
+        </label>
+        <label>
+          <span>Zona Slab2</span>
+          <select value={slabRegion} onChange={(event) => setSlabRegion(event.target.value)} disabled={!tectonic}>
+            <option value="">Todas las zonas de subducción</option>
+            {tectonic?.slabRegions.map((region) => <option value={region} key={region}>{region}</option>)}
+          </select>
+          <small>Filtra solamente la losa; los sismos siguen mostrando el período global.</small>
+        </label>
+      </section>
+
+      {(geometryError || eventError) && <div className={styles.error}>{geometryError ?? eventError}</div>}
+      {warnings.length > 0 && <div className={styles.warning}>{[...new Set(warnings)].map((warning) => <div key={warning}>{warning}</div>)}</div>}
+
+      <section className={styles.viewerPanel}>
+        <div className={styles.viewerHead}>
+          <div>
+            <span className={styles.eyebrow}>VISTA RADIAL EXPLOTADA</span>
+            <h2>Superficie → subducción → hipocentros</h2>
+          </div>
+          <div className={styles.legend}>
+            <span><i className={styles.shallow} /> 0–70 km</span>
+            <span><i className={styles.intermediate} /> 70–300 km</span>
+            <span><i className={styles.deep} /> &gt;300 km</span>
+          </div>
+        </div>
+        {loadingGeometry && !tectonic ? (
+          <div className={styles.loading}>Descargando geometría global GPlates y Slab2…</div>
+        ) : tectonic ? (
+          <TectonicDepth3DRenderer
+            tectonic={tectonic}
+            earthquakes={earthquakes}
+            exploded={exploded}
+            depthExaggeration={depthExaggeration}
+            showPlates={showPlates}
+            showSlabs={showSlabs}
+            showEarthquakes={showEarthquakes}
+            slabRegion={slabRegion}
+            autoRotate={autoRotate}
+          />
+        ) : null}
+      </section>
+
+      <section className={styles.summaryGrid}>
+        <article>
+          <span>Período aplicado</span>
+          <strong>{formatDate(applied.start)} → {formatDate(applied.end)}</strong>
+          <small>M{applied.minMagnitude.toFixed(1)}+ · catálogo RDSISMOS/USGS</small>
+        </article>
+        <article>
+          <span>Sismo más fuerte</span>
+          <strong>{strongestEvent ? `M${strongestEvent.magnitude.toFixed(1)}` : "—"}</strong>
+          <small>{strongestEvent ? `${strongestEvent.place} · ${strongestEvent.depthKm.toFixed(0)} km` : "Sin eventos"}</small>
+        </article>
+        <article>
+          <span>Fuentes geométricas</span>
+          <strong>GPlates + Slab2</strong>
+          <small>{tectonic?.sources.slabs ?? "USGS Slab2"}</small>
+        </article>
+      </section>
+    </main>
+  );
+}
