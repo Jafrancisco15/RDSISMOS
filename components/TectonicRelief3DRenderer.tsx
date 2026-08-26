@@ -14,12 +14,21 @@ import {
   type PlateReliefRegion,
 } from "@/lib/plateRelief";
 import type { GeoFeature } from "@/lib/plateDynamics";
+import {
+  buildSlabSamples,
+  classifyEventRelativeToSlab,
+  SLAB_EVENT_COLORS,
+  type SlabEventClass,
+} from "@/lib/slabEventClassification";
 import type { SlabContour3D, TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
 
 const TILE_SIZE = 256;
 const BASE_TERRAIN_Y = 0.0009;
 const BASE_DEPTH_Y = 0.1;
-const SELECTED_COLORS = ["#fff0a6", "#67e8f9", "#c4b5fd", "#86efac"];
+const PLATE_COLORS = ["#00d4ff", "#ffd166", "#ef476f", "#9b5de5"];
+const SLAB_SHALLOW = "#ff5d73";
+const SLAB_INTERMEDIATE = "#ff9f43";
+const SLAB_DEEP = "#667eea";
 
 type Pair = [number, number];
 type ReliefGrid = {
@@ -41,6 +50,8 @@ type Props = {
   showSlabs: boolean;
   showEarthquakes: boolean;
 };
+
+type QuakeCounts = Record<SlabEventClass, number>;
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.min(maximum, Math.max(minimum, value));
@@ -131,19 +142,19 @@ function terrainTileCount(region: PlateReliefRegion, zoom: number) {
 
 function terrainZoomForRegion(region: PlateReliefRegion, isMobile: boolean) {
   const budget = isMobile ? 10 : 20;
-  for (let zoom = 6; zoom >= 1; zoom -= 1) {
+  for (let zoom = 7; zoom >= 2; zoom -= 1) {
     if (terrainTileCount(region, zoom) <= budget) return zoom;
   }
-  return 1;
+  return 2;
 }
 
 function gridDimensions(region: PlateReliefRegion, isMobile: boolean) {
   const latitudeSpan = Math.max(0.1, region.north - region.south);
   const longitudeSpan = Math.max(0.1, (region.east - region.west) * Math.max(0.12, Math.cos(((region.north + region.south) / 2) * Math.PI / 180)));
-  const aspect = clamp(longitudeSpan / latitudeSpan, 0.45, 2.8);
-  const longest = isMobile ? 96 : 148;
-  const width = aspect >= 1 ? longest : Math.max(46, Math.round(longest * aspect));
-  const height = aspect >= 1 ? Math.max(46, Math.round(longest / aspect)) : longest;
+  const aspect = clamp(longitudeSpan / latitudeSpan, 0.5, 2.5);
+  const longest = isMobile ? 96 : 150;
+  const width = aspect >= 1 ? longest : Math.max(48, Math.round(longest * aspect));
+  const height = aspect >= 1 ? Math.max(48, Math.round(longest / aspect)) : longest;
   const sizeZ = 112;
   const sizeX = sizeZ * aspect;
   return { width, height, sizeX, sizeZ };
@@ -179,7 +190,7 @@ async function loadReliefGrid(region: PlateReliefRegion, isMobile: boolean): Pro
   const tileColumns = xMax - xMin + 1;
   const tileRows = yMax - yMin + 1;
   const worldTiles = 2 ** terrainZoom;
-  if (tileColumns <= 0 || tileRows <= 0 || tileColumns * tileRows > 32) throw new Error("La extensión seleccionada requiere demasiados tiles de relieve.");
+  if (tileColumns <= 0 || tileRows <= 0 || tileColumns * tileRows > 28) throw new Error("La ventana de interacción requiere demasiados tiles.");
 
   const canvas = document.createElement("canvas");
   canvas.width = tileColumns * TILE_SIZE;
@@ -210,8 +221,11 @@ async function loadReliefGrid(region: PlateReliefRegion, isMobile: boolean): Pro
       const longitude = region.west + (column / (dimensions.width - 1)) * (region.east - region.west);
       const sourceX = clamp(Math.round(worldPixelX(longitude, terrainZoom) - xMin * TILE_SIZE), 0, canvas.width - 1);
       const pixelIndex = (sourceY * canvas.width + sourceX) * 4;
-      const elevation = decodeTerrarium(pixels[pixelIndex], pixels[pixelIndex + 1], pixels[pixelIndex + 2]);
-      elevations[row * dimensions.width + column] = clamp(elevation, -10_500, 6_500);
+      elevations[row * dimensions.width + column] = clamp(
+        decodeTerrarium(pixels[pixelIndex], pixels[pixelIndex + 1], pixels[pixelIndex + 2]),
+        -10_500,
+        6_500,
+      );
     }
   }
   return { ...dimensions, elevations, terrainZoom };
@@ -219,16 +233,16 @@ async function loadReliefGrid(region: PlateReliefRegion, isMobile: boolean): Pro
 
 function terrainColor(elevation: number) {
   const color = new THREE.Color();
-  if (elevation < -6500) return color.set("#32105f");
-  if (elevation < -4200) return color.set("#233d9a");
-  if (elevation < -2200) return color.set("#1778bd");
-  if (elevation < -500) return color.set("#22a8c7");
-  if (elevation < 0) return color.set("#63c9d7");
-  if (elevation < 350) return color.set("#3f9e58");
-  if (elevation < 1100) return color.set("#8db54a");
-  if (elevation < 2200) return color.set("#d4ad47");
-  if (elevation < 3300) return color.set("#9a6638");
-  return color.set("#ded8c8");
+  if (elevation < -6500) return color.set("#24134f");
+  if (elevation < -4200) return color.set("#1e3a78");
+  if (elevation < -2200) return color.set("#155e8f");
+  if (elevation < -500) return color.set("#1789a3");
+  if (elevation < 0) return color.set("#4aa9b6");
+  if (elevation < 350) return color.set("#4c8d55");
+  if (elevation < 1100) return color.set("#78964b");
+  if (elevation < 2200) return color.set("#b18e43");
+  if (elevation < 3300) return color.set("#835739");
+  return color.set("#c9c5bc");
 }
 
 function pointToScene(longitude: number, latitude: number, grid: ReliefGrid, region: PlateReliefRegion) {
@@ -289,7 +303,7 @@ function createTerrainMesh(grid: ReliefGrid, region: PlateReliefRegion) {
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, side: THREE.DoubleSide }));
+  return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.92, side: THREE.DoubleSide }));
 }
 
 function createBlockSkirt(grid: ReliefGrid, region: PlateReliefRegion) {
@@ -301,16 +315,16 @@ function createBlockSkirt(grid: ReliefGrid, region: PlateReliefRegion) {
   const vertices: number[] = [];
   const indices: number[] = [];
   const bottomY = -12;
+  const point = (index: number) => {
+    const row = Math.floor(index / grid.width);
+    const column = index % grid.width;
+    const longitude = region.west + column / (grid.width - 1) * (region.east - region.west);
+    const latitude = region.north - row / (grid.height - 1) * (region.north - region.south);
+    const scene = pointToScene(longitude, latitude, grid, region);
+    return [scene.x, grid.elevations[index] * BASE_TERRAIN_Y, scene.z] as const;
+  };
   for (let segment = 0; segment < border.length; segment += 1) {
     const next = (segment + 1) % border.length;
-    const point = (index: number) => {
-      const row = Math.floor(index / grid.width);
-      const column = index % grid.width;
-      const longitude = region.west + column / (grid.width - 1) * (region.east - region.west);
-      const latitude = region.north - row / (grid.height - 1) * (region.north - region.south);
-      const scene = pointToScene(longitude, latitude, grid, region);
-      return [scene.x, grid.elevations[index] * BASE_TERRAIN_Y, scene.z] as const;
-    };
     const a = point(border[segment]);
     const b = point(border[next]);
     const base = vertices.length / 3;
@@ -321,7 +335,7 @@ function createBlockSkirt(grid: ReliefGrid, region: PlateReliefRegion) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: "#10253a", roughness: 1, side: THREE.DoubleSide }));
+  return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: "#0e2031", roughness: 1, side: THREE.DoubleSide }));
 }
 
 function createLineSegments(lines: Pair[][], grid: ReliefGrid, region: PlateReliefRegion, color: string, offset = 0.38, opacity = 0.95) {
@@ -353,11 +367,11 @@ function plateLines(features: GeoFeature[], region: PlateReliefRegion) {
   return result;
 }
 
-function createPlateOverlay(features: GeoFeature[], grid: ReliefGrid, region: PlateReliefRegion, color: string) {
+function createPlateOverlay(features: GeoFeature[], grid: ReliefGrid, region: PlateReliefRegion, color: string, offset: number) {
   const positions: number[] = [];
   for (const feature of features) {
     for (const sourceRing of polygonOuterRings(feature)) {
-      const ring = compactRing(sourceRing).filter((point) => insideRegion(point, region, 0.8));
+      const ring = compactRing(sourceRing).filter((point) => insideRegion(point, region, 1));
       if (ring.length < 3) continue;
       const projected = ring.map(([lng, lat]) => {
         const scene = pointToScene(lng, lat, grid, region);
@@ -369,21 +383,28 @@ function createPlateOverlay(features: GeoFeature[], grid: ReliefGrid, region: Pl
         for (const index of face) {
           const [lng, lat] = ring[index];
           const scene = pointToScene(lng, lat, grid, region);
-          const y = elevationAt(lng, lat, grid, region) * BASE_TERRAIN_Y + 0.24;
+          const y = elevationAt(lng, lat, grid, region) * BASE_TERRAIN_Y + offset;
           positions.push(scene.x, y, scene.z);
         }
       }
     }
   }
-  if (!positions.length) return new THREE.Group();
+  const group = new THREE.Group();
+  if (!positions.length) return group;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   const mesh = new THREE.Mesh(
     geometry,
-    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.17, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true,
+      opacity: 0.26,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    }),
   );
-  mesh.renderOrder = 2;
-  const group = new THREE.Group();
+  mesh.renderOrder = 3;
   group.add(mesh);
   return group;
 }
@@ -403,12 +424,24 @@ function faultLines(features: ActiveFaultFeature[], region: PlateReliefRegion) {
   return groups;
 }
 
-function slabLines(contours: SlabContour3D[], grid: ReliefGrid, region: PlateReliefRegion) {
-  const positions: number[] = [];
+function slabDepthColor(depthKm: number) {
+  if (depthKm <= 70) return SLAB_SHALLOW;
+  if (depthKm <= 300) return SLAB_INTERMEDIATE;
+  return SLAB_DEEP;
+}
+
+function createSlabLayers(contours: SlabContour3D[], grid: ReliefGrid, region: PlateReliefRegion) {
+  const groups = new Map<string, number[]>([
+    [SLAB_SHALLOW, []],
+    [SLAB_INTERMEDIATE, []],
+    [SLAB_DEEP, []],
+  ]);
   for (const contour of contours) {
+    const positions = groups.get(slabDepthColor(contour.depthKm));
+    if (!positions) continue;
     let previous: { lat: number; lng: number } | null = null;
     for (const point of contour.points) {
-      if (!insideRegion([point.lng, point.lat], region, 0.5)) {
+      if (!insideRegion([point.lng, point.lat], region, 0.6)) {
         previous = null;
         continue;
       }
@@ -421,32 +454,60 @@ function slabLines(contours: SlabContour3D[], grid: ReliefGrid, region: PlateRel
       previous = point;
     }
   }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  return new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: "#d88cff", transparent: true, opacity: 0.65 }));
+  const group = new THREE.Group();
+  for (const [color, positions] of groups) {
+    if (!positions.length) continue;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    group.add(new THREE.LineSegments(
+      geometry,
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.88 }),
+    ));
+  }
+  return group;
 }
 
-function createEarthquakes(events: EarthquakeEvent[], grid: ReliefGrid, region: PlateReliefRegion, isMobile: boolean) {
-  const selected = events.filter((event) => insideRegion([event.longitude, event.latitude], region, 0))
+function contoursInRegion(contours: SlabContour3D[], region: PlateReliefRegion) {
+  return contours.filter((contour) => contour.points.some((point) => insideRegion([point.lng, point.lat], region, 0.8)));
+}
+
+function emptyQuakeCounts(): QuakeCounts {
+  return { cortical: 0, interface: 0, intraslab: 0, deep: 0, unclassified: 0 };
+}
+
+function createEarthquakes(
+  events: EarthquakeEvent[],
+  slabContours: SlabContour3D[],
+  grid: ReliefGrid,
+  region: PlateReliefRegion,
+  isMobile: boolean,
+) {
+  const selected = events
+    .filter((event) => insideRegion([event.longitude, event.latitude], region, 0))
     .sort((a, b) => b.magnitude - a.magnitude)
-    .slice(0, isMobile ? 300 : 650);
+    .slice(0, isMobile ? 320 : 700);
+  const samples = buildSlabSamples(slabContours, isMobile ? 2200 : 4200);
   const geometry = new THREE.SphereGeometry(0.78, 7, 5);
   const material = new THREE.MeshBasicMaterial({ vertexColors: true });
   const mesh = new THREE.InstancedMesh(geometry, material, selected.length);
   const matrix = new THREE.Matrix4();
   const color = new THREE.Color();
+  const counts = emptyQuakeCounts();
+
   selected.forEach((event, index) => {
     const scene = pointToScene(event.longitude, event.latitude, grid, region);
-    const scale = clamp(0.65 + (event.magnitude - 4) * 0.32, 0.65, 1.9);
+    const classification = classifyEventRelativeToSlab(event, samples);
+    counts[classification.kind] += 1;
+    const scale = clamp(0.68 + (event.magnitude - 4) * 0.34, 0.68, 2.1);
     matrix.makeScale(scale, scale, scale);
     matrix.setPosition(scene.x, -Math.max(1, event.depthKm) * BASE_DEPTH_Y, scene.z);
     mesh.setMatrixAt(index, matrix);
-    color.set(event.depthKm < 70 ? "#ff3f68" : event.depthKm < 300 ? "#ffad33" : "#67a8ff");
+    color.set(SLAB_EVENT_COLORS[classification.kind]);
     mesh.setColorAt(index, color);
   });
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  return { mesh, count: selected.length };
+  return { mesh, count: selected.length, counts };
 }
 
 function disposeObject(object: THREE.Object3D) {
@@ -476,21 +537,25 @@ export function TectonicRelief3DRenderer({
   const faultGroupRef = useRef<THREE.Group | null>(null);
   const slabGroupRef = useRef<THREE.Group | null>(null);
   const quakeGroupRef = useRef<THREE.Group | null>(null);
-  const [status, setStatus] = useState("Preparando placas…");
+  const [status, setStatus] = useState("Preparando zona de interacción…");
   const [faultCount, setFaultCount] = useState<number | null>(null);
   const [quakeCount, setQuakeCount] = useState(0);
+  const [quakeCounts, setQuakeCounts] = useState<QuakeCounts>(emptyQuakeCounts());
   const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const activePlateIds = useMemo(() => [...new Set(plateIds.filter(Boolean))].slice(0, 4), [plateIds]);
-  const region = useMemo(() => computePlatesReliefRegion(tectonic.platePolygons.features, activePlateIds), [activePlateIds, tectonic.platePolygons.features]);
+  const region = useMemo(
+    () => computePlatesReliefRegion(tectonic.platePolygons.features, activePlateIds),
+    [activePlateIds, tectonic.platePolygons.features],
+  );
   const selectedPlates = useMemo(() => activePlateIds.map((id, index) => {
     const features = plateFeatures(tectonic.platePolygons.features, id);
     return {
       id,
       name: features.length ? plateNameOf(features[0]) : id,
       features,
-      color: SELECTED_COLORS[index % SELECTED_COLORS.length],
+      color: PLATE_COLORS[index % PLATE_COLORS.length],
     };
   }), [activePlateIds, tectonic.platePolygons.features]);
   const selectedFeatureCount = selectedPlates.reduce((sum, plate) => sum + plate.features.length, 0);
@@ -516,10 +581,11 @@ export function TectonicRelief3DRenderer({
   useEffect(() => {
     const host = containerRef.current;
     if (!host || !region) {
-      if (!region) setError("No fue posible calcular la extensión combinada de las placas seleccionadas.");
+      if (!region) setError("No fue posible calcular la zona de interacción de las placas seleccionadas.");
       return;
     }
     const activeRegion = region;
+    const regionalSlabs = contoursInRegion(tectonic.slabContours, activeRegion);
     let disposed = false;
     let frame = 0;
     const isMobile = window.matchMedia("(max-width: 700px)").matches;
@@ -533,8 +599,8 @@ export function TectonicRelief3DRenderer({
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#020712");
-    scene.fog = new THREE.Fog("#020712", 260, 720);
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1600);
+    scene.fog = new THREE.Fog("#020712", 250, 690);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1500);
     renderer.setPixelRatio(isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.style.display = "block";
@@ -545,18 +611,18 @@ export function TectonicRelief3DRenderer({
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
     controls.screenSpacePanning = true;
-    scene.add(new THREE.HemisphereLight("#cfe9ff", "#1c1720", 1.15));
-    const key = new THREE.DirectionalLight("#fff4d8", 1.45);
+    scene.add(new THREE.HemisphereLight("#d5ecff", "#17101f", 1.2));
+    const key = new THREE.DirectionalLight("#fff3d0", 1.5);
     key.position.set(-80, 150, 90);
     scene.add(key);
 
     const fallbackGrid = createFallbackGrid(activeRegion, isMobile);
     const maxDimension = Math.max(fallbackGrid.sizeX, fallbackGrid.sizeZ);
-    camera.position.set(maxDimension * 0.82, maxDimension * 0.58, maxDimension * 0.98);
+    camera.position.set(maxDimension * 0.82, maxDimension * 0.6, maxDimension * 0.98);
     camera.far = Math.max(1000, maxDimension * 9);
     camera.updateProjectionMatrix();
     controls.minDistance = maxDimension * 0.4;
-    controls.maxDistance = maxDimension * 4.8;
+    controls.maxDistance = maxDimension * 4.6;
     controls.target.set(0, -2, 0);
     controls.update();
 
@@ -577,12 +643,11 @@ export function TectonicRelief3DRenderer({
       terrainGroupRef.current = replaceGroup(terrainGroupRef.current, terrain);
 
       const plates = new THREE.Group();
-      plates.add(createLineSegments(plateLines(tectonic.platePolygons.features, activeRegion), grid, activeRegion, "#8fa6b8", 0.5, 0.42));
+      plates.add(createLineSegments(plateLines(tectonic.platePolygons.features, activeRegion), grid, activeRegion, "#8fa6b8", 0.45, 0.28));
       selectedPlates.forEach((plate, index) => {
-        const overlay = createPlateOverlay(plate.features, grid, activeRegion, plate.color);
-        overlay.renderOrder = 2 + index;
-        plates.add(overlay);
-        plates.add(createLineSegments(plateLines(plate.features, activeRegion), grid, activeRegion, plate.color, 0.9 + index * 0.05, 1));
+        const offset = 0.34 + index * 0.18;
+        plates.add(createPlateOverlay(plate.features, grid, activeRegion, plate.color, offset));
+        plates.add(createLineSegments(plateLines(plate.features, activeRegion), grid, activeRegion, plate.color, offset + 0.36, 1));
       });
       plates.scale.y = reliefExaggeration;
       plates.visible = showPlates;
@@ -590,26 +655,30 @@ export function TectonicRelief3DRenderer({
       return grid;
     };
 
-    const initialGrid = buildSurfaceGroups(fallbackGrid);
-    const slabs = new THREE.Group();
-    slabs.add(slabLines(tectonic.slabContours, initialGrid, activeRegion));
-    slabs.scale.y = depthExaggeration;
-    slabs.visible = showSlabs;
-    scene.add(slabs);
-    slabGroupRef.current = slabs;
+    const rebuildDepthLayers = (grid: ReliefGrid) => {
+      const slabGroup = new THREE.Group();
+      slabGroup.add(createSlabLayers(regionalSlabs, grid, activeRegion));
+      slabGroup.scale.y = depthExaggeration;
+      slabGroup.visible = showSlabs;
+      slabGroupRef.current = replaceGroup(slabGroupRef.current, slabGroup);
 
-    const quakes = new THREE.Group();
-    const quakeData = createEarthquakes(earthquakes, initialGrid, activeRegion, isMobile);
-    quakes.add(quakeData.mesh);
-    quakes.scale.y = depthExaggeration;
-    quakes.visible = showEarthquakes;
-    scene.add(quakes);
-    quakeGroupRef.current = quakes;
-    setQuakeCount(quakeData.count);
+      const quakeGroup = new THREE.Group();
+      const quakeData = createEarthquakes(earthquakes, regionalSlabs, grid, activeRegion, isMobile);
+      quakeGroup.add(quakeData.mesh);
+      quakeGroup.scale.y = depthExaggeration;
+      quakeGroup.visible = showEarthquakes;
+      quakeGroupRef.current = replaceGroup(quakeGroupRef.current, quakeGroup);
+      setQuakeCount(quakeData.count);
+      setQuakeCounts(quakeData.counts);
+    };
+
+    const initialGrid = buildSurfaceGroups(fallbackGrid);
+    rebuildDepthLayers(initialGrid);
     setFaultCount(null);
     setError(null);
     setWarning(null);
-    setStatus(`Base visible · ${selectedPlates.length} placas · ${selectedFeatureCount} polígonos`);
+    const focusText = activeRegion.focusPlateName ? ` · foco ${activeRegion.focusPlateName}` : "";
+    setStatus(`Base visible · ${selectedPlates.length} placas${focusText}`);
 
     const resize = () => {
       const width = Math.max(320, host.clientWidth);
@@ -640,7 +709,9 @@ export function TectonicRelief3DRenderer({
       .then((grid) => {
         if (disposed) return;
         buildSurfaceGroups(grid);
-        setStatus(`Relieve listo · ${selectedPlates.length} placas · DEM z${grid.terrainZoom}`);
+        rebuildDepthLayers(grid);
+        const focus = activeRegion.focusPlateName ? ` · foco ${activeRegion.focusPlateName}` : "";
+        setStatus(`Relieve listo · ${selectedPlates.length} placas · DEM z${grid.terrainZoom}${focus}`);
         return fetch(`/api/faults?bbox=${encodeURIComponent(faultBboxForRegion(activeRegion))}&limit=1200`, { cache: "force-cache" })
           .then(async (response) => response.ok ? await response.json() as ActiveFaultCollection : null)
           .then((faults) => {
@@ -648,10 +719,10 @@ export function TectonicRelief3DRenderer({
             const group = new THREE.Group();
             if (faults) {
               const grouped = faultLines(faults.features, activeRegion);
-              group.add(createLineSegments(grouped.reverse, grid, activeRegion, "#ff4d4f", 0.72));
-              group.add(createLineSegments(grouped.normal, grid, activeRegion, "#4dd7ff", 0.69));
-              group.add(createLineSegments(grouped.strike, grid, activeRegion, "#ffbf47", 0.75));
-              group.add(createLineSegments(grouped.other, grid, activeRegion, "#e96fff", 0.68));
+              group.add(createLineSegments(grouped.reverse, grid, activeRegion, "#ff3b3b", 0.82));
+              group.add(createLineSegments(grouped.normal, grid, activeRegion, "#39d8ff", 0.79));
+              group.add(createLineSegments(grouped.strike, grid, activeRegion, "#ffbf47", 0.85));
+              group.add(createLineSegments(grouped.other, grid, activeRegion, "#f472b6", 0.78));
               setFaultCount(faults.features.length);
             } else setFaultCount(0);
             group.scale.y = reliefExaggeration;
@@ -685,23 +756,36 @@ export function TectonicRelief3DRenderer({
   }, [depthExaggeration, earthquakes, region, reliefExaggeration, selectedFeatureCount, selectedPlates, showEarthquakes, showFaults, showPlates, showSlabs, tectonic]);
 
   return (
-    <div style={{ position: "relative", minHeight: 500, overflow: "hidden", borderRadius: 18, background: "#020712" }}>
-      <div ref={containerRef} style={{ width: "100%", minHeight: 500, touchAction: "none" }} />
+    <div style={{ position: "relative", minHeight: 520, overflow: "hidden", borderRadius: 18, background: "#020712" }}>
+      <div ref={containerRef} style={{ width: "100%", minHeight: 520, touchAction: "none" }} />
+
       <div style={{ position: "absolute", top: 12, left: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", maxWidth: "calc(100% - 24px)", pointerEvents: "none" }}>
-        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.84)", border: "1px solid rgba(125,211,252,.25)", color: "#d8f2ff", fontSize: 11, fontWeight: 800 }}>{selectedPlates.length} placas · {selectedFeatureCount} polígonos</span>
-        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.84)", border: "1px solid rgba(255,255,255,.13)", color: "#d9e4ef", fontSize: 11 }}>{status}</span>
+        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.86)", border: "1px solid rgba(125,211,252,.25)", color: "#d8f2ff", fontSize: 11, fontWeight: 800 }}>{selectedPlates.length} placas · {selectedFeatureCount} fragmentos agrupados</span>
+        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.86)", border: "1px solid rgba(255,255,255,.13)", color: "#d9e4ef", fontSize: 11 }}>{status}</span>
       </div>
+
       <div style={{ position: "absolute", top: 48, left: 12, right: 12, zIndex: 4, display: "flex", gap: 6, flexWrap: "wrap", pointerEvents: "none" }}>
-        {selectedPlates.map((plate) => <span key={plate.id} style={{ padding: "5px 8px", borderRadius: 999, background: "rgba(2,7,18,.82)", border: `1px solid ${plate.color}88`, color: plate.color, fontSize: 10, fontWeight: 800 }}>{plate.name}</span>)}
+        {selectedPlates.map((plate) => (
+          <span key={plate.id} style={{ padding: "5px 8px", borderRadius: 999, background: `${plate.color}22`, border: `1px solid ${plate.color}bb`, color: plate.color, fontSize: 10, fontWeight: 900 }}>{plate.name}</span>
+        ))}
       </div>
-      <div style={{ position: "absolute", bottom: 12, left: 12, right: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", pointerEvents: "none" }}>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#ff4d4f", fontSize: 10 }}>— inversa</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#4dd7ff", fontSize: 10 }}>— normal</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#ffbf47", fontSize: 10 }}>— rumbo</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#d88cff", fontSize: 10 }}>— Slab2</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#cad8e6", fontSize: 10 }}>{faultCount === null ? "fallas…" : `${faultCount} fallas`} · {quakeCount} sismos</span>
+
+      <div style={{ position: "absolute", bottom: 12, left: 12, right: 12, zIndex: 4, display: "flex", gap: 6, flexWrap: "wrap", pointerEvents: "none" }}>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_SHALLOW, fontSize: 10 }}>— Slab2 0–70 km</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_INTERMEDIATE, fontSize: 10 }}>— Slab2 70–300</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_DEEP, fontSize: 10 }}>— Slab2 &gt;300</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_EVENT_COLORS.cortical, fontSize: 10 }}>● cortical {quakeCounts.cortical}</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_EVENT_COLORS.interface, fontSize: 10 }}>● interfaz {quakeCounts.interface}</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_EVENT_COLORS.intraslab, fontSize: 10 }}>● intraslab {quakeCounts.intraslab}</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_EVENT_COLORS.deep, fontSize: 10 }}>● profundo {quakeCounts.deep}</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: "#cad8e6", fontSize: 10 }}>{faultCount === null ? "fallas…" : `${faultCount} fallas`} · {quakeCount} sismos</span>
       </div>
-      {warning && <div style={{ position: "absolute", top: 82, left: 12, right: 12, zIndex: 5, padding: 9, borderRadius: 10, background: "rgba(86,54,8,.9)", color: "#fde68a", fontSize: 11 }}>{warning}</div>}
+
+      <div style={{ position: "absolute", right: 12, top: 84, zIndex: 4, maxWidth: 260, padding: "7px 9px", borderRadius: 10, background: "rgba(2,7,18,.78)", color: "#a8b8c8", fontSize: 9.5, lineHeight: 1.35, pointerEvents: "none" }}>
+        Interfaz/intraslab = clasificación geométrica aproximada respecto a la superficie Slab2; no sustituye mecanismos focales ni interpretación publicada.
+      </div>
+
+      {warning && <div style={{ position: "absolute", top: 118, left: 12, right: 12, zIndex: 5, padding: 9, borderRadius: 10, background: "rgba(86,54,8,.9)", color: "#fde68a", fontSize: 11 }}>{warning}</div>}
       {error && <div style={{ position: "absolute", inset: "42% 16px auto", zIndex: 6, padding: 14, borderRadius: 12, background: "rgba(64,10,20,.94)", color: "#ffd7df", fontSize: 12 }}>{error}</div>}
     </div>
   );
