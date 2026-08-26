@@ -65,9 +65,15 @@ function quakeColor(depthKm: number) {
   return "#60a5fa";
 }
 
-function altitudeForDepth(depthKm: number, exaggeration: number, exploded: boolean) {
-  const factor = exploded ? exaggeration : 1;
-  return -clamp((Math.max(0, depthKm) / EARTH_RADIUS_KM) * factor, 0, 0.92);
+// react-globe.gl is optimized for layers at or above the globe surface. Negative
+// polygon/path altitudes can disappear or invalidate the WebGL layer on mobile.
+// In exploded mode we therefore preserve the physical depth value in the data,
+// color and labels, but separate deeper levels progressively OUTWARD so every
+// layer remains inspectable. This is an exploded diagram, not a radial scale.
+function displayAltitudeForDepth(depthKm: number, exaggeration: number, exploded: boolean) {
+  const normalizedDepth = clamp(Math.max(0, depthKm) / EARTH_RADIUS_KM, 0, 0.18);
+  if (exploded) return 0.075 + normalizedDepth * Math.max(1, exaggeration) * 0.7;
+  return 0.012 + normalizedDepth * 0.24;
 }
 
 function formatUtc(value: string) {
@@ -98,7 +104,7 @@ function plateLabel(feature: GeoFeature) {
 }
 
 function slabLabel(path: SlabPath) {
-  return `<div class="globe-tooltip"><strong>Slab2 · ${escapeHtml(path.region)}</strong><span>Isolínea de ${path.depthKm.toFixed(0)} km</span><small>Contorno original usado como control de la superficie triangulada.</small></div>`;
+  return `<div class="globe-tooltip"><strong>Slab2 · ${escapeHtml(path.region)}</strong><span>Isolínea de ${path.depthKm.toFixed(0)} km</span><small>Profundidad Slab2 real; su separación radial es visual cuando Exploded view está activo.</small></div>`;
 }
 
 function slabSurfaceLabel(surface: SlabSurfaceRenderItem) {
@@ -170,35 +176,47 @@ export function TectonicDepth3DRenderer({
   }, [autoRotate]);
 
   useEffect(() => {
-    globeRef.current?.pointOfView({ lat: 12, lng: -35, altitude: exploded ? 2.45 : 2.1 }, 700);
+    globeRef.current?.pointOfView({ lat: 12, lng: -35, altitude: exploded ? 2.35 : 2.1 }, 700);
   }, [exploded]);
+
+  const surfaceBudget = size.width < 620 ? 1_800 : size.width < 900 ? 3_200 : 6_000;
+
+  const visibleSurfaceTriangles = useMemo(() => {
+    if (!showSlabs) return [] as SlabSurfaceTriangle3D[];
+    const source = tectonic.slabSurfaceTriangles.filter((surface) => !slabRegion || surface.region === slabRegion);
+    if (source.length <= surfaceBudget) return source;
+    const stride = Math.ceil(source.length / surfaceBudget);
+    return source.filter((_, index) => index % stride === 0).slice(0, surfaceBudget);
+  }, [showSlabs, slabRegion, surfaceBudget, tectonic.slabSurfaceTriangles]);
 
   const polygonItems = useMemo<PolygonRenderItem[]>(() => {
     const plates: PlateRenderItem[] = showPlates
       ? tectonic.platePolygons.features.map((feature) => ({ ...feature, renderKind: "plate" as const }))
       : [];
-    const surfaces: SlabSurfaceRenderItem[] = showSlabs
-      ? tectonic.slabSurfaceTriangles
-        .filter((surface) => !slabRegion || surface.region === slabRegion)
-        .map((surface) => ({ ...surface, renderKind: "slab-surface" as const, color: slabColor(surface.depthKm) }))
-      : [];
+    const surfaces: SlabSurfaceRenderItem[] = visibleSurfaceTriangles.map((surface) => ({
+      ...surface,
+      renderKind: "slab-surface" as const,
+      color: slabColor(surface.depthKm),
+    }));
     return [...plates, ...surfaces];
-  }, [showPlates, showSlabs, slabRegion, tectonic.platePolygons.features, tectonic.slabSurfaceTriangles]);
+  }, [showPlates, tectonic.platePolygons.features, visibleSurfaceTriangles]);
 
   const slabPaths = useMemo<SlabPath[]>(() => {
     if (!showSlabs) return [];
-    return tectonic.slabContours
-      .filter((contour) => !slabRegion || contour.region === slabRegion)
+    const source = tectonic.slabContours.filter((contour) => !slabRegion || contour.region === slabRegion);
+    const pathStride = size.width < 620 && source.length > 520 ? 2 : 1;
+    return source
+      .filter((_, index) => index % pathStride === 0)
       .map((contour) => ({
         ...contour,
         color: slabColor(contour.depthKm),
         stroke: contour.depthKm % 100 === 0 ? 0.58 : 0.34,
         renderPoints: contour.points.map((point) => ({
           ...point,
-          altitude: altitudeForDepth(contour.depthKm, depthExaggeration, exploded),
+          altitude: displayAltitudeForDepth(contour.depthKm, depthExaggeration, exploded),
         })),
       }));
-  }, [depthExaggeration, exploded, showSlabs, slabRegion, tectonic.slabContours]);
+  }, [depthExaggeration, exploded, showSlabs, slabRegion, size.width, tectonic.slabContours]);
 
   const quakePoints = useMemo<QuakePoint[]>(() => {
     if (!showEarthquakes) return [];
@@ -206,14 +224,14 @@ export function TectonicDepth3DRenderer({
       id: event.id,
       lat: event.latitude,
       lng: event.longitude,
-      altitude: altitudeForDepth(event.depthKm, depthExaggeration, exploded),
+      altitude: displayAltitudeForDepth(event.depthKm, depthExaggeration, exploded),
       radius: 0.11 + clamp((event.magnitude - 4) / 4, 0, 1) * 0.34,
       color: quakeColor(event.depthKm),
       event,
     }));
   }, [depthExaggeration, earthquakes, exploded, showEarthquakes]);
 
-  const plateLift = exploded ? 0.055 : 0.006;
+  const plateLift = exploded ? 0.035 : 0.006;
 
   return (
     <div className={styles.renderer} ref={containerRef}>
@@ -222,7 +240,7 @@ export function TectonicDepth3DRenderer({
         width={size.width}
         height={size.height}
         globeImageUrl={EARTH_TEXTURE}
-        showGlobe={!exploded}
+        showGlobe
         showAtmosphere={!exploded}
         backgroundColor="rgba(0,0,0,0)"
         atmosphereColor="#7dd3fc"
@@ -231,24 +249,24 @@ export function TectonicDepth3DRenderer({
         polygonsData={polygonItems}
         polygonGeoJsonGeometry="geometry"
         polygonCapColor={(item: unknown) => {
-          if (isSlabSurface(item)) return `${item.color}${exploded ? "78" : "4d"}`;
-          return `${plateColor(item as GeoFeature)}${exploded ? "99" : "55"}`;
+          if (isSlabSurface(item)) return `${item.color}${exploded ? "8f" : "66"}`;
+          return `${plateColor(item as GeoFeature)}${exploded ? "b0" : "66"}`;
         }}
-        polygonSideColor={(item: unknown) => isSlabSurface(item) ? `${item.color}30` : `${plateColor(item as GeoFeature)}44`}
-        polygonStrokeColor={(item: unknown) => isSlabSurface(item) ? `${item.color}70` : plateColor(item as GeoFeature)}
+        polygonSideColor={(item: unknown) => isSlabSurface(item) ? `${item.color}3d` : `${plateColor(item as GeoFeature)}55`}
+        polygonStrokeColor={(item: unknown) => isSlabSurface(item) ? `${item.color}aa` : plateColor(item as GeoFeature)}
         polygonAltitude={(item: unknown) => isSlabSurface(item)
-          ? altitudeForDepth(item.depthKm, depthExaggeration, exploded)
+          ? displayAltitudeForDepth(item.depthKm, depthExaggeration, exploded)
           : plateLift}
         polygonLabel={(item: unknown) => isSlabSurface(item)
           ? slabSurfaceLabel(item)
           : plateLabel(item as GeoFeature)}
-        polygonsTransitionDuration={250}
+        polygonsTransitionDuration={180}
         onPolygonClick={(item: unknown) => {
           if (!isSlabSurface(item)) return;
           setSelectedSlab(item);
           setSelectedEvent(null);
           const center = surfaceCenter(item);
-          globeRef.current?.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.35 }, 650);
+          globeRef.current?.pointOfView({ lat: center.lat, lng: center.lng, altitude: 1.25 }, 650);
         }}
         pathsData={slabPaths}
         pathPoints="renderPoints"
@@ -259,7 +277,7 @@ export function TectonicDepth3DRenderer({
         pathStroke="stroke"
         pathDashLength={1}
         pathDashGap={0}
-        pathTransitionDuration={250}
+        pathTransitionDuration={180}
         pathLabel={(item: unknown) => slabLabel(item as SlabPath)}
         pointsData={quakePoints}
         pointLat="lat"
@@ -268,17 +286,34 @@ export function TectonicDepth3DRenderer({
         pointRadius="radius"
         pointColor="color"
         pointLabel={(item: unknown) => quakeLabel(item as QuakePoint)}
-        pointsTransitionDuration={300}
+        pointsTransitionDuration={220}
         onPointClick={(item: unknown) => {
           const point = item as QuakePoint;
           setSelectedEvent(point.event);
           setSelectedSlab(null);
-          globeRef.current?.pointOfView({ lat: point.lat, lng: point.lng, altitude: 1.25 }, 650);
+          globeRef.current?.pointOfView({ lat: point.lat, lng: point.lng, altitude: 1.2 }, 650);
         }}
         enablePointerInteraction
       />
 
-      <div className={styles.depthScale} aria-label="Escala visual de profundidad">
+      <div style={{
+        position: "absolute",
+        left: 12,
+        top: 12,
+        zIndex: 3,
+        padding: "7px 10px",
+        borderRadius: 999,
+        border: "1px solid rgba(125,211,252,.22)",
+        background: "rgba(2,6,23,.78)",
+        color: "#bae6fd",
+        fontSize: 11,
+        fontWeight: 700,
+        pointerEvents: "none",
+      }}>
+        {exploded ? "Exploded: profundidad separada hacia afuera" : "Vista compacta"} · {visibleSurfaceTriangles.length.toLocaleString("es-DO")} triángulos visibles
+      </div>
+
+      <div className={styles.depthScale} aria-label="Escala de profundidad">
         <span>0 km</span>
         <i />
         <span>70</span>
@@ -304,7 +339,7 @@ export function TectonicDepth3DRenderer({
           <span>SUPERFICIE SLAB2</span>
           <strong>{selectedSlab.region} · ≈{selectedSlab.depthKm.toFixed(0)} km</strong>
           <p>Triángulo interpolado entre isolíneas de {selectedSlab.minDepthKm.toFixed(0)} y {selectedSlab.maxDepthKm.toFixed(0)} km.</p>
-          <small>La malla representa una interpolación visual de la geometría publicada por Slab2; las isolíneas coloreadas permanecen visibles como referencia.</small>
+          <small>La cifra en km conserva la profundidad Slab2. En Exploded view la separación radial está amplificada y desplazada hacia afuera únicamente para poder verla.</small>
         </div>
       )}
     </div>
