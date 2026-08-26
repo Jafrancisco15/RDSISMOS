@@ -6,8 +6,8 @@ export const revalidate = 43_200;
 export const maxDuration = 60;
 
 const MRDS_URL = "https://energy.usgs.gov/arcgis/rest/services/MRData/Mineral_Resource_Data_System/FeatureServer/3/query";
-const MRDS_PAGE_SIZE = 500;
-const MRDS_PAGES = 2;
+const MRDS_PAGE_SIZE = 750;
+const MRDS_PAGES = 4;
 
 type MrdsFeature = {
   id?: string | number;
@@ -21,12 +21,35 @@ function text(value: unknown, fallback = "") {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
+function normalizedKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function propertyText(properties: Record<string, unknown>, keys: string[], fallback = "") {
+  const wanted = new Set(keys.map(normalizedKey));
+  for (const [key, value] of Object.entries(properties)) {
+    if (!wanted.has(normalizedKey(key))) continue;
+    const result = text(value);
+    if (result) return result;
+  }
+  return fallback;
+}
+
+function locationText(properties: Record<string, unknown>) {
+  const parts = [
+    propertyText(properties, ["district", "mining_district"]),
+    propertyText(properties, ["county", "province"]),
+    propertyText(properties, ["state", "state_name"]),
+  ].filter(Boolean);
+  return [...new Set(parts)].join(" · ");
+}
+
 async function fetchMinerals(signal: AbortSignal): Promise<ExtractionSite[]> {
   const sites: ExtractionSite[] = [];
   for (let page = 0; page < MRDS_PAGES; page += 1) {
     const params = new URLSearchParams({
       where: "dev_stat IN ('Producer','Past Producer')",
-      outFields: "gid,dep_id,site_name,dev_stat,code_list,grade",
+      outFields: "*",
       returnGeometry: "true",
       outSR: "4326",
       f: "geojson",
@@ -48,19 +71,25 @@ async function fetchMinerals(signal: AbortSignal): Promise<ExtractionSite[]> {
       const latitude = Number(feature.geometry.coordinates[1]);
       if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) continue;
       const properties = feature.properties ?? {};
-      const name = text(properties.site_name, `Sitio mineral ${page * MRDS_PAGE_SIZE + index + 1}`);
-      const commodity = text(properties.code_list, "Mineral no especificado");
-      const status = text(properties.dev_stat, "Estado no especificado");
+      const name = propertyText(properties, ["site_name", "sitename", "name"], `Sitio mineral ${page * MRDS_PAGE_SIZE + index + 1}`);
+      const commodity = propertyText(properties, ["code_list", "commodities", "commodity"], "Mineral no especificado");
+      const status = propertyText(properties, ["dev_stat", "development_status", "status"], "Estado no especificado");
+      const country = propertyText(properties, ["country", "country_name", "country_na"], "País no especificado");
+      const location = locationText(properties);
+      const depId = propertyText(properties, ["dep_id", "depid"], String(properties.gid ?? feature.id ?? `${page}-${index}`));
       sites.push({
-        id: `mrds-${text(properties.dep_id, String(properties.gid ?? feature.id ?? `${page}-${index}`))}`,
+        id: `mrds-${depId}`,
         name,
         kind: "mineral",
         latitude,
         longitude,
-        country: "USGS MRDS",
+        country,
+        location: location || undefined,
+        status,
         detail: `${commodity} · ${status}. MRDS es una compilación histórica; el estado operacional puede estar desactualizado.`,
         source: "USGS Mineral Resources Data System (MRDS)",
         sourceType: "official",
+        quantityLabel: "Producción cuantitativa no disponible en el registro MRDS cargado",
       });
     }
     if (features.length < MRDS_PAGE_SIZE) break;
@@ -86,6 +115,11 @@ export async function GET(request: Request) {
       return acc;
     }, {}),
     warnings,
+    coverage: {
+      loadedSites: sites.length,
+      mineralLimit: MRDS_PAGE_SIZE * MRDS_PAGES,
+      note: "Todos los sitios devueltos por este endpoint se renderizan en el globo. La cobertura mundial depende de cada fuente y no equivale a un inventario universal de pozos.",
+    },
     sources: [
       "USGS Mineral Resources Data System (MRDS)",
       "EPA Underground Injection Control context (Class II)",
