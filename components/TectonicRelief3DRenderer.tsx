@@ -73,9 +73,8 @@ function regionalSegments(line: Pair[], region: PlateReliefRegion) {
   const result: Pair[][] = [];
   let current: Pair[] = [];
   for (const point of line) {
-    if (insideRegion(point, region)) {
-      current.push(point);
-    } else if (current.length) {
+    if (insideRegion(point, region)) current.push(point);
+    else if (current.length) {
       if (current.length >= 2) result.push(current);
       current = [];
     }
@@ -103,11 +102,30 @@ function terrainTileCount(region: PlateReliefRegion, zoom: number) {
 }
 
 function terrainZoomForRegion(region: PlateReliefRegion, isMobile: boolean) {
-  const budget = isMobile ? 12 : 24;
+  const budget = isMobile ? 10 : 20;
   for (let zoom = 6; zoom >= 1; zoom -= 1) {
     if (terrainTileCount(region, zoom) <= budget) return zoom;
   }
   return 1;
+}
+
+function gridDimensions(region: PlateReliefRegion, isMobile: boolean) {
+  const latitudeSpan = Math.max(0.1, region.north - region.south);
+  const longitudeSpan = Math.max(0.1, (region.east - region.west) * Math.max(0.12, Math.cos(((region.north + region.south) / 2) * Math.PI / 180)));
+  const aspect = clamp(longitudeSpan / latitudeSpan, 0.45, 2.8);
+  const longest = isMobile ? 90 : 140;
+  const width = aspect >= 1 ? longest : Math.max(44, Math.round(longest * aspect));
+  const height = aspect >= 1 ? Math.max(44, Math.round(longest / aspect)) : longest;
+  const sizeZ = 112;
+  const sizeX = sizeZ * aspect;
+  return { width, height, sizeX, sizeZ };
+}
+
+function createFallbackGrid(region: PlateReliefRegion, isMobile: boolean): ReliefGrid {
+  const dimensions = gridDimensions(region, isMobile);
+  const elevations = new Float32Array(dimensions.width * dimensions.height);
+  elevations.fill(-2200);
+  return { ...dimensions, elevations, terrainZoom: -1 };
 }
 
 function decodeTerrarium(red: number, green: number, blue: number) {
@@ -133,6 +151,7 @@ async function loadReliefGrid(region: PlateReliefRegion, isMobile: boolean): Pro
   const tileColumns = xMax - xMin + 1;
   const tileRows = yMax - yMin + 1;
   const worldTiles = 2 ** terrainZoom;
+  if (tileColumns <= 0 || tileRows <= 0 || tileColumns * tileRows > 32) throw new Error("La extensión de la placa requiere demasiados tiles de relieve.");
 
   const canvas = document.createElement("canvas");
   canvas.width = tileColumns * TILE_SIZE;
@@ -142,41 +161,32 @@ async function loadReliefGrid(region: PlateReliefRegion, isMobile: boolean): Pro
 
   const requests: Promise<void>[] = [];
   for (let y = yMin; y <= yMax; y += 1) {
+    if (y < 0 || y >= worldTiles) continue;
     for (let x = xMin; x <= xMax; x += 1) {
       const wrappedX = ((x % worldTiles) + worldTiles) % worldTiles;
-      requests.push(
-        loadImage(`/api/tectonic-relief/tile?z=${terrainZoom}&x=${wrappedX}&y=${y}`).then((image) => {
-          context.drawImage(image, (x - xMin) * TILE_SIZE, (y - yMin) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
-        }),
-      );
+      requests.push(loadImage(`/api/tectonic-relief/tile?z=${terrainZoom}&x=${wrappedX}&y=${y}`).then((image) => {
+        context.drawImage(image, (x - xMin) * TILE_SIZE, (y - yMin) * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+      }));
     }
   }
+  if (!requests.length) throw new Error("No hay tiles de elevación válidos para esta placa.");
   await Promise.all(requests);
 
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-  const latitudeSpan = Math.max(0.1, region.north - region.south);
-  const longitudeSpan = Math.max(0.1, (region.east - region.west) * Math.max(0.12, Math.cos(((region.north + region.south) / 2) * Math.PI / 180)));
-  const aspect = clamp(longitudeSpan / latitudeSpan, 0.45, 2.8);
-  const longestGridSide = isMobile ? 100 : 150;
-  const width = aspect >= 1 ? longestGridSide : Math.max(48, Math.round(longestGridSide * aspect));
-  const height = aspect >= 1 ? Math.max(48, Math.round(longestGridSide / aspect)) : longestGridSide;
-  const elevations = new Float32Array(width * height);
-
-  for (let row = 0; row < height; row += 1) {
-    const latitude = region.north - (row / (height - 1)) * (region.north - region.south);
+  const dimensions = gridDimensions(region, isMobile);
+  const elevations = new Float32Array(dimensions.width * dimensions.height);
+  for (let row = 0; row < dimensions.height; row += 1) {
+    const latitude = region.north - (row / (dimensions.height - 1)) * (region.north - region.south);
     const sourceY = clamp(Math.round(worldPixelY(latitude, terrainZoom) - yMin * TILE_SIZE), 0, canvas.height - 1);
-    for (let column = 0; column < width; column += 1) {
-      const longitude = region.west + (column / (width - 1)) * (region.east - region.west);
+    for (let column = 0; column < dimensions.width; column += 1) {
+      const longitude = region.west + (column / (dimensions.width - 1)) * (region.east - region.west);
       const sourceX = clamp(Math.round(worldPixelX(longitude, terrainZoom) - xMin * TILE_SIZE), 0, canvas.width - 1);
       const pixelIndex = (sourceY * canvas.width + sourceX) * 4;
       const elevation = decodeTerrarium(pixels[pixelIndex], pixels[pixelIndex + 1], pixels[pixelIndex + 2]);
-      elevations[row * width + column] = clamp(elevation, -10_500, 6_500);
+      elevations[row * dimensions.width + column] = clamp(elevation, -10_500, 6_500);
     }
   }
-
-  const sizeZ = 112;
-  const sizeX = sizeZ * aspect;
-  return { width, height, elevations, sizeX, sizeZ, terrainZoom };
+  return { ...dimensions, elevations, terrainZoom };
 }
 
 function terrainColor(elevation: number) {
@@ -236,7 +246,6 @@ function createTerrainMesh(grid: ReliefGrid, region: PlateReliefRegion) {
       colors[index * 3 + 2] = color.b;
     }
   }
-
   const indices: number[] = [];
   for (let row = 0; row < grid.height - 1; row += 1) {
     for (let column = 0; column < grid.width - 1; column += 1) {
@@ -247,21 +256,12 @@ function createTerrainMesh(grid: ReliefGrid, region: PlateReliefRegion) {
       indices.push(a, c, b, b, c, d);
     }
   }
-
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  const material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.88,
-    metalness: 0,
-    side: THREE.DoubleSide,
-  });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.receiveShadow = true;
-  return mesh;
+  return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, side: THREE.DoubleSide }));
 }
 
 function createBlockSkirt(grid: ReliefGrid, region: PlateReliefRegion) {
@@ -270,26 +270,21 @@ function createBlockSkirt(grid: ReliefGrid, region: PlateReliefRegion) {
   for (let row = 1; row < grid.height; row += 1) border.push(row * grid.width + grid.width - 1);
   for (let column = grid.width - 2; column >= 0; column -= 1) border.push((grid.height - 1) * grid.width + column);
   for (let row = grid.height - 2; row > 0; row -= 1) border.push(row * grid.width);
-
   const vertices: number[] = [];
   const indices: number[] = [];
   const bottomY = -12;
   for (let segment = 0; segment < border.length; segment += 1) {
     const next = (segment + 1) % border.length;
-    const aIndex = border[segment];
-    const bIndex = border[next];
-    const aRow = Math.floor(aIndex / grid.width);
-    const aColumn = aIndex % grid.width;
-    const bRow = Math.floor(bIndex / grid.width);
-    const bColumn = bIndex % grid.width;
-    const point = (row: number, column: number) => {
+    const point = (index: number) => {
+      const row = Math.floor(index / grid.width);
+      const column = index % grid.width;
       const longitude = region.west + column / (grid.width - 1) * (region.east - region.west);
       const latitude = region.north - row / (grid.height - 1) * (region.north - region.south);
       const scene = pointToScene(longitude, latitude, grid, region);
-      return [scene.x, grid.elevations[row * grid.width + column] * BASE_TERRAIN_Y, scene.z] as const;
+      return [scene.x, grid.elevations[index] * BASE_TERRAIN_Y, scene.z] as const;
     };
-    const a = point(aRow, aColumn);
-    const b = point(bRow, bColumn);
+    const a = point(border[segment]);
+    const b = point(border[next]);
     const base = vertices.length / 3;
     vertices.push(a[0], a[1], a[2], b[0], b[1], b[2], a[0], bottomY, a[2], b[0], bottomY, b[2]);
     indices.push(base, base + 2, base + 1, base + 1, base + 2, base + 3);
@@ -298,10 +293,7 @@ function createBlockSkirt(grid: ReliefGrid, region: PlateReliefRegion) {
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(vertices, 3));
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
-  return new THREE.Mesh(
-    geometry,
-    new THREE.MeshStandardMaterial({ color: "#10253a", roughness: 1, transparent: true, opacity: 0.96, side: THREE.DoubleSide }),
-  );
+  return new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ color: "#10253a", roughness: 1, side: THREE.DoubleSide }));
 }
 
 function createLineSegments(lines: Pair[][], grid: ReliefGrid, region: PlateReliefRegion, color: string, offset = 0.38, opacity = 0.95) {
@@ -339,12 +331,9 @@ function faultLines(features: ActiveFaultFeature[], region: PlateReliefRegion) {
     const lines: Pair[][] = [];
     coordinateLines(feature.geometry?.coordinates, lines);
     const type = (feature.properties.slipType ?? "").toLowerCase();
-    const target = type.includes("reverse") || type.includes("thrust")
-      ? groups.reverse
-      : type.includes("normal")
-        ? groups.normal
-        : type.includes("strike") || type.includes("sinistral") || type.includes("dextral")
-          ? groups.strike
+    const target = type.includes("reverse") || type.includes("thrust") ? groups.reverse
+      : type.includes("normal") ? groups.normal
+        : type.includes("strike") || type.includes("sinistral") || type.includes("dextral") ? groups.strike
           : groups.other;
     for (const line of lines) target.push(...regionalSegments(line, region));
   }
@@ -361,29 +350,25 @@ function slabLines(contours: SlabContour3D[], grid: ReliefGrid, region: PlateRel
         continue;
       }
       if (previous) {
-        const sceneA = pointToScene(previous.lng, previous.lat, grid, region);
-        const sceneB = pointToScene(point.lng, point.lat, grid, region);
+        const a = pointToScene(previous.lng, previous.lat, grid, region);
+        const b = pointToScene(point.lng, point.lat, grid, region);
         const y = -contour.depthKm * BASE_DEPTH_Y;
-        positions.push(sceneA.x, y, sceneA.z, sceneB.x, y, sceneB.z);
+        positions.push(a.x, y, a.z, b.x, y, b.z);
       }
       previous = point;
     }
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  return new THREE.LineSegments(
-    geometry,
-    new THREE.LineBasicMaterial({ color: "#d88cff", transparent: true, opacity: 0.62 }),
-  );
+  return new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: "#d88cff", transparent: true, opacity: 0.65 }));
 }
 
 function createEarthquakes(events: EarthquakeEvent[], grid: ReliefGrid, region: PlateReliefRegion, isMobile: boolean) {
-  const selected = events
-    .filter((event) => insideRegion([event.longitude, event.latitude], region, 0))
+  const selected = events.filter((event) => insideRegion([event.longitude, event.latitude], region, 0))
     .sort((a, b) => b.magnitude - a.magnitude)
-    .slice(0, isMobile ? 350 : 700);
-  const geometry = new THREE.SphereGeometry(0.78, 8, 6);
-  const material = new THREE.MeshStandardMaterial({ roughness: 0.6, metalness: 0.05, vertexColors: true });
+    .slice(0, isMobile ? 300 : 650);
+  const geometry = new THREE.SphereGeometry(0.78, 7, 5);
+  const material = new THREE.MeshBasicMaterial({ vertexColors: true });
   const mesh = new THREE.InstancedMesh(geometry, material, selected.length);
   const matrix = new THREE.Matrix4();
   const color = new THREE.Color();
@@ -401,9 +386,9 @@ function createEarthquakes(events: EarthquakeEvent[], grid: ReliefGrid, region: 
   return { mesh, count: selected.length };
 }
 
-function disposeGroup(group: THREE.Object3D) {
-  group.traverse((object) => {
-    const item = object as THREE.Mesh;
+function disposeObject(object: THREE.Object3D) {
+  object.traverse((child) => {
+    const item = child as THREE.Mesh;
     item.geometry?.dispose?.();
     const material = item.material as THREE.Material | THREE.Material[] | undefined;
     if (Array.isArray(material)) material.forEach((entry) => entry.dispose());
@@ -428,18 +413,13 @@ export function TectonicRelief3DRenderer({
   const faultGroupRef = useRef<THREE.Group | null>(null);
   const slabGroupRef = useRef<THREE.Group | null>(null);
   const quakeGroupRef = useRef<THREE.Group | null>(null);
-  const [status, setStatus] = useState("Cargando topografía y batimetría…");
+  const [status, setStatus] = useState("Preparando placa…");
   const [faultCount, setFaultCount] = useState<number | null>(null);
   const [quakeCount, setQuakeCount] = useState(0);
+  const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const region = useMemo(
-    () => computePlateReliefRegion(tectonic.platePolygons.features, plateId),
-    [plateId, tectonic.platePolygons.features],
-  );
-  const selectedPlateFeatures = useMemo(
-    () => plateFeatures(tectonic.platePolygons.features, plateId),
-    [plateId, tectonic.platePolygons.features],
-  );
+  const region = useMemo(() => computePlateReliefRegion(tectonic.platePolygons.features, plateId), [plateId, tectonic.platePolygons.features]);
+  const selectedPlateFeatures = useMemo(() => plateFeatures(tectonic.platePolygons.features, plateId), [plateId, tectonic.platePolygons.features]);
 
   useEffect(() => {
     terrainGroupRef.current?.scale.set(1, reliefExaggeration, 1);
@@ -469,44 +449,105 @@ export function TectonicRelief3DRenderer({
     let disposed = false;
     let frame = 0;
     const isMobile = window.matchMedia("(max-width: 700px)").matches;
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance", alpha: false });
+    } catch (webglError) {
+      setError(webglError instanceof Error ? webglError.message : "WebGL no está disponible.");
+      return;
+    }
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#020712");
-    scene.fog = new THREE.Fog("#020712", 240, 560);
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1200);
-    camera.position.set(155, 105, 175);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: !isMobile, powerPreference: "high-performance", alpha: false });
+    scene.fog = new THREE.Fog("#020712", 240, 600);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1400);
     renderer.setPixelRatio(isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    host.appendChild(renderer.domElement);
+    renderer.domElement.style.display = "block";
+    renderer.domElement.style.width = "100%";
+    host.replaceChildren(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance = 75;
-    controls.maxDistance = 650;
-    controls.target.set(0, -3, 0);
     controls.screenSpacePanning = true;
-
-    scene.add(new THREE.HemisphereLight("#cfe9ff", "#1c1720", 1.05));
-    const key = new THREE.DirectionalLight("#fff4d8", 1.55);
+    scene.add(new THREE.HemisphereLight("#cfe9ff", "#1c1720", 1.15));
+    const key = new THREE.DirectionalLight("#fff4d8", 1.45);
     key.position.set(-80, 150, 90);
     scene.add(key);
-    const rim = new THREE.DirectionalLight("#74b9ff", 0.55);
-    rim.position.set(120, 35, -110);
-    scene.add(rim);
+
+    const fallbackGrid = createFallbackGrid(activeRegion, isMobile);
+    const maxDimension = Math.max(fallbackGrid.sizeX, fallbackGrid.sizeZ);
+    camera.position.set(maxDimension * 1.18, maxDimension * 0.8, maxDimension * 1.35);
+    camera.far = Math.max(900, maxDimension * 8);
+    camera.updateProjectionMatrix();
+    controls.minDistance = maxDimension * 0.58;
+    controls.maxDistance = maxDimension * 4.6;
+    controls.target.set(0, -4, 0);
+    controls.update();
+
+    const replaceGroup = (oldGroup: THREE.Group | null, nextGroup: THREE.Group, ref: React.MutableRefObject<THREE.Group | null>) => {
+      if (oldGroup) {
+        scene.remove(oldGroup);
+        disposeObject(oldGroup);
+      }
+      scene.add(nextGroup);
+      ref.current = nextGroup;
+    };
+
+    const buildSurfaceGroups = (grid: ReliefGrid) => {
+      const terrain = new THREE.Group();
+      terrain.add(createTerrainMesh(grid, activeRegion));
+      terrain.add(createBlockSkirt(grid, activeRegion));
+      terrain.scale.y = reliefExaggeration;
+      replaceGroup(terrainGroupRef.current, terrain, terrainGroupRef);
+
+      const plates = new THREE.Group();
+      plates.add(createLineSegments(plateLines(tectonic.platePolygons.features, activeRegion), grid, activeRegion, "#8fa6b8", 0.5, 0.5));
+      plates.add(createLineSegments(plateLines(selectedPlateFeatures, activeRegion), grid, activeRegion, "#fff0a6", 0.86, 1));
+      plates.scale.y = reliefExaggeration;
+      plates.visible = showPlates;
+      replaceGroup(plateGroupRef.current, plates, plateGroupRef);
+      return grid;
+    };
+
+    const initialGrid = buildSurfaceGroups(fallbackGrid);
+    const slabs = new THREE.Group();
+    slabs.add(slabLines(tectonic.slabContours, initialGrid, activeRegion));
+    slabs.scale.y = depthExaggeration;
+    slabs.visible = showSlabs;
+    scene.add(slabs);
+    slabGroupRef.current = slabs;
+
+    const quakes = new THREE.Group();
+    const quakeData = createEarthquakes(earthquakes, initialGrid, activeRegion, isMobile);
+    quakes.add(quakeData.mesh);
+    quakes.scale.y = depthExaggeration;
+    quakes.visible = showEarthquakes;
+    scene.add(quakes);
+    quakeGroupRef.current = quakes;
+    setQuakeCount(quakeData.count);
+    setFaultCount(null);
+    setError(null);
+    setWarning(null);
+    setStatus(`Base visible · ${activeRegion.name} · ${selectedPlateFeatures.length} polígonos`);
 
     const resize = () => {
       const width = Math.max(320, host.clientWidth);
-      const height = isMobile ? Math.max(430, Math.min(620, width * 0.92)) : Math.max(560, Math.min(760, width * 0.64));
-      renderer.setSize(width, height, false);
+      const height = isMobile ? Math.max(470, Math.min(620, width * 1.02)) : Math.max(560, Math.min(760, width * 0.64));
+      renderer.setSize(width, height, true);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
     };
     resize();
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(host);
+
+    const onContextLost = (event: Event) => {
+      event.preventDefault();
+      if (!disposed) setError("Chrome perdió el contexto WebGL. La escena fue reducida; recarga esta pestaña para reiniciarla.");
+    };
+    renderer.domElement.addEventListener("webglcontextlost", onContextLost, false);
 
     const animate = () => {
       if (disposed) return;
@@ -516,117 +557,72 @@ export function TectonicRelief3DRenderer({
     };
     animate();
 
-    async function build() {
-      try {
-        setError(null);
-        setFaultCount(null);
-        setQuakeCount(0);
-        setStatus(`Cargando relieve de ${activeRegion.name}…`);
-        const [grid, faultsResponse] = await Promise.all([
-          loadReliefGrid(activeRegion, isMobile),
-          fetch(`/api/faults?bbox=${encodeURIComponent(faultBboxForRegion(activeRegion))}&limit=1200`, { cache: "force-cache" }),
-        ]);
+    void loadReliefGrid(activeRegion, isMobile)
+      .then((grid) => {
         if (disposed) return;
-        const faults = faultsResponse.ok ? await faultsResponse.json() as ActiveFaultCollection : null;
-
-        const maxDimension = Math.max(grid.sizeX, grid.sizeZ);
-        camera.position.set(maxDimension * 1.18, maxDimension * 0.78, maxDimension * 1.34);
-        camera.far = Math.max(900, maxDimension * 7);
-        camera.updateProjectionMatrix();
-        controls.minDistance = maxDimension * 0.62;
-        controls.maxDistance = maxDimension * 4.2;
-        controls.target.set(0, -4, 0);
-        controls.update();
-
-        const terrainGroup = new THREE.Group();
-        terrainGroup.add(createTerrainMesh(grid, activeRegion));
-        terrainGroup.add(createBlockSkirt(grid, activeRegion));
-        terrainGroup.scale.y = reliefExaggeration;
-        scene.add(terrainGroup);
-        terrainGroupRef.current = terrainGroup;
-
-        const plateGroup = new THREE.Group();
-        plateGroup.add(createLineSegments(plateLines(tectonic.platePolygons.features, activeRegion), grid, activeRegion, "#a9b8c8", 0.44, 0.52));
-        plateGroup.add(createLineSegments(plateLines(selectedPlateFeatures, activeRegion), grid, activeRegion, "#fff6d6", 0.7, 1));
-        plateGroup.scale.y = reliefExaggeration;
-        plateGroup.visible = showPlates;
-        scene.add(plateGroup);
-        plateGroupRef.current = plateGroup;
-
-        const faultGroup = new THREE.Group();
-        if (faults) {
-          const grouped = faultLines(faults.features, activeRegion);
-          faultGroup.add(createLineSegments(grouped.reverse, grid, activeRegion, "#ff4d4f", 0.66));
-          faultGroup.add(createLineSegments(grouped.normal, grid, activeRegion, "#4dd7ff", 0.63));
-          faultGroup.add(createLineSegments(grouped.strike, grid, activeRegion, "#ffbf47", 0.7));
-          faultGroup.add(createLineSegments(grouped.other, grid, activeRegion, "#e96fff", 0.62));
-          setFaultCount(faults.features.length);
-        } else {
+        buildSurfaceGroups(grid);
+        setStatus(`Relieve listo · ${activeRegion.name} · DEM z${grid.terrainZoom}`);
+        return fetch(`/api/faults?bbox=${encodeURIComponent(faultBboxForRegion(activeRegion))}&limit=1200`, { cache: "force-cache" })
+          .then(async (response) => response.ok ? await response.json() as ActiveFaultCollection : null)
+          .then((faults) => {
+            if (disposed) return;
+            const group = new THREE.Group();
+            if (faults) {
+              const grouped = faultLines(faults.features, activeRegion);
+              group.add(createLineSegments(grouped.reverse, grid, activeRegion, "#ff4d4f", 0.72));
+              group.add(createLineSegments(grouped.normal, grid, activeRegion, "#4dd7ff", 0.69));
+              group.add(createLineSegments(grouped.strike, grid, activeRegion, "#ffbf47", 0.75));
+              group.add(createLineSegments(grouped.other, grid, activeRegion, "#e96fff", 0.68));
+              setFaultCount(faults.features.length);
+            } else setFaultCount(0);
+            group.scale.y = reliefExaggeration;
+            group.visible = showFaults;
+            replaceGroup(faultGroupRef.current, group, faultGroupRef);
+          });
+      })
+      .catch((demError: unknown) => {
+        if (!disposed) {
+          setWarning(`DEM no disponible: ${demError instanceof Error ? demError.message : "error de elevación"}. Se mantiene la base tectónica plana.`);
+          setStatus(`Base tectónica visible · ${activeRegion.name}`);
           setFaultCount(0);
         }
-        faultGroup.scale.y = reliefExaggeration;
-        faultGroup.visible = showFaults;
-        scene.add(faultGroup);
-        faultGroupRef.current = faultGroup;
-
-        const slabGroup = new THREE.Group();
-        slabGroup.add(slabLines(tectonic.slabContours, grid, activeRegion));
-        slabGroup.scale.y = depthExaggeration;
-        slabGroup.visible = showSlabs;
-        scene.add(slabGroup);
-        slabGroupRef.current = slabGroup;
-
-        const quakeGroup = new THREE.Group();
-        const quakes = createEarthquakes(earthquakes, grid, activeRegion, isMobile);
-        quakeGroup.add(quakes.mesh);
-        quakeGroup.scale.y = depthExaggeration;
-        quakeGroup.visible = showEarthquakes;
-        scene.add(quakeGroup);
-        quakeGroupRef.current = quakeGroup;
-        setQuakeCount(quakes.count);
-        setStatus(`Relieve listo · DEM z${grid.terrainZoom}`);
-      } catch (buildError) {
-        if (!disposed) {
-          setStatus("No disponible");
-          setError(buildError instanceof Error ? buildError.message : "No fue posible construir el relieve 3D.");
-        }
-      }
-    }
-    void build();
+      });
 
     return () => {
       disposed = true;
       cancelAnimationFrame(frame);
       resizeObserver.disconnect();
+      renderer.domElement.removeEventListener("webglcontextlost", onContextLost);
       controls.dispose();
       terrainGroupRef.current = null;
       plateGroupRef.current = null;
       faultGroupRef.current = null;
       slabGroupRef.current = null;
       quakeGroupRef.current = null;
-      disposeGroup(scene);
+      disposeObject(scene);
       renderer.dispose();
-      renderer.domElement.remove();
+      if (host.contains(renderer.domElement)) renderer.domElement.remove();
     };
-  }, [earthquakes, plateId, region, selectedPlateFeatures, tectonic]);
+  }, [depthExaggeration, earthquakes, plateId, region, reliefExaggeration, selectedPlateFeatures, showEarthquakes, showFaults, showPlates, showSlabs, tectonic]);
 
   return (
-    <div style={{ position: "relative", minHeight: 430, overflow: "hidden", borderRadius: 18, background: "#020712" }}>
-      <div ref={containerRef} style={{ width: "100%", touchAction: "none" }} />
-      <div style={{ position: "absolute", top: 12, left: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", pointerEvents: "none" }}>
-        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.78)", border: "1px solid rgba(125,211,252,.25)", color: "#d8f2ff", fontSize: 11, fontWeight: 800 }}>{region?.name ?? "Placa"} · ID {plateId}</span>
-        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.78)", border: "1px solid rgba(255,255,255,.13)", color: "#d9e4ef", fontSize: 11 }}>{status}</span>
+    <div style={{ position: "relative", minHeight: 470, overflow: "hidden", borderRadius: 18, background: "#020712" }}>
+      <div ref={containerRef} style={{ width: "100%", minHeight: 470, touchAction: "none" }} />
+      <div style={{ position: "absolute", top: 12, left: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", maxWidth: "calc(100% - 24px)", pointerEvents: "none" }}>
+        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.84)", border: "1px solid rgba(125,211,252,.25)", color: "#d8f2ff", fontSize: 11, fontWeight: 800 }}>{region?.name ?? "Placa"} · ID {plateId} · {selectedPlateFeatures.length} polígonos</span>
+        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.84)", border: "1px solid rgba(255,255,255,.13)", color: "#d9e4ef", fontSize: 11 }}>{status}</span>
       </div>
       <div style={{ position: "absolute", bottom: 12, left: 12, right: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", pointerEvents: "none" }}>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.76)", color: "#fff6d6", fontSize: 10 }}>— placa seleccionada</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.76)", color: "#a9b8c8", fontSize: 10 }}>— placas vecinas</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.76)", color: "#ff4d4f", fontSize: 10 }}>— inversa</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.76)", color: "#4dd7ff", fontSize: 10 }}>— normal</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.76)", color: "#ffbf47", fontSize: 10 }}>— rumbo</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.76)", color: "#d88cff", fontSize: 10 }}>— Slab2</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.76)", color: "#cad8e6", fontSize: 10 }}>{faultCount === null ? "fallas…" : `${faultCount} fallas`} · {quakeCount} sismos regionales</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#fff0a6", fontSize: 10 }}>— placa seleccionada</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#8fa6b8", fontSize: 10 }}>— placas vecinas</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#ff4d4f", fontSize: 10 }}>— inversa</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#4dd7ff", fontSize: 10 }}>— normal</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#ffbf47", fontSize: 10 }}>— rumbo</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#d88cff", fontSize: 10 }}>— Slab2</span>
+        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#cad8e6", fontSize: 10 }}>{faultCount === null ? "fallas…" : `${faultCount} fallas`} · {quakeCount} sismos</span>
       </div>
-      {error && <div style={{ position: "absolute", inset: "42% 16px auto", zIndex: 5, padding: 14, borderRadius: 12, background: "rgba(64,10,20,.94)", color: "#ffd7df", fontSize: 12 }}>{error}</div>}
+      {warning && <div style={{ position: "absolute", top: 54, left: 12, right: 12, zIndex: 5, padding: 9, borderRadius: 10, background: "rgba(86,54,8,.9)", color: "#fde68a", fontSize: 11 }}>{warning}</div>}
+      {error && <div style={{ position: "absolute", inset: "42% 16px auto", zIndex: 6, padding: 14, borderRadius: 12, background: "rgba(64,10,20,.94)", color: "#ffd7df", fontSize: 12 }}>{error}</div>}
     </div>
   );
 }
