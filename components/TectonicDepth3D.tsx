@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
-import type { EarthquakeEvent, EarthquakePage } from "@/lib/earthquakes/types";
+import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
 import styles from "./TectonicDepth3D.module.css";
 
@@ -12,9 +12,14 @@ const TectonicDepth3DRenderer = dynamic(
 );
 
 const DAY_MS = 86_400_000;
-const PAGE_SIZE = 500;
-const MAX_EVENT_PAGES = 12;
 type PeriodPreset = "7" | "15" | "30" | "60" | "custom";
+
+type DepthEventsResponse = {
+  events: EarthquakeEvent[];
+  total: number;
+  warnings?: string[];
+  error?: string;
+};
 
 function todayKey() {
   return new Date().toISOString().slice(0, 10);
@@ -52,38 +57,22 @@ async function loadEarthquakes({
   minMagnitude: number;
   signal: AbortSignal;
 }) {
-  const events = new Map<string, EarthquakeEvent>();
-  let offset = 1;
-  let total = 0;
-  let hasMore = false;
-  const warnings: string[] = [];
-
-  for (let pageIndex = 0; pageIndex < MAX_EVENT_PAGES; pageIndex += 1) {
-    const params = new URLSearchParams({
-      starttime: start,
-      endtime: end,
-      minmagnitude: String(minMagnitude),
-      eventtype: "earthquake",
-      orderby: "time",
-      limit: String(PAGE_SIZE),
-      offset: String(offset),
-    });
-    const response = await fetch(`/api/earthquakes?${params}`, { cache: "no-store", signal });
-    const page = await readJson<EarthquakePage & { error?: string }>(response);
-    if (!response.ok) throw new Error(page.error ?? `HTTP ${response.status}`);
-    if (pageIndex === 0) total = page.total;
-    for (const event of page.events) events.set(event.id, event);
-    if (page.warnings?.length) warnings.push(...page.warnings);
-    hasMore = page.hasMore;
-    if (!page.hasMore || page.events.length === 0) break;
-    offset += page.events.length;
-  }
-
-  const list = [...events.values()];
-  if (hasMore || list.length < total) {
-    warnings.push(`Por rendimiento 3D se cargaron ${list.length.toLocaleString("es-DO")} de ${total.toLocaleString("es-DO")} eventos del período.`);
-  }
-  return { events: list, total, warnings: [...new Set(warnings)] };
+  const params = new URLSearchParams({
+    starttime: start,
+    endtime: end,
+    minmagnitude: String(minMagnitude),
+  });
+  const response = await fetch(`/api/tectonic-depth-3d/events?${params}`, {
+    cache: "no-store",
+    signal,
+  });
+  const payload = await readJson<DepthEventsResponse>(response);
+  if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+  return {
+    events: payload.events ?? [],
+    total: payload.total ?? payload.events?.length ?? 0,
+    warnings: payload.warnings ?? [],
+  };
 }
 
 export function TectonicDepth3D() {
@@ -138,17 +127,21 @@ export function TectonicDepth3D() {
     let disposed = false;
     async function loadEvents() {
       setLoadingEvents(true);
+      setEventError(null);
       try {
         const result = await loadEarthquakes({ ...applied, signal: controller.signal });
         if (!disposed) {
           setEarthquakes(result.events);
           setEventTotal(result.total);
           setEventWarnings(result.warnings);
-          setEventError(null);
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        if (!disposed) setEventError(error instanceof Error ? error.message : "No fue posible cargar los sismos del período.");
+        if (!disposed) {
+          setEarthquakes([]);
+          setEventTotal(0);
+          setEventError(error instanceof Error ? error.message : "No fue posible cargar los sismos del período.");
+        }
       } finally {
         if (!disposed) setLoadingEvents(false);
       }
@@ -187,7 +180,7 @@ export function TectonicDepth3D() {
           <span className={styles.eyebrow}>GPLATES + USGS SLAB2 + HIPOCENTROS</span>
           <h1>Placas tectónicas en profundidad · 3D</h1>
           <p>
-            Vista global explotada para comparar la geometría actual de las placas con las losas subducidas de Slab2 y los sismos del período escogido a su profundidad hipocentral.
+            Vista global explotada para comparar las placas actuales, las superficies de subducción Slab2 y los hipocentros del período seleccionado.
           </p>
         </div>
         <div className={styles.modelChip}>
@@ -198,7 +191,7 @@ export function TectonicDepth3D() {
       </header>
 
       <section className={styles.scienceNote}>
-        <strong>Qué significa “profundidad de placa” aquí.</strong> GPlates aporta los polígonos de todas las placas en superficie. Slab2 aporta geometría 3D solamente en zonas de subducción modeladas; por eso una placa sin losa subducida no se dibuja artificialmente cientos de kilómetros hacia abajo. La exageración vertical es solo visual.
+        <strong>Cómo leer la vista explotada.</strong> Los valores en kilómetros conservan la profundidad física de Slab2 y de cada hipocentro. Para evitar que las capas internas queden ocultas dentro de la esfera, Exploded view las separa radialmente hacia afuera; esa separación y su exageración son únicamente visuales. GPlates representa todas las placas en superficie y Slab2 añade profundidad solo donde existe una losa modelada.
       </section>
 
       <section className={styles.periodPanel} aria-label="Período sísmico">
@@ -238,23 +231,23 @@ export function TectonicDepth3D() {
       <section className={styles.metrics}>
         <article><span>Placas GPlates</span><strong>{tectonic?.platePolygons.features.length ?? "—"}</strong><small>geometría global superficial</small></article>
         <article><span>Regiones Slab2</span><strong>{tectonic?.slabRegions.length ?? "—"}</strong><small>{tectonic ? `${tectonic.slabContours.length.toLocaleString("es-DO")} contornos` : "cargando"}</small></article>
-        <article><span>Sismos 3D</span><strong>{earthquakes.length.toLocaleString("es-DO")}</strong><small>{eventTotal > earthquakes.length ? `de ${eventTotal.toLocaleString("es-DO")}` : `M${applied.minMagnitude.toFixed(1)}+`}</small></article>
-        <article><span>Máxima profundidad</span><strong>{deepestEvent ? `${deepestEvent.depthKm.toFixed(0)} km` : "—"}</strong><small>Slab2 hasta {tectonic?.slabDepthMaxKm?.toFixed(0) ?? "—"} km</small></article>
+        <article><span>Sismos 3D</span><strong>{loadingEvents ? "…" : earthquakes.length.toLocaleString("es-DO")}</strong><small>{loadingEvents ? "cargando hipocentros" : eventTotal > earthquakes.length ? `de ${eventTotal.toLocaleString("es-DO")}` : `M${applied.minMagnitude.toFixed(1)}+`}</small></article>
+        <article><span>Máxima profundidad</span><strong>{loadingEvents ? "…" : deepestEvent ? `${deepestEvent.depthKm.toFixed(0)} km` : "—"}</strong><small>Slab2 hasta {tectonic?.slabDepthMaxKm?.toFixed(0) ?? "—"} km</small></article>
       </section>
 
       <section className={styles.layerPanel}>
-        <label><input type="checkbox" checked={exploded} onChange={(event) => setExploded(event.target.checked)} /><span><strong>Exploded view</strong><small>Retira la esfera sólida para ver el interior.</small></span></label>
-        <label><input type="checkbox" checked={showPlates} onChange={(event) => setShowPlates(event.target.checked)} /><span><strong>Placas GPlates</strong><small>Piezas superficiales elevadas.</small></span></label>
-        <label><input type="checkbox" checked={showSlabs} onChange={(event) => setShowSlabs(event.target.checked)} /><span><strong>Losas Slab2</strong><small>Contornos globales a profundidad real.</small></span></label>
+        <label><input type="checkbox" checked={exploded} onChange={(event) => setExploded(event.target.checked)} /><span><strong>Exploded view</strong><small>Separa las capas profundas para hacerlas visibles.</small></span></label>
+        <label><input type="checkbox" checked={showPlates} onChange={(event) => setShowPlates(event.target.checked)} /><span><strong>Placas GPlates</strong><small>Piezas superficiales globales.</small></span></label>
+        <label><input type="checkbox" checked={showSlabs} onChange={(event) => setShowSlabs(event.target.checked)} /><span><strong>Losas Slab2</strong><small>Superficie triangulada + isolíneas de profundidad.</small></span></label>
         <label><input type="checkbox" checked={showEarthquakes} onChange={(event) => setShowEarthquakes(event.target.checked)} /><span><strong>Hipocentros</strong><small>Sismos del período aplicado.</small></span></label>
         <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} /><span><strong>Rotación</strong><small>Exploración automática lenta.</small></span></label>
       </section>
 
       <section className={styles.depthControls}>
         <label>
-          <span>Exageración de profundidad <strong>{depthExaggeration.toFixed(1)}×</strong></span>
+          <span>Exageración visual de profundidad <strong>{depthExaggeration.toFixed(1)}×</strong></span>
           <input type="range" min="1" max="8" step="0.5" value={depthExaggeration} onChange={(event) => setDepthExaggeration(Number(event.target.value))} />
-          <small>1× conserva la proporción radial del planeta; valores mayores separan visualmente los niveles.</small>
+          <small>Modifica la separación de las capas en la vista explotada; no altera los kilómetros de profundidad de Slab2 ni de los sismos.</small>
         </label>
         <label>
           <span>Zona Slab2</span>
@@ -302,12 +295,12 @@ export function TectonicDepth3D() {
         <article>
           <span>Período aplicado</span>
           <strong>{formatDate(applied.start)} → {formatDate(applied.end)}</strong>
-          <small>M{applied.minMagnitude.toFixed(1)}+ · catálogo RDSISMOS/USGS</small>
+          <small>M{applied.minMagnitude.toFixed(1)}+ · catálogo RDSISMOS</small>
         </article>
         <article>
           <span>Sismo más fuerte</span>
-          <strong>{strongestEvent ? `M${strongestEvent.magnitude.toFixed(1)}` : "—"}</strong>
-          <small>{strongestEvent ? `${strongestEvent.place} · ${strongestEvent.depthKm.toFixed(0)} km` : "Sin eventos"}</small>
+          <strong>{loadingEvents ? "…" : strongestEvent ? `M${strongestEvent.magnitude.toFixed(1)}` : "—"}</strong>
+          <small>{loadingEvents ? "cargando" : strongestEvent ? `${strongestEvent.place} · ${strongestEvent.depthKm.toFixed(0)} km` : "Sin eventos"}</small>
         </article>
         <article>
           <span>Fuentes geométricas</span>

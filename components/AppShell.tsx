@@ -55,14 +55,14 @@ export function AppShell() {
     <>
       <nav className="main-tabs" aria-label="Navegación principal">
         <button className={tab === "globe" ? "active" : ""} onClick={() => setTab("globe")}>Mapa 3D</button>
-        <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Placas 3D</button>
+        <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>ETAS Projection</button>
+        <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Placas 3D</button>
+        <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
         <button className={tab === "validation" ? "active" : ""} onClick={() => setTab("validation")}>Auto-Validación</button>
-        <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
         <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
-        <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
         <button className={tab === "lunar" ? "active" : ""} onClick={() => setTab("lunar")}>Lunar Phase Experimental</button>
         <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
         <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Acerca</button>
@@ -75,7 +75,7 @@ export function AppShell() {
         </>
       )}
 
-      {tab === "depth3d" && <TectonicDepth3D />}
+      {tab === "history" && <ProjectionHistoryPanel />}
 
       {tab === "scope" && (
         <>
@@ -117,10 +117,7 @@ export function AppShell() {
         </>
       )}
 
-      {tab === "validation" && <AutoValidationPanel />}
-      {tab === "history" && <ProjectionHistoryPanel />}
-      {tab === "heatmap" && <HistoricalHeatmap />}
-      {tab === "events" && <EarthquakeEventsDashboard key={eventsRefreshKey} />}
+      {tab === "depth3d" && <TectonicDepth3D />}
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
@@ -128,6 +125,9 @@ export function AppShell() {
           <SlabContextExplorer />
         </>
       )}
+      {tab === "validation" && <AutoValidationPanel />}
+      {tab === "heatmap" && <HistoricalHeatmap />}
+      {tab === "events" && <EarthquakeEventsDashboard key={eventsRefreshKey} />}
       {tab === "lunar" && <LunarPhaseExperimental />}
       {tab === "simulator" && <TectonicSimulator />}
       {tab === "about" && (
