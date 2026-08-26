@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
+import { computePlateReliefRegion, plateFeatures, plateNameOf } from "@/lib/plateRelief";
 import type { GeoFeature } from "@/lib/plateDynamics";
 import type { SlabContour3D, SlabSurfaceTriangle3D, TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
 import styles from "./TectonicDepth3D.module.css";
@@ -127,6 +128,7 @@ function surfaceCenter(surface: SlabSurfaceTriangle3D) {
 export function TectonicDepth3DRenderer({
   tectonic,
   earthquakes,
+  plateId,
   exploded,
   depthExaggeration,
   showPlates,
@@ -137,6 +139,7 @@ export function TectonicDepth3DRenderer({
 }: {
   tectonic: TectonicDepth3DResponse;
   earthquakes: EarthquakeEvent[];
+  plateId: string;
   exploded: boolean;
   depthExaggeration: number;
   showPlates: boolean;
@@ -157,6 +160,15 @@ export function TectonicDepth3DRenderer({
   const [selectedSlab, setSelectedSlab] = useState<SlabSurfaceTriangle3D | null>(null);
 
   const mobile = size.width < 620;
+  const selectedPlateFeatures = useMemo(
+    () => plateFeatures(tectonic.platePolygons.features, plateId),
+    [plateId, tectonic.platePolygons.features],
+  );
+  const selectedPlateName = plateId && selectedPlateFeatures.length ? plateNameOf(selectedPlateFeatures[0]) : "";
+  const selectedPlateRegion = useMemo(
+    () => plateId ? computePlateReliefRegion(tectonic.platePolygons.features, plateId) : null,
+    [plateId, tectonic.platePolygons.features],
+  );
 
   useEffect(() => {
     const element = containerRef.current;
@@ -181,11 +193,20 @@ export function TectonicDepth3DRenderer({
   }, [autoRotate, mobile]);
 
   useEffect(() => {
-    globeRef.current?.pointOfView({ lat: 15, lng: -35, altitude: mobile ? 2.65 : exploded ? 2.35 : 2.1 }, 0);
     const globe = globeRef.current as (GlobeMethods & { renderer?: () => { setPixelRatio?: (value: number) => void } }) | undefined;
     const renderer = globe?.renderer?.();
     renderer?.setPixelRatio?.(mobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
-  }, [exploded, mobile]);
+    if (selectedPlateRegion) {
+      const lat = (selectedPlateRegion.south + selectedPlateRegion.north) / 2;
+      const longitudeSpan = Math.min(340, selectedPlateRegion.east - selectedPlateRegion.west);
+      const latitudeSpan = selectedPlateRegion.north - selectedPlateRegion.south;
+      const span = Math.max(longitudeSpan, latitudeSpan);
+      const altitude = clamp(1.05 + span / 85, 1.15, mobile ? 3.1 : 2.75);
+      globeRef.current?.pointOfView({ lat, lng: selectedPlateRegion.centerLongitude, altitude }, 500);
+    } else {
+      globeRef.current?.pointOfView({ lat: 15, lng: -35, altitude: mobile ? 2.65 : exploded ? 2.35 : 2.1 }, 500);
+    }
+  }, [exploded, mobile, selectedPlateRegion]);
 
   useEffect(() => {
     if (!showSlabs || !slabRegion) {
@@ -238,13 +259,13 @@ export function TectonicDepth3DRenderer({
 
   const polygonItems = useMemo<PolygonRenderItem[]>(() => {
     const plates: PlateRenderItem[] = showPlates
-      ? tectonic.platePolygons.features.map((feature) => ({ ...feature, renderKind: "plate" as const }))
+      ? selectedPlateFeatures.map((feature) => ({ ...feature, renderKind: "plate" as const }))
       : [];
     const surfaces: SlabSurfaceRenderItem[] = showSlabs
       ? visibleSurfaceTriangles.map((surface) => ({ ...surface, renderKind: "slab-surface" as const, color: slabColor(surface.depthKm) }))
       : [];
     return [...plates, ...surfaces];
-  }, [showPlates, showSlabs, tectonic.platePolygons.features, visibleSurfaceTriangles]);
+  }, [selectedPlateFeatures, showPlates, showSlabs, visibleSurfaceTriangles]);
 
   const slabPaths = useMemo<SlabPath[]>(() => {
     if (!showSlabs) return [];
@@ -358,12 +379,13 @@ export function TectonicDepth3DRenderer({
         fontWeight: 700,
         pointerEvents: "none",
       }}>
+        {selectedPlateName ? `${selectedPlateName} · ` : "Todas las placas · "}
         {slabRegion
           ? surfaceLoading
-            ? `Cargando superficie ${slabRegion}…`
+            ? `cargando superficie ${slabRegion}…`
             : `${slabRegion}: ${visibleSurfaceTriangles.length.toLocaleString("es-DO")} caras visibles${surfaceSourceCount ? ` / ${surfaceSourceCount.toLocaleString("es-DO")} fuente` : ""}`
-          : "Modo global ligero · selecciona una Zona Slab2 para cargar su superficie 3D"}
-        {mobile ? " · interacción táctil reducida para estabilidad" : ""}
+          : "Slab2 en modo ligero"}
+        {mobile ? " · interacción táctil reducida" : ""}
       </div>
 
       {surfaceWarning && <div className={styles.surfaceStatus}>{surfaceWarning}</div>}
