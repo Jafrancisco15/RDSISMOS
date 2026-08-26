@@ -1,10 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { GeoFeature, GeoFeatureCollection, GeoGeometry } from "@/lib/plateDynamics";
-import {
-  buildSlabSurfaceTriangles,
-  type SlabContour3D,
-  type TectonicDepth3DResponse,
-} from "@/lib/tectonicDepth3d";
+import type { SlabContour3D, TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
 
 export const runtime = "nodejs";
 export const revalidate = 43_200;
@@ -101,13 +97,13 @@ function thinRing(value: unknown, maxPoints: number) {
 function simplifyGeometry(geometry: GeoGeometry | null): GeoGeometry | null {
   if (!geometry) return null;
   if (geometry.type === "Polygon" && Array.isArray(geometry.coordinates)) {
-    return { ...geometry, coordinates: geometry.coordinates.map((ring) => thinRing(ring, 260)) };
+    return { ...geometry, coordinates: geometry.coordinates.map((ring) => thinRing(ring, 220)) };
   }
   if (geometry.type === "MultiPolygon" && Array.isArray(geometry.coordinates)) {
     return {
       ...geometry,
       coordinates: geometry.coordinates.map((polygon) =>
-        Array.isArray(polygon) ? polygon.map((ring) => thinRing(ring, 220)) : polygon,
+        Array.isArray(polygon) ? polygon.map((ring) => thinRing(ring, 180)) : polygon,
       ),
     };
   }
@@ -168,11 +164,11 @@ async function fetchPlatePolygons(signal: AbortSignal): Promise<GeoFeatureCollec
 function contourParts(feature: ArcFeature) {
   const geometry = feature.geometry;
   if (!geometry || !Array.isArray(geometry.coordinates)) return [] as Pair[][];
-  if (geometry.type === "LineString") return [thinLine(geometry.coordinates, 180)];
+  if (geometry.type === "LineString") return [thinLine(geometry.coordinates, 120)];
   if (geometry.type === "MultiLineString") {
     return geometry.coordinates
       .filter(Array.isArray)
-      .map((line) => thinLine(line, 160));
+      .map((line) => thinLine(line, 110));
   }
   return [] as Pair[][];
 }
@@ -235,21 +231,16 @@ export async function GET(request: NextRequest) {
       warnings.push(slabResult.reason instanceof Error ? slabResult.reason.message : "Slab2 no está disponible temporalmente.");
     }
 
-    const mesh = buildSlabSurfaceTriangles(slabContours);
-    if (slabContours.length && !mesh.triangles.length) {
-      warnings.push("Slab2 devolvió contornos, pero no fue posible emparejar isolíneas adyacentes con seguridad para construir superficies.");
-    }
-    if (mesh.capped) {
-      warnings.push("La malla Slab2 alcanzó el límite de 22,000 triángulos para mantener la vista WebGL fluida; las isolíneas originales siguen completas.");
-    }
-
     const depths = slabContours.map((item) => item.depthKm);
     const payload: TectonicDepth3DResponse = {
       generatedAt: new Date().toISOString(),
       gplatesModel: GPLATES_MODEL,
       platePolygons: plateResult.value,
       slabContours,
-      slabSurfaceTriangles: mesh.triangles,
+      // Deliberately empty in the global payload. Shipping thousands of triangle
+      // GeoJSON objects froze mobile Chrome. A selected Slab2 region loads its
+      // surface on demand from /api/tectonic-depth-3d/surface.
+      slabSurfaceTriangles: [],
       slabRegions: [...new Set(slabContours.map((item) => item.region))].sort((a, b) => a.localeCompare(b)),
       slabDepthMinKm: depths.length ? Math.min(...depths) : null,
       slabDepthMaxKm: depths.length ? Math.max(...depths) : null,
