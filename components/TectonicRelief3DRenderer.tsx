@@ -6,9 +6,10 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { ActiveFaultCollection, ActiveFaultFeature } from "@/lib/activeFaults";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import {
-  computePlateReliefRegion,
+  computePlatesReliefRegion,
   faultBboxForRegion,
   plateFeatures,
+  plateNameOf,
   unwrapLongitude,
   type PlateReliefRegion,
 } from "@/lib/plateRelief";
@@ -18,6 +19,7 @@ import type { SlabContour3D, TectonicDepth3DResponse } from "@/lib/tectonicDepth
 const TILE_SIZE = 256;
 const BASE_TERRAIN_Y = 0.0009;
 const BASE_DEPTH_Y = 0.1;
+const SELECTED_COLORS = ["#fff0a6", "#67e8f9", "#c4b5fd", "#86efac"];
 
 type Pair = [number, number];
 type ReliefGrid = {
@@ -28,11 +30,10 @@ type ReliefGrid = {
   sizeZ: number;
   terrainZoom: number;
 };
-
 type Props = {
   tectonic: TectonicDepth3DResponse;
   earthquakes: EarthquakeEvent[];
-  plateId: string;
+  plateIds: string[];
   reliefExaggeration: number;
   depthExaggeration: number;
   showPlates: boolean;
@@ -59,6 +60,33 @@ function coordinateLines(value: unknown, output: Pair[][]) {
     return;
   }
   for (const child of value) coordinateLines(child, output);
+}
+
+function polygonOuterRings(feature: GeoFeature) {
+  const geometry = feature.geometry;
+  if (!geometry || !Array.isArray(geometry.coordinates)) return [] as Pair[][];
+  if (geometry.type === "Polygon") {
+    const ring = geometry.coordinates[0];
+    return Array.isArray(ring) ? [ring.filter(isPair).map((point) => [Number(point[0]), Number(point[1])] as Pair)] : [];
+  }
+  if (geometry.type === "MultiPolygon") {
+    const result: Pair[][] = [];
+    for (const polygon of geometry.coordinates) {
+      if (!Array.isArray(polygon) || !Array.isArray(polygon[0])) continue;
+      result.push(polygon[0].filter(isPair).map((point) => [Number(point[0]), Number(point[1])] as Pair));
+    }
+    return result;
+  }
+  return [];
+}
+
+function compactRing(ring: Pair[]) {
+  if (ring.length < 3) return [] as Pair[];
+  const result = ring.slice();
+  const first = result[0];
+  const last = result[result.length - 1];
+  if (first[0] === last[0] && first[1] === last[1]) result.pop();
+  return result;
 }
 
 function insideRegion([longitude, latitude]: Pair, region: PlateReliefRegion, margin = 0.35) {
@@ -113,9 +141,9 @@ function gridDimensions(region: PlateReliefRegion, isMobile: boolean) {
   const latitudeSpan = Math.max(0.1, region.north - region.south);
   const longitudeSpan = Math.max(0.1, (region.east - region.west) * Math.max(0.12, Math.cos(((region.north + region.south) / 2) * Math.PI / 180)));
   const aspect = clamp(longitudeSpan / latitudeSpan, 0.45, 2.8);
-  const longest = isMobile ? 90 : 140;
-  const width = aspect >= 1 ? longest : Math.max(44, Math.round(longest * aspect));
-  const height = aspect >= 1 ? Math.max(44, Math.round(longest / aspect)) : longest;
+  const longest = isMobile ? 96 : 148;
+  const width = aspect >= 1 ? longest : Math.max(46, Math.round(longest * aspect));
+  const height = aspect >= 1 ? Math.max(46, Math.round(longest / aspect)) : longest;
   const sizeZ = 112;
   const sizeX = sizeZ * aspect;
   return { width, height, sizeX, sizeZ };
@@ -151,7 +179,7 @@ async function loadReliefGrid(region: PlateReliefRegion, isMobile: boolean): Pro
   const tileColumns = xMax - xMin + 1;
   const tileRows = yMax - yMin + 1;
   const worldTiles = 2 ** terrainZoom;
-  if (tileColumns <= 0 || tileRows <= 0 || tileColumns * tileRows > 32) throw new Error("La extensión de la placa requiere demasiados tiles de relieve.");
+  if (tileColumns <= 0 || tileRows <= 0 || tileColumns * tileRows > 32) throw new Error("La extensión seleccionada requiere demasiados tiles de relieve.");
 
   const canvas = document.createElement("canvas");
   canvas.width = tileColumns * TILE_SIZE;
@@ -169,7 +197,7 @@ async function loadReliefGrid(region: PlateReliefRegion, isMobile: boolean): Pro
       }));
     }
   }
-  if (!requests.length) throw new Error("No hay tiles de elevación válidos para esta placa.");
+  if (!requests.length) throw new Error("No hay tiles de elevación válidos para esta región.");
   await Promise.all(requests);
 
   const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -325,6 +353,41 @@ function plateLines(features: GeoFeature[], region: PlateReliefRegion) {
   return result;
 }
 
+function createPlateOverlay(features: GeoFeature[], grid: ReliefGrid, region: PlateReliefRegion, color: string) {
+  const positions: number[] = [];
+  for (const feature of features) {
+    for (const sourceRing of polygonOuterRings(feature)) {
+      const ring = compactRing(sourceRing).filter((point) => insideRegion(point, region, 0.8));
+      if (ring.length < 3) continue;
+      const projected = ring.map(([lng, lat]) => {
+        const scene = pointToScene(lng, lat, grid, region);
+        return new THREE.Vector2(scene.x, scene.z);
+      });
+      let faces: number[][] = [];
+      try { faces = THREE.ShapeUtils.triangulateShape(projected, []); } catch { faces = []; }
+      for (const face of faces) {
+        for (const index of face) {
+          const [lng, lat] = ring[index];
+          const scene = pointToScene(lng, lat, grid, region);
+          const y = elevationAt(lng, lat, grid, region) * BASE_TERRAIN_Y + 0.24;
+          positions.push(scene.x, y, scene.z);
+        }
+      }
+    }
+  }
+  if (!positions.length) return new THREE.Group();
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.17, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  mesh.renderOrder = 2;
+  const group = new THREE.Group();
+  group.add(mesh);
+  return group;
+}
+
 function faultLines(features: ActiveFaultFeature[], region: PlateReliefRegion) {
   const groups = { reverse: [] as Pair[][], normal: [] as Pair[][], strike: [] as Pair[][], other: [] as Pair[][] };
   for (const feature of features) {
@@ -399,7 +462,7 @@ function disposeObject(object: THREE.Object3D) {
 export function TectonicRelief3DRenderer({
   tectonic,
   earthquakes,
-  plateId,
+  plateIds,
   reliefExaggeration,
   depthExaggeration,
   showPlates,
@@ -413,13 +476,24 @@ export function TectonicRelief3DRenderer({
   const faultGroupRef = useRef<THREE.Group | null>(null);
   const slabGroupRef = useRef<THREE.Group | null>(null);
   const quakeGroupRef = useRef<THREE.Group | null>(null);
-  const [status, setStatus] = useState("Preparando placa…");
+  const [status, setStatus] = useState("Preparando placas…");
   const [faultCount, setFaultCount] = useState<number | null>(null);
   const [quakeCount, setQuakeCount] = useState(0);
   const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const region = useMemo(() => computePlateReliefRegion(tectonic.platePolygons.features, plateId), [plateId, tectonic.platePolygons.features]);
-  const selectedPlateFeatures = useMemo(() => plateFeatures(tectonic.platePolygons.features, plateId), [plateId, tectonic.platePolygons.features]);
+
+  const activePlateIds = useMemo(() => [...new Set(plateIds.filter(Boolean))].slice(0, 4), [plateIds]);
+  const region = useMemo(() => computePlatesReliefRegion(tectonic.platePolygons.features, activePlateIds), [activePlateIds, tectonic.platePolygons.features]);
+  const selectedPlates = useMemo(() => activePlateIds.map((id, index) => {
+    const features = plateFeatures(tectonic.platePolygons.features, id);
+    return {
+      id,
+      name: features.length ? plateNameOf(features[0]) : id,
+      features,
+      color: SELECTED_COLORS[index % SELECTED_COLORS.length],
+    };
+  }), [activePlateIds, tectonic.platePolygons.features]);
+  const selectedFeatureCount = selectedPlates.reduce((sum, plate) => sum + plate.features.length, 0);
 
   useEffect(() => {
     terrainGroupRef.current?.scale.set(1, reliefExaggeration, 1);
@@ -442,7 +516,7 @@ export function TectonicRelief3DRenderer({
   useEffect(() => {
     const host = containerRef.current;
     if (!host || !region) {
-      if (!region) setError("No fue posible calcular la extensión geográfica de esta placa.");
+      if (!region) setError("No fue posible calcular la extensión combinada de las placas seleccionadas.");
       return;
     }
     const activeRegion = region;
@@ -459,8 +533,8 @@ export function TectonicRelief3DRenderer({
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#020712");
-    scene.fog = new THREE.Fog("#020712", 240, 600);
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1400);
+    scene.fog = new THREE.Fog("#020712", 260, 720);
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1600);
     renderer.setPixelRatio(isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 1.5));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.domElement.style.display = "block";
@@ -478,21 +552,21 @@ export function TectonicRelief3DRenderer({
 
     const fallbackGrid = createFallbackGrid(activeRegion, isMobile);
     const maxDimension = Math.max(fallbackGrid.sizeX, fallbackGrid.sizeZ);
-    camera.position.set(maxDimension * 1.18, maxDimension * 0.8, maxDimension * 1.35);
-    camera.far = Math.max(900, maxDimension * 8);
+    camera.position.set(maxDimension * 0.82, maxDimension * 0.58, maxDimension * 0.98);
+    camera.far = Math.max(1000, maxDimension * 9);
     camera.updateProjectionMatrix();
-    controls.minDistance = maxDimension * 0.58;
-    controls.maxDistance = maxDimension * 4.6;
-    controls.target.set(0, -4, 0);
+    controls.minDistance = maxDimension * 0.4;
+    controls.maxDistance = maxDimension * 4.8;
+    controls.target.set(0, -2, 0);
     controls.update();
 
-    const replaceGroup = (oldGroup: THREE.Group | null, nextGroup: THREE.Group, ref: React.MutableRefObject<THREE.Group | null>) => {
+    const replaceGroup = (oldGroup: THREE.Group | null, nextGroup: THREE.Group) => {
       if (oldGroup) {
         scene.remove(oldGroup);
         disposeObject(oldGroup);
       }
       scene.add(nextGroup);
-      ref.current = nextGroup;
+      return nextGroup;
     };
 
     const buildSurfaceGroups = (grid: ReliefGrid) => {
@@ -500,14 +574,19 @@ export function TectonicRelief3DRenderer({
       terrain.add(createTerrainMesh(grid, activeRegion));
       terrain.add(createBlockSkirt(grid, activeRegion));
       terrain.scale.y = reliefExaggeration;
-      replaceGroup(terrainGroupRef.current, terrain, terrainGroupRef);
+      terrainGroupRef.current = replaceGroup(terrainGroupRef.current, terrain);
 
       const plates = new THREE.Group();
-      plates.add(createLineSegments(plateLines(tectonic.platePolygons.features, activeRegion), grid, activeRegion, "#8fa6b8", 0.5, 0.5));
-      plates.add(createLineSegments(plateLines(selectedPlateFeatures, activeRegion), grid, activeRegion, "#fff0a6", 0.86, 1));
+      plates.add(createLineSegments(plateLines(tectonic.platePolygons.features, activeRegion), grid, activeRegion, "#8fa6b8", 0.5, 0.42));
+      selectedPlates.forEach((plate, index) => {
+        const overlay = createPlateOverlay(plate.features, grid, activeRegion, plate.color);
+        overlay.renderOrder = 2 + index;
+        plates.add(overlay);
+        plates.add(createLineSegments(plateLines(plate.features, activeRegion), grid, activeRegion, plate.color, 0.9 + index * 0.05, 1));
+      });
       plates.scale.y = reliefExaggeration;
       plates.visible = showPlates;
-      replaceGroup(plateGroupRef.current, plates, plateGroupRef);
+      plateGroupRef.current = replaceGroup(plateGroupRef.current, plates);
       return grid;
     };
 
@@ -530,11 +609,11 @@ export function TectonicRelief3DRenderer({
     setFaultCount(null);
     setError(null);
     setWarning(null);
-    setStatus(`Base visible · ${activeRegion.name} · ${selectedPlateFeatures.length} polígonos`);
+    setStatus(`Base visible · ${selectedPlates.length} placas · ${selectedFeatureCount} polígonos`);
 
     const resize = () => {
       const width = Math.max(320, host.clientWidth);
-      const height = isMobile ? Math.max(470, Math.min(620, width * 1.02)) : Math.max(560, Math.min(760, width * 0.64));
+      const height = isMobile ? Math.max(500, Math.min(660, width * 1.08)) : Math.max(580, Math.min(780, width * 0.68));
       renderer.setSize(width, height, true);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
@@ -545,7 +624,7 @@ export function TectonicRelief3DRenderer({
 
     const onContextLost = (event: Event) => {
       event.preventDefault();
-      if (!disposed) setError("Chrome perdió el contexto WebGL. La escena fue reducida; recarga esta pestaña para reiniciarla.");
+      if (!disposed) setError("Chrome perdió el contexto WebGL. Recarga esta pestaña para reiniciar el visor.");
     };
     renderer.domElement.addEventListener("webglcontextlost", onContextLost, false);
 
@@ -561,7 +640,7 @@ export function TectonicRelief3DRenderer({
       .then((grid) => {
         if (disposed) return;
         buildSurfaceGroups(grid);
-        setStatus(`Relieve listo · ${activeRegion.name} · DEM z${grid.terrainZoom}`);
+        setStatus(`Relieve listo · ${selectedPlates.length} placas · DEM z${grid.terrainZoom}`);
         return fetch(`/api/faults?bbox=${encodeURIComponent(faultBboxForRegion(activeRegion))}&limit=1200`, { cache: "force-cache" })
           .then(async (response) => response.ok ? await response.json() as ActiveFaultCollection : null)
           .then((faults) => {
@@ -577,13 +656,13 @@ export function TectonicRelief3DRenderer({
             } else setFaultCount(0);
             group.scale.y = reliefExaggeration;
             group.visible = showFaults;
-            replaceGroup(faultGroupRef.current, group, faultGroupRef);
+            faultGroupRef.current = replaceGroup(faultGroupRef.current, group);
           });
       })
       .catch((demError: unknown) => {
         if (!disposed) {
           setWarning(`DEM no disponible: ${demError instanceof Error ? demError.message : "error de elevación"}. Se mantiene la base tectónica plana.`);
-          setStatus(`Base tectónica visible · ${activeRegion.name}`);
+          setStatus(`Base tectónica visible · ${selectedPlates.length} placas`);
           setFaultCount(0);
         }
       });
@@ -603,25 +682,26 @@ export function TectonicRelief3DRenderer({
       renderer.dispose();
       if (host.contains(renderer.domElement)) renderer.domElement.remove();
     };
-  }, [depthExaggeration, earthquakes, plateId, region, reliefExaggeration, selectedPlateFeatures, showEarthquakes, showFaults, showPlates, showSlabs, tectonic]);
+  }, [depthExaggeration, earthquakes, region, reliefExaggeration, selectedFeatureCount, selectedPlates, showEarthquakes, showFaults, showPlates, showSlabs, tectonic]);
 
   return (
-    <div style={{ position: "relative", minHeight: 470, overflow: "hidden", borderRadius: 18, background: "#020712" }}>
-      <div ref={containerRef} style={{ width: "100%", minHeight: 470, touchAction: "none" }} />
+    <div style={{ position: "relative", minHeight: 500, overflow: "hidden", borderRadius: 18, background: "#020712" }}>
+      <div ref={containerRef} style={{ width: "100%", minHeight: 500, touchAction: "none" }} />
       <div style={{ position: "absolute", top: 12, left: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", maxWidth: "calc(100% - 24px)", pointerEvents: "none" }}>
-        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.84)", border: "1px solid rgba(125,211,252,.25)", color: "#d8f2ff", fontSize: 11, fontWeight: 800 }}>{region?.name ?? "Placa"} · ID {plateId} · {selectedPlateFeatures.length} polígonos</span>
+        <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.84)", border: "1px solid rgba(125,211,252,.25)", color: "#d8f2ff", fontSize: 11, fontWeight: 800 }}>{selectedPlates.length} placas · {selectedFeatureCount} polígonos</span>
         <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.84)", border: "1px solid rgba(255,255,255,.13)", color: "#d9e4ef", fontSize: 11 }}>{status}</span>
       </div>
+      <div style={{ position: "absolute", top: 48, left: 12, right: 12, zIndex: 4, display: "flex", gap: 6, flexWrap: "wrap", pointerEvents: "none" }}>
+        {selectedPlates.map((plate) => <span key={plate.id} style={{ padding: "5px 8px", borderRadius: 999, background: "rgba(2,7,18,.82)", border: `1px solid ${plate.color}88`, color: plate.color, fontSize: 10, fontWeight: 800 }}>{plate.name}</span>)}
+      </div>
       <div style={{ position: "absolute", bottom: 12, left: 12, right: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", pointerEvents: "none" }}>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#fff0a6", fontSize: 10 }}>— placa seleccionada</span>
-        <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#8fa6b8", fontSize: 10 }}>— placas vecinas</span>
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#ff4d4f", fontSize: 10 }}>— inversa</span>
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#4dd7ff", fontSize: 10 }}>— normal</span>
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#ffbf47", fontSize: 10 }}>— rumbo</span>
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#d88cff", fontSize: 10 }}>— Slab2</span>
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.8)", color: "#cad8e6", fontSize: 10 }}>{faultCount === null ? "fallas…" : `${faultCount} fallas`} · {quakeCount} sismos</span>
       </div>
-      {warning && <div style={{ position: "absolute", top: 54, left: 12, right: 12, zIndex: 5, padding: 9, borderRadius: 10, background: "rgba(86,54,8,.9)", color: "#fde68a", fontSize: 11 }}>{warning}</div>}
+      {warning && <div style={{ position: "absolute", top: 82, left: 12, right: 12, zIndex: 5, padding: 9, borderRadius: 10, background: "rgba(86,54,8,.9)", color: "#fde68a", fontSize: 11 }}>{warning}</div>}
       {error && <div style={{ position: "absolute", inset: "42% 16px auto", zIndex: 6, padding: 14, borderRadius: 12, background: "rgba(64,10,20,.94)", color: "#ffd7df", fontSize: 12 }}>{error}</div>}
     </div>
   );
