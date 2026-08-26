@@ -26,13 +26,13 @@ async function fetchMinerals(signal: AbortSignal): Promise<ExtractionSite[]> {
   for (let page = 0; page < MRDS_PAGES; page += 1) {
     const params = new URLSearchParams({
       where: "dev_stat IN ('Producer','Past Producer')",
-      outFields: "dep_id,site_name,dev_stat,code_list,grade",
+      outFields: "gid,dep_id,site_name,dev_stat,code_list,grade",
       returnGeometry: "true",
       outSR: "4326",
       f: "geojson",
       resultRecordCount: String(MRDS_PAGE_SIZE),
       resultOffset: String(page * MRDS_PAGE_SIZE),
-      orderByFields: "objectid_1 ASC",
+      orderByFields: "gid ASC",
     });
     const response = await fetch(`${MRDS_URL}?${params}`, {
       cache: "force-cache",
@@ -52,7 +52,7 @@ async function fetchMinerals(signal: AbortSignal): Promise<ExtractionSite[]> {
       const commodity = text(properties.code_list, "Mineral no especificado");
       const status = text(properties.dev_stat, "Estado no especificado");
       sites.push({
-        id: `mrds-${text(properties.dep_id, String(feature.id ?? `${page}-${index}`))}`,
+        id: `mrds-${text(properties.dep_id, String(properties.gid ?? feature.id ?? `${page}-${index}`))}`,
         name,
         kind: "mineral",
         latitude,
