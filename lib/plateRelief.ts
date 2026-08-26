@@ -63,15 +63,7 @@ export function plateNameOf(feature: GeoFeature) {
   return String(feature.properties?.plateName ?? `Placa ${plateIdOf(feature)}`);
 }
 
-/**
- * Stable selector key for a logical tectonic plate.
- *
- * GPlates' topology endpoint sometimes omits reconstruction_plate_id. Our API
- * historically filled those gaps with per-feature ids such as gplates-4,
- * gplates-37, etc. That made disconnected polygons belonging to the same
- * named plate appear as separate selectable plates. When the source id is
- * synthetic, group by the real plate name instead.
- */
+/** Stable selector key for a logical tectonic plate. */
 export function plateGroupIdOf(feature: GeoFeature) {
   const rawId = plateIdOf(feature);
   if (!isSyntheticPlateId(rawId)) return rawId;
@@ -82,6 +74,12 @@ export function plateGroupIdOf(feature: GeoFeature) {
 export function plateFeatures(features: GeoFeature[], plateId: string) {
   if (!plateId) return features;
   return features.filter((feature) => plateGroupIdOf(feature) === plateId);
+}
+
+export function plateFeaturesForIds(features: GeoFeature[], plateIds: string[]) {
+  if (!plateIds.length) return [];
+  const ids = new Set(plateIds);
+  return features.filter((feature) => ids.has(plateGroupIdOf(feature)));
 }
 
 export function buildPlateOptions(features: GeoFeature[]): PlateOption[] {
@@ -155,8 +153,7 @@ function minimalLongitudeInterval(longitudes: number[]) {
   return { west, east };
 }
 
-export function computePlateReliefRegion(features: GeoFeature[], plateId: string): PlateReliefRegion | null {
-  const selected = plateFeatures(features, plateId);
+function regionForFeatures(selected: GeoFeature[], regionId: string, regionName: string): PlateReliefRegion | null {
   if (!selected.length) return null;
   const points: Pair[] = [];
   for (const feature of selected) collectPairs(feature.geometry?.coordinates, points);
@@ -191,16 +188,32 @@ export function computePlateReliefRegion(features: GeoFeature[], plateId: string
     north = clamp(north + grow, -84.5, 84.5);
   }
 
-  const centerLongitude = (west + east) / 2;
   return {
-    id: plateId,
-    name: plateNameOf(selected[0]),
+    id: regionId,
+    name: regionName,
     west,
     south,
     east,
     north,
-    centerLongitude,
+    centerLongitude: (west + east) / 2,
   };
+}
+
+export function computePlateReliefRegion(features: GeoFeature[], plateId: string): PlateReliefRegion | null {
+  const selected = plateFeatures(features, plateId);
+  return regionForFeatures(selected, plateId, selected.length ? plateNameOf(selected[0]) : "Placa");
+}
+
+export function computePlatesReliefRegion(features: GeoFeature[], plateIds: string[]): PlateReliefRegion | null {
+  const uniqueIds = [...new Set(plateIds.filter(Boolean))].slice(0, 4);
+  if (!uniqueIds.length) return null;
+  const selected = plateFeaturesForIds(features, uniqueIds);
+  if (!selected.length) return null;
+  const names = uniqueIds
+    .map((id) => plateFeatures(features, id)[0])
+    .filter(Boolean)
+    .map((feature) => plateNameOf(feature));
+  return regionForFeatures(selected, uniqueIds.join("|"), names.join(" + ") || `${uniqueIds.length} placas`);
 }
 
 export function faultBboxForRegion(region: PlateReliefRegion) {
