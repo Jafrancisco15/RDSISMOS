@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
+import { buildPlateOptions, preferredReliefPlateId } from "@/lib/plateRelief";
 import type { TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
 import styles from "./TectonicDepth3D.module.css";
 
@@ -101,6 +102,8 @@ export function TectonicDepth3D() {
   const [showEarthquakes, setShowEarthquakes] = useState(true);
   const [autoRotate, setAutoRotate] = useState(false);
   const [slabRegion, setSlabRegion] = useState("");
+  const [globePlateId, setGlobePlateId] = useState("");
+  const [reliefPlateId, setReliefPlateId] = useState("");
   const [loadingGeometry, setLoadingGeometry] = useState(true);
   const [loadingEvents, setLoadingEvents] = useState(true);
   const [geometryError, setGeometryError] = useState<string | null>(null);
@@ -167,6 +170,16 @@ export function TectonicDepth3D() {
     () => earthquakes.reduce<EarthquakeEvent | null>((strongest, event) => !strongest || event.magnitude > strongest.magnitude ? event : strongest, null),
     [earthquakes],
   );
+  const plateOptions = useMemo(
+    () => buildPlateOptions(tectonic?.platePolygons.features ?? []),
+    [tectonic],
+  );
+  const reliefPlate = plateOptions.find((plate) => plate.id === reliefPlateId) ?? null;
+  const globePlate = plateOptions.find((plate) => plate.id === globePlateId) ?? null;
+
+  useEffect(() => {
+    if (!reliefPlateId && plateOptions.length) setReliefPlateId(preferredReliefPlateId(plateOptions));
+  }, [plateOptions, reliefPlateId]);
 
   function choosePreset(next: Exclude<PeriodPreset, "custom">) {
     setPeriodPreset(next);
@@ -191,28 +204,28 @@ export function TectonicDepth3D() {
           <h1>Placas tectónicas en profundidad · 3D</h1>
           <p>
             {isRelief
-              ? "Bloque topobatimétrico regional para leer el relieve del Caribe, las fallas activas, los límites de placa y los hipocentros bajo la superficie."
-              : "Vista global explotada para comparar las placas actuales, las superficies de subducción Slab2 y los hipocentros del período seleccionado."}
+              ? "Bloque topobatimétrico dinámico para explorar cualquier placa GPlates junto a fallas activas, Slab2 e hipocentros bajo la superficie."
+              : "Vista global explotada para comparar o aislar placas actuales, superficies de subducción Slab2 y los hipocentros del período seleccionado."}
           </p>
         </div>
         <div className={styles.modelChip}>
-          <span>{isRelief ? "Región inicial" : "Modelo superficial"}</span>
-          <strong>{isRelief ? "CARIBE" : tectonic?.gplatesModel ?? "ZAHIROVIC2022"}</strong>
-          <small>{isRelief ? "Puerto Rico · La Española · Antillas" : "GPlates · presente (0 Ma)"}</small>
+          <span>{isRelief ? "Placa en relieve" : "Modelo superficial"}</span>
+          <strong>{isRelief ? reliefPlate?.name ?? "Seleccionando…" : tectonic?.gplatesModel ?? "ZAHIROVIC2022"}</strong>
+          <small>{isRelief ? `GPlates ID ${reliefPlate?.id ?? "—"}` : globePlate ? `${globePlate.name} · ID ${globePlate.id}` : "GPlates · todas las placas · 0 Ma"}</small>
         </div>
       </header>
 
       <section className={styles.viewModePanel} aria-label="Modo de visualización 3D">
         <button type="button" className={!isRelief ? styles.activeViewMode : ""} onClick={() => setViewMode("globe")}>Globo</button>
         <button type="button" className={isRelief ? styles.activeViewMode : ""} onClick={() => setViewMode("relief")}>Relieve 3D</button>
-        <span>{isRelief ? "Vista regional en bloque · optimizada para móvil" : "Vista tectónica global ligera"}</span>
+        <span>{isRelief ? "Una placa por bloque · extensión calculada automáticamente" : "Todas las placas o una placa aislada"}</span>
       </section>
 
       <section className={styles.scienceNote}>
         {isRelief ? (
-          <><strong>Cómo leer el bloque de relieve.</strong> La topografía y la batimetría usan elevación real, con exageración vertical únicamente visual. Las fallas GEM y los límites de GPlates se proyectan sobre el relieve; Slab2 y los hipocentros se muestran por debajo del nivel de referencia según su profundidad. La vista inicial está limitada al Caribe para mantener una sola malla WebGL y evitar sobrecargar el navegador móvil.</>
+          <><strong>Cómo leer el bloque de relieve.</strong> La extensión cambia con la placa seleccionada. La topografía y la batimetría usan elevación real, con exageración vertical únicamente visual. Las fallas GEM y los límites GPlates se proyectan sobre el relieve; Slab2 y los hipocentros se muestran debajo cuando existen datos en esa región. En placas muy grandes la resolución del terreno baja automáticamente para mantener estable WebGL en móvil.</>
         ) : (
-          <><strong>Cómo leer la vista explotada.</strong> Los valores en kilómetros conservan la profundidad física de Slab2 y de cada hipocentro. Para evitar que las capas internas queden ocultas dentro de la esfera, Exploded view las separa radialmente hacia afuera; esa separación y su exageración son únicamente visuales. GPlates representa todas las placas en superficie y Slab2 añade profundidad solo donde existe una losa modelada.</>
+          <><strong>Cómo leer la vista explotada.</strong> Puedes mostrar todas las placas o aislar una desde el selector de placa. Los valores en kilómetros conservan la profundidad física de Slab2 y de cada hipocentro. Exploded view separa radialmente las capas profundas para hacerlas visibles; esa separación es únicamente visual.</>
         )}
       </section>
 
@@ -251,7 +264,7 @@ export function TectonicDepth3D() {
       </section>
 
       <section className={styles.metrics}>
-        <article><span>Placas GPlates</span><strong>{tectonic?.platePolygons.features.length ?? "—"}</strong><small>{isRelief ? "límites proyectados sobre relieve" : "geometría global superficial"}</small></article>
+        <article><span>Placas GPlates</span><strong>{plateOptions.length || "—"}</strong><small>{isRelief ? reliefPlate?.name ?? "seleccionando placa" : globePlate ? `mostrando ${globePlate.name}` : "todas disponibles"}</small></article>
         <article><span>Regiones Slab2</span><strong>{tectonic?.slabRegions.length ?? "—"}</strong><small>{tectonic ? `${tectonic.slabContours.length.toLocaleString("es-DO")} contornos` : "cargando"}</small></article>
         <article><span>Sismos 3D</span><strong>{loadingEvents ? "…" : earthquakes.length.toLocaleString("es-DO")}</strong><small>{loadingEvents ? "cargando hipocentros" : eventTotal > earthquakes.length ? `de ${eventTotal.toLocaleString("es-DO")}` : `M${applied.minMagnitude.toFixed(1)}+`}</small></article>
         <article><span>Máxima profundidad</span><strong>{loadingEvents ? "…" : deepestEvent ? `${deepestEvent.depthKm.toFixed(0)} km` : "—"}</strong><small>Slab2 hasta {tectonic?.slabDepthMaxKm?.toFixed(0) ?? "—"} km</small></article>
@@ -259,9 +272,9 @@ export function TectonicDepth3D() {
 
       <section className={styles.layerPanel}>
         {!isRelief && <label><input type="checkbox" checked={exploded} onChange={(event) => setExploded(event.target.checked)} /><span><strong>Exploded view</strong><small>Separa las capas profundas para hacerlas visibles.</small></span></label>}
-        <label><input type="checkbox" checked={showPlates} onChange={(event) => setShowPlates(event.target.checked)} /><span><strong>Placas GPlates</strong><small>{isRelief ? "Límites blancos sobre el relieve." : "Piezas superficiales globales."}</small></span></label>
+        <label><input type="checkbox" checked={showPlates} onChange={(event) => setShowPlates(event.target.checked)} /><span><strong>Placas GPlates</strong><small>{isRelief ? "Límite de la placa seleccionada y vecinas visibles." : globePlate ? `Solo ${globePlate.name}.` : "Todas las piezas superficiales."}</small></span></label>
         {isRelief && <label><input type="checkbox" checked={showFaults} onChange={(event) => setShowFaults(event.target.checked)} /><span><strong>Fallas activas</strong><small>GEM · trazas ajustadas al relieve.</small></span></label>}
-        <label><input type="checkbox" checked={showSlabs} onChange={(event) => setShowSlabs(event.target.checked)} /><span><strong>Losas Slab2</strong><small>{isRelief ? "Contornos bajo el bloque topográfico." : "Superficie triangulada + isolíneas de profundidad."}</small></span></label>
+        <label><input type="checkbox" checked={showSlabs} onChange={(event) => setShowSlabs(event.target.checked)} /><span><strong>Losas Slab2</strong><small>{isRelief ? "Contornos presentes en la placa seleccionada." : "Superficie triangulada + isolíneas de profundidad."}</small></span></label>
         <label><input type="checkbox" checked={showEarthquakes} onChange={(event) => setShowEarthquakes(event.target.checked)} /><span><strong>Hipocentros</strong><small>Sismos del período aplicado.</small></span></label>
         {!isRelief && <label><input type="checkbox" checked={autoRotate} onChange={(event) => setAutoRotate(event.target.checked)} /><span><strong>Rotación</strong><small>Exploración automática lenta.</small></span></label>}
       </section>
@@ -269,6 +282,13 @@ export function TectonicDepth3D() {
       <section className={styles.depthControls}>
         {isRelief ? (
           <>
+            <label>
+              <span>Placa para Relieve 3D</span>
+              <select value={reliefPlateId} onChange={(event) => setReliefPlateId(event.target.value)} disabled={!plateOptions.length}>
+                {plateOptions.map((plate) => <option value={plate.id} key={plate.id}>{plate.name} · ID {plate.id}</option>)}
+              </select>
+              <small>El bloque topobatimétrico se recalcula para la extensión de la placa elegida.</small>
+            </label>
             <label>
               <span>Exageración del relieve <strong>{reliefExaggeration.toFixed(1)}×</strong></span>
               <input type="range" min="1" max="6" step="0.5" value={reliefExaggeration} onChange={(event) => setReliefExaggeration(Number(event.target.value))} />
@@ -283,9 +303,17 @@ export function TectonicDepth3D() {
         ) : (
           <>
             <label>
+              <span>Placa GPlates visible</span>
+              <select value={globePlateId} onChange={(event) => setGlobePlateId(event.target.value)} disabled={!plateOptions.length}>
+                <option value="">Todas las placas</option>
+                {plateOptions.map((plate) => <option value={plate.id} key={plate.id}>{plate.name} · ID {plate.id}</option>)}
+              </select>
+              <small>Aísla una placa sin ocultar necesariamente Slab2 ni los sismos.</small>
+            </label>
+            <label>
               <span>Exageración visual de profundidad <strong>{depthExaggeration.toFixed(1)}×</strong></span>
               <input type="range" min="1" max="8" step="0.5" value={depthExaggeration} onChange={(event) => setDepthExaggeration(Number(event.target.value))} />
-              <small>Modifica la separación de las capas en la vista explotada; no altera los kilómetros de profundidad de Slab2 ni de los sismos.</small>
+              <small>Modifica la separación visual; no altera los kilómetros de profundidad.</small>
             </label>
             <label>
               <span>Zona Slab2</span>
@@ -306,7 +334,7 @@ export function TectonicDepth3D() {
         <div className={styles.viewerHead}>
           <div>
             <span className={styles.eyebrow}>{isRelief ? "BLOQUE TOPOBATIMÉTRICO" : "VISTA RADIAL EXPLOTADA"}</span>
-            <h2>{isRelief ? "Relieve → fallas → Slab2 → hipocentros" : "Superficie → subducción → hipocentros"}</h2>
+            <h2>{isRelief ? `${reliefPlate?.name ?? "Placa"} · relieve → fallas → Slab2 → hipocentros` : globePlate ? `${globePlate.name} → subducción → hipocentros` : "Superficie → subducción → hipocentros"}</h2>
           </div>
           <div className={styles.legend}>
             <span><i className={styles.shallow} /> 0–70 km</span>
@@ -318,20 +346,24 @@ export function TectonicDepth3D() {
           <div className={styles.loading}>Descargando geometría GPlates y Slab2…</div>
         ) : tectonic ? (
           isRelief ? (
-            <TectonicRelief3DRenderer
-              tectonic={tectonic}
-              earthquakes={earthquakes}
-              reliefExaggeration={reliefExaggeration}
-              depthExaggeration={depthExaggeration}
-              showPlates={showPlates}
-              showFaults={showFaults}
-              showSlabs={showSlabs}
-              showEarthquakes={showEarthquakes}
-            />
+            reliefPlateId ? (
+              <TectonicRelief3DRenderer
+                tectonic={tectonic}
+                earthquakes={earthquakes}
+                plateId={reliefPlateId}
+                reliefExaggeration={reliefExaggeration}
+                depthExaggeration={depthExaggeration}
+                showPlates={showPlates}
+                showFaults={showFaults}
+                showSlabs={showSlabs}
+                showEarthquakes={showEarthquakes}
+              />
+            ) : <div className={styles.loading}>Seleccionando placa para el relieve…</div>
           ) : (
             <TectonicDepth3DRenderer
               tectonic={tectonic}
               earthquakes={earthquakes}
+              plateId={globePlateId}
               exploded={exploded}
               depthExaggeration={depthExaggeration}
               showPlates={showPlates}
