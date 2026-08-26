@@ -38,6 +38,23 @@ function collectPairs(value: unknown, output: Pair[]) {
   for (const child of value) collectPairs(child, output);
 }
 
+function normalizePlateName(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\bplate\b/g, "")
+    .replace(/\bplaca\b/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function isSyntheticPlateId(value: string) {
+  return /^gplates-\d+$/i.test(value)
+    || /^plate-\d+$/i.test(value)
+    || /^unknown$/i.test(value);
+}
+
 export function plateIdOf(feature: GeoFeature) {
   return String(feature.properties?.plateId ?? feature.id ?? "unknown");
 }
@@ -46,15 +63,31 @@ export function plateNameOf(feature: GeoFeature) {
   return String(feature.properties?.plateName ?? `Placa ${plateIdOf(feature)}`);
 }
 
+/**
+ * Stable selector key for a logical tectonic plate.
+ *
+ * GPlates' topology endpoint sometimes omits reconstruction_plate_id. Our API
+ * historically filled those gaps with per-feature ids such as gplates-4,
+ * gplates-37, etc. That made disconnected polygons belonging to the same
+ * named plate appear as separate selectable plates. When the source id is
+ * synthetic, group by the real plate name instead.
+ */
+export function plateGroupIdOf(feature: GeoFeature) {
+  const rawId = plateIdOf(feature);
+  if (!isSyntheticPlateId(rawId)) return rawId;
+  const slug = normalizePlateName(plateNameOf(feature));
+  return slug ? `name:${slug}` : rawId;
+}
+
 export function plateFeatures(features: GeoFeature[], plateId: string) {
   if (!plateId) return features;
-  return features.filter((feature) => plateIdOf(feature) === plateId);
+  return features.filter((feature) => plateGroupIdOf(feature) === plateId);
 }
 
 export function buildPlateOptions(features: GeoFeature[]): PlateOption[] {
   const grouped = new Map<string, PlateOption>();
   for (const feature of features) {
-    const id = plateIdOf(feature);
+    const id = plateGroupIdOf(feature);
     const name = plateNameOf(feature);
     const current = grouped.get(id);
     if (current) current.featureCount += 1;
