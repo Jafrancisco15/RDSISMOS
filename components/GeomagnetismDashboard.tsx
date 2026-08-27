@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { MagneticAnomalyPoint, MagneticLocalityMetrics } from "@/lib/geomagnetism";
 import { readJsonResponse } from "@/lib/safeFetchJson";
+import { FreundExperimentalPanel } from "./FreundExperimentalPanel";
 import { GeomagnetismMap2D } from "./GeomagnetismMap2D";
 
 type Station = {
@@ -231,6 +232,8 @@ export function GeomagnetismDashboard() {
       <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 5 }}>El mapa base y el catálogo de estaciones permanecen disponibles aunque falle temporalmente una serie magnética.</div>
     </section>}
 
+    <FreundExperimentalPanel metrics={metrics} event={selectedEvent} />
+
     {metrics && <>
       <section style={{ ...panel, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 9 }}>
         <article><div style={{ color: "#a5b4fc", fontSize: 10, fontWeight: 900 }}>LOCAL MAGNETIC ANOMALY SCORE</div><strong style={{ color: "white", fontSize: 30 }}>{metrics.localityScore}/100</strong><div style={{ color: "#cbd5e1", fontSize: 11 }}>{scoreLabel(metrics.localityScore)}</div></article>
@@ -251,7 +254,7 @@ export function GeomagnetismDashboard() {
     </>}
 
     <section style={{ ...panel, color: "#94a3b8", fontSize: 10, lineHeight: 1.55 }}>
-      <strong style={{ color: "#cbd5e1" }}>Método y límites.</strong> El módulo usa el USGS Geomagnetism Data Web Service a 60 s. Prioriza XYZF adjusted; si no está disponible usa HDZF variation y convierte H/D a X/Y. Cada estación se centra por su mediana; la mediana de las referencias estima la señal común y se resta de la estación objetivo. El score combina robust z, persistencia, baja coherencia con controles, dB/dt y un proxy Z/H, con penalización por Kp de GFZ. No es un análisis espectral ULF completo y no valida predicción sísmica.
+      <strong style={{ color: "#cbd5e1" }}>Método y límites.</strong> El módulo usa el USGS Geomagnetism Data Web Service a 60 s. Prioriza XYZF adjusted; si no está disponible usa HDZF variation y convierte H/D a X/Y. Cada estación se centra por su mediana; la mediana de las referencias estima la señal común y se resta de la estación objetivo. El score combina robust z, persistencia, baja coherencia con controles, dB/dt y un proxy Z/H, con penalización por Kp de GFZ. La prueba Freund reutiliza esas métricas únicamente como índice de compatibilidad magnética experimental; no mide p-holes directamente. No es un análisis espectral ULF completo y no valida predicción sísmica.
     </section>
   </main>;
 }
