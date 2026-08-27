@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { GeomagneticModelState, GeomagneticOutcome } from "@/lib/geomagneticProjection";
 import type { GeomagneticTrialRow } from "@/lib/geomagneticLearningStore";
+import { readJsonResponse } from "@/lib/safeFetchJson";
 
 type Payload = {
   available: boolean;
@@ -28,11 +29,12 @@ export function GeomagneticProjectionPanel() {
     setLoading(true); setError(null);
     try {
       const response = await fetch(`/api/geomagnetism/projections?limit=80&_=${Date.now()}`, { cache: "no-store" });
-      const payload = await response.json() as Payload & { error?: string };
+      const payload = await readJsonResponse<Payload & { error?: string }>(response);
       if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
       setData(payload);
-    } catch (err) { setError(err instanceof Error ? err.message : "No fue posible cargar el ledger prospectivo."); }
-    finally { setLoading(false); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No fue posible cargar el ledger prospectivo.");
+    } finally { setLoading(false); }
   }, []);
 
   useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 5 * 60_000); return () => window.clearInterval(timer); }, [load]);
@@ -53,7 +55,7 @@ export function GeomagneticProjectionPanel() {
     </header>
 
     {loading && !data && <div style={panel}>Cargando ledger prospectivo…</div>}
-    {error && <div style={{ ...panel, color: "#fca5a5" }}>{error}</div>}
+    {error && <div style={{ ...panel, color: "#fca5a5" }}><strong>No se pudo leer el ledger.</strong><div style={{ marginTop: 4, fontSize: 11 }}>{error}</div><button type="button" onClick={() => void load()} style={{ marginTop: 8, border: "1px solid #4338ca", borderRadius: 9, background: "#1e1b4b", color: "white", padding: "6px 9px" }}>Reintentar</button></div>}
     {data && !data.available && <div style={{ ...panel, color: "#fde68a" }}><strong>Aprendizaje prospectivo no disponible.</strong><div style={{ fontSize: 11, marginTop: 4 }}>{data.message}</div></div>}
 
     {data?.available && model && <>
