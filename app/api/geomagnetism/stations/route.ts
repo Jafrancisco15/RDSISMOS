@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
+import { parseIntermagnetCapabilitiesText, type IntermagnetObservatoryMeta } from "@/lib/intermagnetStations";
 
 export const runtime = "nodejs";
 export const revalidate = 43_200;
 export const maxDuration = 30;
 
 const CATALOG_URL = "https://imag-data.bgs.ac.uk/GIN_V1/hapi/catalog";
-const CAPABILITIES_URL = "https://imag-data.bgs.ac.uk/GIN_V1/GINServices?Request=GetCapabilities&format=html";
+const CAPABILITIES_URLS = [
+  "https://imag-data.bgs.ac.uk/GIN_V1/GINServices?Request=GetCapabilities&format=json",
+  "https://imag-data.bgs.ac.uk/GIN_V1/GINServices?Request=GetCapabilities&format=html",
+];
 
 type HapiCatalog = { catalog?: Array<{ id?: string; title?: string }> };
 
@@ -19,7 +23,16 @@ type Station = {
   elevationM: number | null;
 };
 
-type ObservatoryMeta = { name: string; latitude: number; longitude: number; elevationM: number | null };
+const CORE_FALLBACK: Record<string, IntermagnetObservatoryMeta> = {
+  SJG: { name: "San Juan, USA", latitude: 18.110, longitude: -66.150, elevationM: 424 },
+  KOU: { name: "Kourou, Guyana, France", latitude: 5.210, longitude: -52.730, elevationM: 10 },
+  TTB: { name: "Tatuoca, Brazil", latitude: -1.205, longitude: -48.513, elevationM: 10 },
+  MBO: { name: "Mbour, Senegal", latitude: 14.390, longitude: -16.960, elevationM: 7 },
+  BOU: { name: "Boulder, USA", latitude: 40.140, longitude: -105.233, elevationM: 1682 },
+  FRD: { name: "Fredericksburg, USA", latitude: 38.210, longitude: -77.367, elevationM: 69 },
+  HON: { name: "Honolulu, USA", latitude: 21.320, longitude: -158.000, elevationM: 4 },
+  GUA: { name: "Guam, USA", latitude: 13.590, longitude: 144.870, elevationM: 140 },
+};
 
 function stationName(title: string | undefined, code: string) {
   if (!title) return code.toUpperCase();
@@ -37,59 +50,42 @@ function rank(id: string) {
   return 99;
 }
 
-function plainHtml(value: string) {
-  return value
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&quot;/gi, '"')
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeLongitude(value: number) {
-  let longitude = value;
-  while (longitude > 180) longitude -= 360;
-  while (longitude < -180) longitude += 360;
-  return longitude;
-}
-
-function parseCapabilitiesHtml(html: string) {
-  const result = new Map<string, ObservatoryMeta>();
-  const rows = html.match(/<tr\b[\s\S]*?<\/tr>/gi) ?? [];
-  for (const row of rows) {
-    const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((match) => plainHtml(match[1]));
-    if (cells.length < 4) continue;
-    const code = cells[0].toUpperCase();
-    if (!/^[A-Z0-9]{3}$/.test(code)) continue;
-    const latitude = Number(cells[2]);
-    const rawLongitude = Number(cells[3]);
-    const elevation = cells.length > 4 ? Number(cells[4]) : NaN;
-    if (!Number.isFinite(latitude) || !Number.isFinite(rawLongitude)) continue;
-    result.set(code, {
-      name: cells[1] || code,
-      latitude,
-      longitude: normalizeLongitude(rawLongitude),
-      elevationM: Number.isFinite(elevation) ? elevation : null,
-    });
+async function fetchCapabilities(signal: AbortSignal) {
+  const errors: string[] = [];
+  for (const url of CAPABILITIES_URLS) {
+    try {
+      const response = await fetch(url, {
+        signal,
+        next: { revalidate: 43_200 },
+        headers: {
+          Accept: url.endsWith("json") ? "application/json,text/xml,text/plain;q=0.8" : "text/html,text/plain;q=0.8",
+          "User-Agent": "RDSISMOS/1.0",
+        },
+      });
+      if (!response.ok) {
+        errors.push(`${url.includes("format=json") ? "JSON" : "HTML"}: HTTP ${response.status}`);
+        continue;
+      }
+      const text = await response.text();
+      const parsed = parseIntermagnetCapabilitiesText(text);
+      if (parsed.size) return { stations: parsed, source: url.includes("format=json") ? "GIN GetCapabilities JSON" : "GIN GetCapabilities HTML", warnings: errors };
+      errors.push(`${url.includes("format=json") ? "JSON" : "HTML"}: 0 observatorios parseados`);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "error de GetCapabilities");
+    }
   }
-  return result;
+  return { stations: new Map<string, IntermagnetObservatoryMeta>(), source: "fallback", warnings: errors };
 }
 
 export async function GET(request: Request) {
   try {
-    const [catalogResponse, capabilitiesResult] = await Promise.all([
+    const [catalogResponse, capabilities] = await Promise.all([
       fetch(CATALOG_URL, {
         signal: request.signal,
         next: { revalidate: 43_200 },
         headers: { Accept: "application/json", "User-Agent": "RDSISMOS/1.0" },
       }),
-      fetch(CAPABILITIES_URL, {
-        signal: request.signal,
-        next: { revalidate: 43_200 },
-        headers: { Accept: "text/html", "User-Agent": "RDSISMOS/1.0" },
-      }).then(async (response) => response.ok ? parseCapabilitiesHtml(await response.text()) : new Map<string, ObservatoryMeta>()).catch(() => new Map<string, ObservatoryMeta>()),
+      fetchCapabilities(request.signal),
     ]);
 
     if (!catalogResponse.ok) throw new Error(`INTERMAGNET HAPI respondió HTTP ${catalogResponse.status}.`);
@@ -133,7 +129,7 @@ export async function GET(request: Request) {
       .filter(([, value]) => Boolean(value.minuteDatasetId))
       .map(([code, value]) => {
         const upper = code.toUpperCase();
-        const meta = capabilitiesResult.get(upper);
+        const meta = capabilities.stations.get(upper) ?? CORE_FALLBACK[upper];
         return {
           code: upper,
           name: meta?.name ?? value.name,
@@ -147,11 +143,16 @@ export async function GET(request: Request) {
       .sort((a, b) => a.name.localeCompare(b.name));
 
     const mapped = stations.filter((station) => station.latitude !== null && station.longitude !== null).length;
+    const usedCoreFallback = capabilities.stations.size === 0 && mapped > 0;
     return NextResponse.json({
       stations,
       count: stations.length,
       mappedCount: mapped,
-      source: "INTERMAGNET HAPI catalog + GIN GetCapabilities",
+      capabilitiesCount: capabilities.stations.size,
+      source: `INTERMAGNET HAPI catalog + ${usedCoreFallback ? "core coordinate fallback" : capabilities.source}`,
+      warnings: usedCoreFallback
+        ? [...capabilities.warnings, "GetCapabilities no pudo georreferenciar el catálogo; se muestran al menos las estaciones núcleo monitorizadas con coordenadas oficiales conocidas."]
+        : capabilities.warnings,
       generatedAt: new Date().toISOString(),
       licenseNote: "INTERMAGNET data are generally CC BY-NC 4.0 unless an institute states otherwise.",
     }, { headers: { "Cache-Control": "public, s-maxage=43200, stale-while-revalidate=604800" } });
