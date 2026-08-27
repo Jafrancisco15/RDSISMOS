@@ -32,10 +32,10 @@ export function GeomagnetismLeafletMap({ stations, targetCode, referenceCodes, e
   const references = new Set(referenceCodes);
 
   return <div style={{ borderRadius: 14, overflow: "hidden", border: "1px solid rgba(56,189,248,.2)", background: "#07131f" }}>
-    <MapContainer center={[15, -25]} zoom={2} minZoom={2} worldCopyJump style={{ height: "clamp(430px,64vh,680px)", width: "100%" }}>
+    <MapContainer center={[24, -75]} zoom={2} minZoom={2} worldCopyJump style={{ height: "clamp(430px,64vh,680px)", width: "100%" }}>
       <FocusSelection station={target} event={selectedEvent} />
       <TileLayer
-        attribution="Tiles © Esri — INTERMAGNET stations — USGS/ComCat earthquakes"
+        attribution="Tiles © Esri — USGS Geomagnetism observatories — USGS/ComCat earthquakes"
         url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
         maxZoom={18}
       />
@@ -47,17 +47,18 @@ export function GeomagnetismLeafletMap({ stations, targetCode, referenceCodes, e
         return <CircleMarker
           key={station.code}
           center={[station.latitude!, station.longitude!]}
-          radius={isTarget ? 8 : isReference ? 6 : 4}
+          radius={isTarget ? 8 : isReference ? 6 : 5}
           eventHandlers={{ click: () => onStationSelect(station.code) }}
-          pathOptions={{ color, fillColor: color, fillOpacity: isTarget ? 0.95 : 0.72, weight: isTarget ? 3 : 1 }}
+          pathOptions={{ color, fillColor: color, fillOpacity: isTarget ? 0.95 : 0.78, weight: isTarget ? 3 : 1.5 }}
         >
           <Tooltip direction="top" offset={[0, -4]} opacity={0.92}>{station.code} · {station.name}</Tooltip>
           <Popup>
             <strong>{station.code} · {station.name}</strong><br />
-            INTERMAGNET observatory<br />
+            {station.dataSource ?? "USGS Geomagnetism observatory"}<br />
+            {station.country ? <>{station.country}<br /></> : null}
             {station.latitude!.toFixed(3)}, {station.longitude!.toFixed(3)}<br />
             {station.elevationM !== null && station.elevationM !== undefined ? `Elevación: ${station.elevationM.toFixed(0)} m` : ""}
-            {station.hasOneSecond ? <><br />Datos de 1 s disponibles en el catálogo</> : null}
+            {station.hasOneSecond ? <><br />Webservice USGS: 1 s / 60 s según producto</> : null}
           </Popup>
         </CircleMarker>;
       })}
@@ -86,11 +87,11 @@ export function GeomagnetismLeafletMap({ stations, targetCode, referenceCodes, e
     <div style={{ display: "flex", gap: 13, flexWrap: "wrap", padding: "8px 10px", color: "#cbd5e1", fontSize: 10, background: "rgba(2,8,18,.94)" }}>
       <span><b style={{ color: "#fde047" }}>●</b> objetivo</span>
       <span><b style={{ color: "#22d3ee" }}>●</b> referencias</span>
-      <span><b style={{ color: "#38bdf8" }}>●</b> estaciones INTERMAGNET</span>
+      <span><b style={{ color: "#38bdf8" }}>●</b> observatorios USGS</span>
       <span><b style={{ color: "#ef4444" }}>●</b> sismo cortical</span>
       <span><b style={{ color: "#f97316" }}>●</b> 70–300 km</span>
       <span><b style={{ color: "#8b5cf6" }}>●</b> &gt;300 km</span>
-      <span>{mappedStations.length} estaciones · {events.length} sismos en el período</span>
+      <span>{mappedStations.length} estaciones USGS · {events.length} sismos en el período</span>
     </div>
   </div>;
 }

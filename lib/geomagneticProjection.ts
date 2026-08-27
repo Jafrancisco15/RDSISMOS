@@ -49,15 +49,14 @@ export const DEFAULT_GEOMAGNETIC_MODEL: Omit<GeomagneticModelState, "updatedAt">
   calibrationReason: "Parámetros iniciales del experimento prospectivo.",
 };
 
-// Initial prospective network. Longitudes are normalized to -180..180.
-// Coordinates come from INTERMAGNET GIN observatory metadata.
+// Prospective network restricted to observatories served directly by the USGS Geomagnetism web service.
 export const MONITORED_MAGNETIC_STATIONS: MonitoredMagneticStation[] = [
-  { code: "SJG", name: "San Juan", latitude: 18.11, longitude: -66.15, references: ["KOU", "TTB", "FRD"] },
-  { code: "KOU", name: "Kourou", latitude: 5.21, longitude: -52.73, references: ["SJG", "TTB", "FRD"] },
-  { code: "BOU", name: "Boulder", latitude: 40.14, longitude: -105.233, references: ["FRD", "HON", "SJG"] },
-  { code: "FRD", name: "Fredericksburg", latitude: 38.21, longitude: -77.367, references: ["BOU", "SJG", "KOU"] },
-  { code: "HON", name: "Honolulu", latitude: 21.32, longitude: -158, references: ["GUA", "BOU", "SJG"] },
-  { code: "GUA", name: "Guam", latitude: 13.59, longitude: 144.87, references: ["HON", "BOU", "SJG"] },
+  { code: "SJG", name: "San Juan (Cayey)", latitude: 18.111, longitude: -66.1498, references: ["FRD", "BOU", "HON"] },
+  { code: "BOU", name: "Boulder", latitude: 40.137, longitude: -105.237, references: ["FRD", "HON", "SJG"] },
+  { code: "FRD", name: "Fredericksburg", latitude: 38.205, longitude: -77.373, references: ["BOU", "SJG", "HON"] },
+  { code: "HON", name: "Honolulu", latitude: 21.320, longitude: -158.000, references: ["GUA", "BOU", "SJG"] },
+  { code: "GUA", name: "Guam", latitude: 13.590, longitude: 144.870, references: ["HON", "BOU", "SJG"] },
+  { code: "CMO", name: "College", latitude: 64.874, longitude: -147.860, references: ["BOU", "HON", "FRD"] },
 ];
 
 export function classifyGeomagneticTrial(emitted: boolean, occurred: boolean): GeomagneticOutcome {
@@ -83,7 +82,6 @@ function confusionAtThreshold(trials: EvaluatedGeomagneticTrial[], threshold: nu
   const tpr = tp + fn ? tp / (tp + fn) : 0;
   const fpr = fp + tn ? fp / (fp + tn) : 0;
   const precision = tp + fp ? tp / (tp + fp) : 0;
-  // Youden J rewards discrimination; the precision term discourages alarm flooding.
   const skill = (tpr - fpr) + 0.2 * precision;
   return { tp, fp, tn, fn, tpr, fpr, precision, skill };
 }
@@ -118,7 +116,6 @@ export function calibrateGeomagneticThreshold(
     }
   }
 
-  // Prevent a small sample from moving the live model too abruptly.
   const target = Math.max(35, Math.min(85, best.threshold));
   const moved = Math.max(currentThreshold - 3, Math.min(currentThreshold + 3, target));
   const threshold = Math.round(moved * 10) / 10;
