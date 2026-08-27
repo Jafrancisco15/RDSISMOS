@@ -9,8 +9,14 @@ const HAPI_BASE = "https://imag-data.bgs.ac.uk/GIN_V1/hapi";
 const MAX_DAYS = 31;
 const DAY_MS = 86_400_000;
 
-type HapiInfo = { parameters?: Array<{ name?: string }> };
-type HapiData = { data?: unknown[][] };
+type HapiInfo = {
+  parameters?: Array<{ name?: string }>;
+  startDate?: string;
+  stopDate?: string;
+  start?: string;
+  stop?: string;
+};
+type HapiData = { data?: unknown[][]; status?: { message?: string } };
 
 type KpPayload = {
   datetime?: unknown[];
@@ -44,13 +50,38 @@ function usableField(value: number | null) {
   return value !== null && Math.abs(value) < 90_000;
 }
 
+async function responseJson<T>(response: Response, label: string): Promise<T> {
+  const text = await response.text();
+  if (!text.trim()) throw new Error(`${label}: respuesta vacía.`);
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${label}: respuesta no JSON: ${text.replace(/\s+/g, " ").trim().slice(0, 180)}`);
+  }
+}
+
+function infoDate(value: string | undefined) {
+  if (!value) return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time) : null;
+}
+
+function availableWindow(info: HapiInfo, requestedStart: Date, requestedEnd: Date) {
+  const datasetStart = infoDate(info.startDate ?? info.start);
+  const datasetStop = infoDate(info.stopDate ?? info.stop);
+  const start = datasetStart && datasetStart > requestedStart ? datasetStart : requestedStart;
+  const end = datasetStop && datasetStop < requestedEnd ? datasetStop : requestedEnd;
+  return { start, end, datasetStart, datasetStop };
+}
+
 async function fetchHapiSeries(code: string, start: Date, end: Date, signal: AbortSignal): Promise<MagneticStationSeries> {
   const lower = code.toLowerCase();
   const candidates = [
     `${lower}/best-avail/PT1M/xyzf`,
-    `${lower}/definitive/PT1M/xyzf`,
-    `${lower}/quasi-def/PT1M/xyzf`,
     `${lower}/adjusted/PT1M/xyzf`,
+    `${lower}/quasi-def/PT1M/xyzf`,
+    `${lower}/reported/PT1M/xyzf`,
+    `${lower}/definitive/PT1M/xyzf`,
   ];
   const errors: string[] = [];
 
@@ -59,7 +90,7 @@ async function fetchHapiSeries(code: string, start: Date, end: Date, signal: Abo
       const infoUrl = `${HAPI_BASE}/info?id=${encodeURIComponent(datasetId)}`;
       const infoResponse = await fetch(infoUrl, { signal, cache: "no-store", headers: { Accept: "application/json", "User-Agent": "RDSISMOS/1.0" } });
       if (!infoResponse.ok) { errors.push(`${datasetId}: info ${infoResponse.status}`); continue; }
-      const info = await infoResponse.json() as HapiInfo;
+      const info = await responseJson<HapiInfo>(infoResponse, `${datasetId} info`);
       const names = (info.parameters ?? []).map((parameter) => String(parameter.name ?? "").toUpperCase());
       const timeIndex = Math.max(0, names.findIndex((name) => name === "TIME"));
       const xIndex = names.findIndex((name) => name === "X");
@@ -68,15 +99,26 @@ async function fetchHapiSeries(code: string, start: Date, end: Date, signal: Abo
       const fIndex = names.findIndex((name) => name === "F" || name === "S");
       if (xIndex < 0 || yIndex < 0 || zIndex < 0) { errors.push(`${datasetId}: no XYZ`); continue; }
 
+      const coverage = availableWindow(info, start, end);
+      if (coverage.end.getTime() - coverage.start.getTime() < 30 * 60_000) {
+        const stop = coverage.datasetStop?.toISOString() ?? "desconocido";
+        errors.push(`${datasetId}: sin ≥30 min dentro de la ventana solicitada (último dato ${stop})`);
+        continue;
+      }
+
       const params = new URLSearchParams({
         id: datasetId,
-        "time.min": start.toISOString(),
-        "time.max": end.toISOString(),
+        "time.min": coverage.start.toISOString(),
+        "time.max": coverage.end.toISOString(),
         format: "json",
       });
       const response = await fetch(`${HAPI_BASE}/data?${params}`, { signal, cache: "no-store", headers: { Accept: "application/json", "User-Agent": "RDSISMOS/1.0" } });
-      if (!response.ok) { errors.push(`${datasetId}: data ${response.status}`); continue; }
-      const payload = await response.json() as HapiData;
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        errors.push(`${datasetId}: data ${response.status}${text ? ` · ${text.replace(/\s+/g, " ").slice(0, 90)}` : ""}`);
+        continue;
+      }
+      const payload = await responseJson<HapiData>(response, `${datasetId} data`);
       const samples: MagneticSample[] = [];
       for (const row of payload.data ?? []) {
         if (!Array.isArray(row)) continue;
@@ -88,12 +130,12 @@ async function fetchHapiSeries(code: string, start: Date, end: Date, signal: Abo
         samples.push({ timeUtc, x: x!, y: y!, z: z!, f: usableField(f) ? f : null });
       }
       if (samples.length >= 30) return { code, datasetId, samples };
-      errors.push(`${datasetId}: ${samples.length} muestras válidas`);
+      errors.push(`${datasetId}: ${samples.length} muestras válidas${payload.status?.message ? ` · ${payload.status.message}` : ""}`);
     } catch (error) {
       errors.push(`${datasetId}: ${error instanceof Error ? error.message : "error"}`);
     }
   }
-  throw new Error(`${code}: no fue posible obtener una serie XYZF de 1 minuto. ${errors.slice(0, 3).join("; ")}`);
+  throw new Error(`${code}: no fue posible obtener una serie XYZF de 1 minuto. ${errors.slice(0, 4).join("; ")}`);
 }
 
 async function fetchKp(start: Date, end: Date, signal: AbortSignal): Promise<KpSample[]> {
@@ -101,7 +143,7 @@ async function fetchKp(start: Date, end: Date, signal: AbortSignal): Promise<KpS
     const params = new URLSearchParams({ start: start.toISOString(), end: end.toISOString(), index: "Kp" });
     const response = await fetch(`https://kp.gfz.de/app/json/?${params}`, { signal, cache: "no-store", headers: { Accept: "application/json", "User-Agent": "RDSISMOS/1.0" } });
     if (!response.ok) return [];
-    const payload = await response.json() as KpPayload;
+    const payload = await responseJson<KpPayload>(response, "GFZ Kp");
     const times = Array.isArray(payload.datetime) ? payload.datetime : Array.isArray(payload.time) ? payload.time : [];
     const values = Array.isArray(payload.Kp) ? payload.Kp : Array.isArray(payload.kp) ? payload.kp : Array.isArray(payload.values) ? payload.values : [];
     const out: KpSample[] = [];
@@ -155,17 +197,25 @@ export async function GET(request: NextRequest) {
     const kp = kpResult.status === "fulfilled" ? kpResult.value as KpSample[] : [];
     if (!kp.length) warnings.push("Kp de GFZ no estuvo disponible; el score aplica una penalización por incertidumbre de actividad geomagnética global.");
 
-    const metrics = analyzeMagneticLocality(targetResult.value as MagneticStationSeries, referenceSeries, kp);
+    const targetSeries = targetResult.value as MagneticStationSeries;
+    const metrics = analyzeMagneticLocality(targetSeries, referenceSeries, kp);
+    const actualStart = targetSeries.samples[0]?.timeUtc ?? start.toISOString();
+    const actualEnd = targetSeries.samples.at(-1)?.timeUtc ?? end.toISOString();
+    if (Date.parse(actualEnd) < end.getTime() - 60_000) warnings.push(`INTERMAGNET tenía datos disponibles hasta ${actualEnd}; el análisis se recortó automáticamente a la cobertura real.`);
+
     return NextResponse.json({
-      target: { code: targetCode, datasetId: (targetResult.value as MagneticStationSeries).datasetId, samples: (targetResult.value as MagneticStationSeries).samples.length },
+      target: { code: targetCode, datasetId: targetSeries.datasetId, samples: targetSeries.samples.length },
       references: referenceSeries.map((series) => ({ code: series.code, datasetId: series.datasetId, samples: series.samples.length })),
-      start: start.toISOString(),
-      end: end.toISOString(),
+      requestedStart: start.toISOString(),
+      requestedEnd: end.toISOString(),
+      start: actualStart,
+      end: actualEnd,
       metrics,
       warnings,
       methodology: {
         cadence: "PT1M",
         orientation: "XYZF",
+        coverage: "La consulta se recorta a startDate/stopDate declarados por HAPI para evitar que un minuto aún no publicado invalide toda la serie.",
         commonMode: "mediana por componente de las estaciones de referencia, tras centrar cada serie por su mediana",
         residual: "vector objetivo centrado menos señal común de referencias",
         robustZ: "desviación del módulo residual usando MAD × 1.4826",
@@ -176,6 +226,6 @@ export async function GET(request: NextRequest) {
       licenseNote: "INTERMAGNET data are generally CC BY-NC 4.0 unless an institute specifies different terms; GFZ Kp is CC BY 4.0.",
     }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible ejecutar el análisis geomagnético." }, { status: 400 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible ejecutar el análisis geomagnético." }, { status: 400, headers: { "Cache-Control": "no-store" } });
   }
 }
