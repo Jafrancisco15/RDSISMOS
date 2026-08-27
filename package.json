@@ -10,6 +10,7 @@
     "test": "tsx --test lib/*.test.ts lib/earthquakes/*.test.ts lib/learning/*.test.ts"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "leaflet": "1.9.4",
     "next": "16.2.12",
     "postgres": "3.4.7",
