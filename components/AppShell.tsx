@@ -12,6 +12,7 @@ import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
 import { AutomaticCountryOutlookDashboard } from "./AutomaticCountryOutlookDashboard";
 import { ExtractionDashboard } from "./ExtractionDashboard";
 import { GeomagnetismDashboard } from "./GeomagnetismDashboard";
+import { GeomagneticProjectionPanel } from "./GeomagneticProjectionPanel";
 import { LearningStatusPanel } from "./LearningStatusPanel";
 import { PlateDynamicsDashboard } from "./PlateDynamicsDashboard";
 import { ProjectionHistoryPanel } from "./ProjectionHistoryPanel";
@@ -123,7 +124,7 @@ export function AppShell() {
 
       {tab === "depth3d" && <TectonicDepth3D />}
       {tab === "extractions" && <ExtractionDashboard />}
-      {tab === "geomagnetism" && <GeomagnetismDashboard />}
+      {tab === "geomagnetism" && <><GeomagnetismDashboard /><GeomagneticProjectionPanel /></>}
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
