@@ -13,8 +13,8 @@ export interface GeomagneticModelState {
   omissions: number;
   correctRejections: number;
   updatedAt: string;
-  previousThreshold?: number | null;
-  calibrationReason?: string | null;
+  previousThreshold: number | null;
+  calibrationReason: string | null;
 }
 
 export interface EvaluatedGeomagneticTrial {
