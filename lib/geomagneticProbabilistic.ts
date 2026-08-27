@@ -325,12 +325,17 @@ export function updateGeomagneticWeights(input: {
   features: GeomagWeights;
   baselineProbability: number;
   occurred: boolean;
+  frozenCombinedProbability?: number;
   learningRate?: number;
   l2?: number;
 }) {
   const learningRate = input.learningRate ?? 0.05;
   const l2 = input.l2 ?? 0.002;
-  const current = combineEtasWithGeomagnetism(input.baselineProbability, input.features, input.weights).probability;
+  // Labels arrive seven days later. The gradient must use the probability
+  // that was actually frozen at issuance, not a probability recomputed with
+  // weights that may already have changed because another window resolved.
+  const current = input.frozenCombinedProbability
+    ?? combineEtasWithGeomagnetism(input.baselineProbability, input.features, input.weights).probability;
   const error = (input.occurred ? 1 : 0) - current;
   const next = { ...input.weights };
   for (const name of GEOMAG_FEATURE_NAMES) {
