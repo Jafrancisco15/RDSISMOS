@@ -20,7 +20,9 @@ export function getDb(): SqlClient | null {
       max: 1,
       prepare: false,
       ssl: "require",
-      connect_timeout: 10,
+      // Vercel functions should fail fast and return a degraded JSON state
+      // instead of waiting long enough to hit FUNCTION_INVOCATION_TIMEOUT.
+      connect_timeout: 4,
       idle_timeout: 20,
       max_lifetime: 60 * 30,
     });
