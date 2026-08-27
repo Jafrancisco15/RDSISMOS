@@ -28,13 +28,14 @@ export async function runProbabilisticGeomagEvaluation(options: { limit?: number
       }, options.signal);
       const occurred = page.events.length > 0;
 
-      // The forecast probability and feature vector are frozen. The current
-      // model weights are the only mutable state and are changed only now,
-      // after the seven-day label is known.
+      // The probability and feature vector are frozen at issuance. The label
+      // arrives seven days later, so the gradient uses that frozen probability
+      // even if other forecasts have already updated the current weights.
       const update = updateGeomagneticWeights({
         weights: model.weights,
         features: forecast.features.vector,
         baselineProbability: forecast.baselineProbability,
+        frozenCombinedProbability: forecast.combinedProbability,
         occurred,
         learningRate: model.learningRate,
         l2: model.l2,
