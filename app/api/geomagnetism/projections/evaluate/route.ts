@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cronSecretMatches, extractBearerSecret, normalizeCronSecret } from "@/lib/auth/cron";
-import { runGeomagneticEvaluation } from "@/lib/geomagneticEvaluation";
+import { runProbabilisticGeomagEvaluation } from "@/lib/geomagneticProbabilisticEvaluation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,10 +21,10 @@ export async function GET(request: NextRequest) {
   const cronFallback = isVercelCron(request) && !normalizeCronSecret(process.env.CRON_SECRET);
   if (!authorized(request) && !cronFallback) return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   try {
-    const limit = Number(request.nextUrl.searchParams.get("limit") ?? 18);
-    const result = await runGeomagneticEvaluation({ limit, signal: request.signal });
+    const limit = Number(request.nextUrl.searchParams.get("limit") ?? 12);
+    const result = await runProbabilisticGeomagEvaluation({ limit, signal: request.signal });
     return NextResponse.json({ ...result, scheduledFallback: cronFallback }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible evaluar el ledger geomagnético." }, { status: 500, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible evaluar el experimento ETAS+Geomag." }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
 }

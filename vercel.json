@@ -20,12 +20,12 @@
       "schedule": "15 17 * * *"
     },
     {
-      "path": "/api/geomagnetism/projections/generate?targetLimit=2&lookbackHours=24",
-      "schedule": "40 */3 * * *"
+      "path": "/api/geomagnetism/projections/generate",
+      "schedule": "40 */6 * * *"
     },
     {
       "path": "/api/geomagnetism/projections/evaluate?limit=18",
-      "schedule": "55 */3 * * *"
+      "schedule": "55 */6 * * *"
     }
   ]
 }
