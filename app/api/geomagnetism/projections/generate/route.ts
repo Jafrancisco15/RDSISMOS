@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cronSecretMatches, extractBearerSecret, normalizeCronSecret } from "@/lib/auth/cron";
-import { runAutomaticGeomagneticGeneration } from "@/lib/geomagneticAutomatic";
+import { runProbabilisticGeomagGeneration } from "@/lib/geomagneticProbabilisticAutomatic";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,11 +21,9 @@ export async function GET(request: NextRequest) {
   const cronFallback = isVercelCron(request) && !normalizeCronSecret(process.env.CRON_SECRET);
   if (!authorized(request) && !cronFallback) return NextResponse.json({ error: "No autorizado." }, { status: 401 });
   try {
-    const targetLimit = Number(request.nextUrl.searchParams.get("targetLimit") ?? 2);
-    const lookbackHours = Number(request.nextUrl.searchParams.get("lookbackHours") ?? 24);
-    const result = await runAutomaticGeomagneticGeneration({ targetLimit, lookbackHours, signal: request.signal });
+    const result = await runProbabilisticGeomagGeneration({ signal: request.signal });
     return NextResponse.json({ ...result, scheduledFallback: cronFallback }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible generar ensayos geomagnéticos." }, { status: 500, headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible generar la proyección ETAS+Geomag." }, { status: 500, headers: { "Cache-Control": "no-store" } });
   }
 }
