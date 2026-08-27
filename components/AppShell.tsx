@@ -25,13 +25,14 @@ import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicDepth3D } from "./TectonicDepth3D";
 import { TectonicSimulator } from "./TectonicSimulator";
+import { VolcanoActivityDashboard } from "./VolcanoActivityDashboard";
 
 const LunarPhaseExperimental = dynamic(
   () => import("./LunarPhaseExperimental").then((module) => module.LunarPhaseExperimental),
   { ssr: false, loading: () => <div className="map-loading" style={{ margin: 28 }}>Inicializando globo lunar 3D…</div> },
 );
 
-type AppTab = "globe" | "depth3d" | "extractions" | "geomagnetism" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
+type AppTab = "globe" | "depth3d" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -64,6 +65,7 @@ export function AppShell() {
         <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Placas 3D</button>
         <button className={tab === "extractions" ? "active" : ""} onClick={() => setTab("extractions")}>Extracciones</button>
         <button className={tab === "geomagnetism" ? "active" : ""} onClick={() => setTab("geomagnetism")}>Geomagnetismo</button>
+        <button className={tab === "volcano" ? "active" : ""} onClick={() => setTab("volcano")}>Volcano activity</button>
         <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
         <button className={tab === "validation" ? "active" : ""} onClick={() => setTab("validation")}>Auto-Validación</button>
         <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
@@ -125,6 +127,7 @@ export function AppShell() {
       {tab === "depth3d" && <TectonicDepth3D />}
       {tab === "extractions" && <ExtractionDashboard />}
       {tab === "geomagnetism" && <><GeomagnetismDashboard /><GeomagneticProjectionPanel /></>}
+      {tab === "volcano" && <VolcanoActivityDashboard />}
       {tab === "plates" && (
         <>
           <PlateDynamicsDashboard />
