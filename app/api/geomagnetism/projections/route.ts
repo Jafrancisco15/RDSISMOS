@@ -1,6 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb, hasDatabaseConfiguration } from "@/lib/db";
-import { DEFAULT_GEOMAGNETIC_MODEL, GEOMAGNETIC_MODEL_ID, type GeomagneticModelState, type GeomagneticOutcome } from "@/lib/geomagneticProjection";
+import {
+  approximateCalibrationInterval,
+  brierScore,
+  informationGainBits,
+  molchanWindowCurve,
+  PRIMARY_GEOMAGNETIC_EXPERIMENT,
+  schusterPValue,
+  type ForecastMetricsRow,
+} from "@/lib/geomagneticProbabilistic";
+import {
+  mapProbabilisticForecast,
+  mapProbabilisticModel,
+  type ProbabilisticGeomagForecastRow,
+} from "@/lib/geomagneticProbabilisticStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -8,142 +21,117 @@ export const maxDuration = 10;
 
 type DbRow = Record<string, unknown>;
 
-function num(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function bool(value: unknown) {
-  return value === true || value === "true";
-}
-
-function iso(value: unknown) {
-  const date = new Date(String(value ?? ""));
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
-}
-
-function parseJsonValue<T>(value: unknown, fallback: T): T {
+function parseJson<T>(value: unknown, fallback: T): T {
   if (value === null || value === undefined) return fallback;
   if (typeof value !== "string") return value as T;
   try { return JSON.parse(value) as T; } catch { return fallback; }
 }
 
-function defaultModel(): GeomagneticModelState {
-  return { ...DEFAULT_GEOMAGNETIC_MODEL, updatedAt: new Date().toISOString() };
-}
-
-function mapModel(row: DbRow | null): GeomagneticModelState {
-  if (!row) return defaultModel();
+function metrics(forecasts: ProbabilisticGeomagForecastRow[]) {
+  const evaluated = forecasts.filter((forecast) => forecast.status === "evaluated" && forecast.occurred !== null);
+  const rows: ForecastMetricsRow[] = evaluated.map((forecast) => ({
+    baselineProbability: forecast.baselineProbability,
+    combinedProbability: forecast.combinedProbability,
+    occurred: Boolean(forecast.occurred),
+    phaseRad: forecast.features?.phaseRad ?? null,
+  }));
+  const baseline = brierScore(rows, "baselineProbability");
+  const combined = brierScore(rows, "combinedProbability");
+  const skill = baseline !== null && combined !== null && baseline > 0 ? 1 - combined / baseline : null;
+  const positivePhases = evaluated
+    .filter((forecast) => forecast.occurred && Number.isFinite(forecast.features?.phaseRad))
+    .map((forecast) => Number(forecast.features.phaseRad));
   return {
-    id: String(row.id ?? GEOMAGNETIC_MODEL_ID),
-    version: num(row.version),
-    emissionThreshold: num(row.emission_threshold),
-    windowHours: num(row.window_hours),
-    radiusKm: num(row.radius_km),
-    magnitudeMin: num(row.magnitude_min),
-    evaluatedTrials: num(row.evaluated_trials),
-    hits: num(row.hits),
-    misses: num(row.misses),
-    omissions: num(row.omissions),
-    correctRejections: num(row.correct_rejections),
-    previousThreshold: row.previous_threshold === null || row.previous_threshold === undefined ? null : num(row.previous_threshold),
-    calibrationReason: row.calibration_reason ? String(row.calibration_reason) : null,
-    updatedAt: iso(row.updated_at) ?? new Date().toISOString(),
-  };
-}
-
-function mapTrial(row: DbRow) {
-  const refs = parseJsonValue<unknown[]>(row.reference_codes, []);
-  const outcome = row.outcome ? String(row.outcome) as GeomagneticOutcome : null;
-  return {
-    id: String(row.id ?? ""),
-    modelId: String(row.model_id ?? GEOMAGNETIC_MODEL_ID),
-    modelVersion: num(row.model_version),
-    stationCode: String(row.station_code ?? ""),
-    stationName: String(row.station_name ?? row.station_code ?? ""),
-    latitude: num(row.latitude),
-    longitude: num(row.longitude),
-    issuedAt: iso(row.issued_at) ?? new Date().toISOString(),
-    surveillanceStart: iso(row.surveillance_start) ?? new Date().toISOString(),
-    surveillanceEnd: iso(row.surveillance_end) ?? new Date().toISOString(),
-    radiusKm: num(row.radius_km),
-    magnitudeMin: num(row.magnitude_min),
-    localityScore: num(row.locality_score),
-    thresholdSnapshot: num(row.threshold_snapshot),
-    emitted: bool(row.emitted),
-    referenceCodes: Array.isArray(refs) ? refs.map(String) : [],
-    status: String(row.status) === "evaluated" ? "evaluated" : "active",
-    occurred: row.occurred === null || row.occurred === undefined ? null : bool(row.occurred),
-    outcome,
-    eventCount: num(row.event_count),
-    firstEventId: row.first_event_external_id ? String(row.first_event_external_id) : null,
-    firstEventTime: iso(row.first_event_time),
-    firstEventMagnitude: row.first_event_magnitude === null || row.first_event_magnitude === undefined ? null : num(row.first_event_magnitude),
-    firstEventDepthKm: row.first_event_depth_km === null || row.first_event_depth_km === undefined ? null : num(row.first_event_depth_km),
-    firstEventPlace: row.first_event_place ? String(row.first_event_place) : null,
-    strongestEventId: row.strongest_event_external_id ? String(row.strongest_event_external_id) : null,
-    strongestEventMagnitude: row.strongest_event_magnitude === null || row.strongest_event_magnitude === undefined ? null : num(row.strongest_event_magnitude),
-    evaluatedAt: iso(row.evaluated_at),
-  };
-}
-
-function unavailable(message: string, databaseConfigured: boolean) {
-  return {
-    available: false,
-    databaseConfigured,
-    databaseConnected: false,
-    model: defaultModel(),
-    trials: [],
-    message,
+    evaluatedForecasts: evaluated.length,
+    positiveWindows: evaluated.filter((forecast) => forecast.occurred).length,
+    brierEtas: baseline,
+    brierCombined: combined,
+    brierSkillScore: skill,
+    informationGainBitsPerWindow: informationGainBits(rows),
+    molchan: molchanWindowCurve(rows),
+    schusterPValue: schusterPValue(positivePhases),
+    schusterPositivePhases: positivePhases.length,
+    overlappingWindows: true,
   };
 }
 
 export async function GET(request: NextRequest) {
-  const limit = Math.max(10, Math.min(150, Number(request.nextUrl.searchParams.get("limit") ?? 60) || 60));
+  const limit = Math.max(20, Math.min(365, Number(request.nextUrl.searchParams.get("limit") ?? 180) || 180));
   const databaseConfigured = hasDatabaseConfiguration();
   const sql = getDb();
 
-  let status: Record<string, unknown>;
   if (!sql) {
-    status = unavailable("DATABASE_URL no está configurada; el análisis geomagnético funciona, pero el ledger prospectivo necesita persistencia.", false);
-  } else {
-    try {
-      // Read-only fast path: one round trip and no CREATE TABLE / CREATE INDEX work.
-      // Schema creation remains in the writer/cron paths where it belongs.
-      const rows = await sql`
-        SELECT
-          (SELECT row_to_json(m) FROM geomagnetic_model_state m WHERE m.id = ${GEOMAGNETIC_MODEL_ID}) AS model,
-          COALESCE(
-            (SELECT json_agg(t ORDER BY t.issued_at DESC)
-             FROM (SELECT * FROM geomagnetic_trials ORDER BY issued_at DESC LIMIT ${limit}) t),
-            '[]'::json
-          ) AS trials
-      `;
-      const row = (rows[0] ?? {}) as DbRow;
-      const modelRow = parseJsonValue<DbRow | null>(row.model, null);
-      const trialRows = parseJsonValue<DbRow[]>(row.trials, []);
-      status = {
-        available: true,
-        databaseConfigured,
-        databaseConnected: true,
-        model: mapModel(modelRow),
-        trials: Array.isArray(trialRows) ? trialRows.map(mapTrial) : [],
-      };
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : "error de PostgreSQL";
-      status = unavailable(`Persistencia temporalmente no disponible: ${detail}. El resto del módulo continúa funcionando; reintenta en unos segundos.`, databaseConfigured);
-    }
+    return NextResponse.json({
+      available: false,
+      databaseConfigured: false,
+      databaseConnected: false,
+      experiment: PRIMARY_GEOMAGNETIC_EXPERIMENT,
+      model: mapProbabilisticModel(null),
+      forecasts: [],
+      metrics: metrics([]),
+      message: "DATABASE_URL no está configurada; el análisis manual funciona, pero el experimento prospectivo necesita persistencia.",
+      generatedAt: new Date().toISOString(),
+    }, { headers: { "Cache-Control": "no-store, max-age=0" } });
   }
 
-  return NextResponse.json({
-    ...status,
-    generatedAt: new Date().toISOString(),
-    methodology: {
-      prospective: "Cada ensayo se congela antes del resultado; el umbral_snapshot nunca se reescribe.",
-      eventDefinition: "Al menos un terremoto M3.0+ dentro del radio y ventana congelados del ensayo.",
-      outcomes: "ACIERTO = señal + evento; FALLO = señal sin evento; OMISIÓN = no señal + evento; RECHAZO CORRECTO = no señal y no evento.",
-      calibration: "El umbral futuro se recalibra con ensayos evaluados emitidos y no emitidos; el cambio máximo es ±3 puntos por ciclo.",
-      storageRead: "La lectura del panel es SELECT-only y nunca ejecuta migraciones o DDL.",
-    },
-  }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+  try {
+    // Fast read-only path. Never creates or migrates tables: that remains in
+    // generator/evaluator writer routes so opening the dashboard cannot 504.
+    const rows = await sql`
+      SELECT
+        (SELECT row_to_json(m) FROM geomagnetic_prob_model m WHERE m.id = ${PRIMARY_GEOMAGNETIC_EXPERIMENT.id}) AS model,
+        COALESCE(
+          (SELECT json_agg(f ORDER BY f.issued_at DESC)
+           FROM (SELECT * FROM geomagnetic_prob_forecasts ORDER BY issued_at DESC LIMIT ${limit}) f),
+          '[]'::json
+        ) AS forecasts
+    `;
+    const row = (rows[0] ?? {}) as DbRow;
+    const modelRow = parseJson<DbRow | null>(row.model, null);
+    const forecastRows = parseJson<DbRow[]>(row.forecasts, []);
+    const forecasts = Array.isArray(forecastRows) ? forecastRows.map(mapProbabilisticForecast) : [];
+    const model = mapProbabilisticModel(modelRow);
+    const summary = metrics(forecasts);
+    const latestActive = forecasts.find((forecast) => forecast.status === "active") ?? null;
+    const calibrationInterval = latestActive
+      ? approximateCalibrationInterval(latestActive.combinedProbability, summary.evaluatedForecasts)
+      : null;
+
+    return NextResponse.json({
+      available: true,
+      databaseConfigured,
+      databaseConnected: true,
+      experiment: PRIMARY_GEOMAGNETIC_EXPERIMENT,
+      model,
+      forecasts,
+      metrics: summary,
+      calibrationInterval,
+      generatedAt: new Date().toISOString(),
+      methodology: {
+        primaryQuestion: "¿ETAS+Geomag mejora prospectivamente a ETAS para M≥4.5 dentro de 200 km de SJG en los próximos 7 días?",
+        prospective: "Cada P_ETAS, P_ETAS+Geomag, vector de features y pesos queda congelado al emitirse y nunca se reescribe.",
+        baseline: "ETAS/Hawkes regional fijo: tasa de fondo suavizada + productividad espacial y decaimiento Omori de eventos conocidos antes de la emisión. Aún no es un ajuste ETAS MLE completo.",
+        geomagneticLayer: "Regresión logística incremental regularizada como ajuste de log-odds sobre P_ETAS. Los pesos iniciales son cero.",
+        cleaning: "SJG USGS; plantilla Sq causal por hora solar local usando solo los 27 días anteriores; modo común con estaciones USGS de referencia; penalización Kp/Dst.",
+        spectralBand: "Con datos de 60 s solo se analiza ULF 0.001–0.008 Hz (Nyquist ≈0.00833 Hz); 0.008–0.1 Hz requiere datos más rápidos.",
+        validation: "Brier, Brier Skill Score, information gain vs ETAS, curva Molchan por ventanas y Schuster de fase cuando haya muestra suficiente.",
+        dependence: "Las proyecciones diarias de 7 días se solapan; las ventanas no son independientes. Para inferencia formal posterior se requiere block bootstrap/permutación temporal.",
+        interpretation: "Un aporte geomagnético positivo no demuestra precursor ni causalidad; debe superar ETAS fuera de muestra de forma sostenida.",
+        storageRead: "Esta ruta es SELECT-only; no ejecuta DDL ni migraciones.",
+      },
+    }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "error de PostgreSQL";
+    return NextResponse.json({
+      available: false,
+      databaseConfigured,
+      databaseConnected: false,
+      experiment: PRIMARY_GEOMAGNETIC_EXPERIMENT,
+      model: mapProbabilisticModel(null),
+      forecasts: [],
+      metrics: metrics([]),
+      message: `El ledger probabilístico v2 todavía no está inicializado o la persistencia no responde: ${detail}. El mapa y el análisis manual continúan funcionando.`,
+      generatedAt: new Date().toISOString(),
+    }, { headers: { "Cache-Control": "no-store, max-age=0" } });
+  }
 }
