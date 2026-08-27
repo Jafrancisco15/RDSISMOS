@@ -14,8 +14,10 @@ type Station = {
   latitude: number | null;
   longitude: number | null;
   elevationM: number | null;
+  country?: string;
+  dataSource?: string;
 };
-type StationPayload = { stations?: Station[]; error?: string; licenseNote?: string; mappedCount?: number };
+type StationPayload = { stations?: Station[]; error?: string; licenseNote?: string; mappedCount?: number; source?: string };
 type EventsPayload = { events?: EarthquakeEvent[]; error?: string };
 type AnalysisPayload = {
   target?: { code: string; datasetId: string; samples: number };
@@ -76,8 +78,9 @@ function MagneticChart({ points, event }: { points: MagneticAnomalyPoint[]; even
 export function GeomagnetismDashboard() {
   const today = dateKey(new Date());
   const [stations, setStations] = useState<Station[]>([]);
+  const [stationSource, setStationSource] = useState("USGS Geomagnetism Program");
   const [target, setTarget] = useState("SJG");
-  const [references, setReferences] = useState<string[]>(["KOU", "TTB", "MBO"]);
+  const [references, setReferences] = useState<string[]>(["FRD", "BOU", "HON"]);
   const [startDate, setStartDate] = useState(() => daysAgo(3));
   const [endDate, setEndDate] = useState(today);
   const [minMagnitude, setMinMagnitude] = useState(3);
@@ -96,6 +99,7 @@ export function GeomagnetismDashboard() {
     fetch(`/api/geomagnetism/stations?_=${reloadKey}`, { cache: "no-store" }).then(async (response) => {
       const payload = await readJsonResponse<StationPayload>(response);
       if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
+      if (active && payload.source) setStationSource(payload.source);
       return payload.stations ?? [];
     }).then((loaded) => {
       if (!active) return;
@@ -104,12 +108,12 @@ export function GeomagnetismDashboard() {
       const nextTarget = codes.has(target) ? target : codes.has("SJG") ? "SJG" : loaded[0]?.code ?? "";
       setTarget(nextTarget);
       const currentRefs = references.filter((code) => code !== nextTarget && codes.has(code));
-      if (currentRefs.length) setReferences(currentRefs.slice(0, 4));
+      if (currentRefs.length >= 2) setReferences(currentRefs.slice(0, 4));
       else {
-        const preferred = ["KOU", "TTB", "MBO", "BOU", "FRD", "HON", "GUA"].filter((code) => code !== nextTarget && codes.has(code)).slice(0, 3);
+        const preferred = ["FRD", "BOU", "HON", "GUA", "CMO", "NEW"].filter((code) => code !== nextTarget && codes.has(code)).slice(0, 3);
         setReferences(preferred);
       }
-    }).catch((err) => { if (active) setStationError(err instanceof Error ? err.message : "No fue posible cargar INTERMAGNET."); });
+    }).catch((err) => { if (active) setStationError(err instanceof Error ? err.message : "No fue posible cargar la red geomagnética USGS."); });
     return () => { active = false; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reloadKey]);
@@ -181,14 +185,15 @@ export function GeomagnetismDashboard() {
 
   return <main style={{ display: "grid", gap: 14, padding: "0 12px 28px" }}>
     <section style={{ ...panel, background: "linear-gradient(135deg,#071b35,#172554 50%,#3b0764)" }}>
-      <div style={{ color: "#a5b4fc", fontSize: 10, fontWeight: 900, letterSpacing: ".12em" }}>INTERMAGNET · CAMPO MAGNÉTICO LOCAL/REGIONAL</div>
+      <div style={{ color: "#a5b4fc", fontSize: 10, fontWeight: 900, letterSpacing: ".12em" }}>USGS GEOMAGNETISM · CAMPO MAGNÉTICO LOCAL/REGIONAL</div>
       <h1 style={{ color: "white", margin: "6px 0", fontSize: "clamp(23px,4vw,36px)" }}>Geomagnetismo · Anomalías vs Sismos</h1>
-      <p style={{ color: "#cbd5e1", fontSize: 12, lineHeight: 1.55, margin: 0 }}>Mapa mundial de relieve con estaciones INTERMAGNET y sismos del período. Toca una estación para convertirla en objetivo y un sismo para usarlo como referencia temporal. El score sigue siendo experimental y no equivale a probabilidad de terremoto.</p>
+      <p style={{ color: "#cbd5e1", fontSize: 12, lineHeight: 1.55, margin: 0 }}>Mapa mundial de relieve con la red geomagnética USGS y los sismos del período. SJG corresponde al observatorio de San Juan en Cayey, Puerto Rico. Toca una estación para convertirla en objetivo y un sismo para usarlo como referencia temporal.</p>
+      <div style={{ marginTop: 9, color: "#7dd3fc", fontSize: 10, fontWeight: 800 }}>Series magnéticas: geomag.usgs.gov/ws/data · 60 s · adjusted XYZF con fallback variation HDZF</div>
     </section>
 
     <section style={{ ...panel, padding: 9 }}>
       <div style={{ display: "flex", justifyContent: "space-between", gap: 9, flexWrap: "wrap", alignItems: "center", padding: "4px 5px 10px" }}>
-        <div><strong style={{ color: "white" }}>Mapa de estaciones y sismicidad</strong><div style={{ color: "#94a3b8", fontSize: 10 }}>{mappedStationCount} estaciones georreferenciadas · {events.length} sismos M{minMagnitude.toFixed(1)}+ · {startDate} → {endDate}</div></div>
+        <div><strong style={{ color: "white" }}>Mapa de estaciones y sismicidad</strong><div style={{ color: "#94a3b8", fontSize: 10 }}>{mappedStationCount}/{stations.length || mappedStationCount} estaciones USGS georreferenciadas · {events.length} sismos M{minMagnitude.toFixed(1)}+ · {startDate} → {endDate}</div><div style={{ color: "#38bdf8", fontSize: 9, marginTop: 2 }}>{stationSource}</div></div>
         <button type="button" style={button} onClick={() => setReloadKey((value) => value + 1)}>Recargar fuentes</button>
       </div>
       <GeomagnetismMap2D
@@ -200,7 +205,7 @@ export function GeomagnetismDashboard() {
         onStationSelect={selectStationFromMap}
         onEventSelect={(event) => setEventId(event.id)}
       />
-      {selectedStation && <div style={{ display: "flex", gap: 12, flexWrap: "wrap", color: "#cbd5e1", fontSize: 10, padding: "9px 5px 2px" }}><b style={{ color: "#fde047" }}>{selectedStation.code} · {selectedStation.name}</b>{selectedStation.latitude !== null && selectedStation.longitude !== null ? <span>{selectedStation.latitude.toFixed(3)}, {selectedStation.longitude.toFixed(3)}</span> : <span>coordenadas no disponibles</span>}<span>{selectedStation.hasOneSecond ? "1 s disponible" : "serie de 1 min"}</span>{selectedEvent && <span style={{ color: "#fda4af" }}>Sismo seleccionado: M{selectedEvent.magnitude.toFixed(1)} · {selectedEvent.place}</span>}</div>}
+      {selectedStation && <div style={{ display: "flex", gap: 12, flexWrap: "wrap", color: "#cbd5e1", fontSize: 10, padding: "9px 5px 2px" }}><b style={{ color: "#fde047" }}>{selectedStation.code} · {selectedStation.name}</b>{selectedStation.latitude !== null && selectedStation.longitude !== null ? <span>{selectedStation.latitude.toFixed(3)}, {selectedStation.longitude.toFixed(3)}</span> : <span>coordenadas no disponibles</span>}<span>{selectedStation.country ?? "USGS"}</span><span>{selectedStation.dataSource ?? "USGS Geomagnetism"}</span>{selectedEvent && <span style={{ color: "#fda4af" }}>Sismo seleccionado: M{selectedEvent.magnitude.toFixed(1)} · {selectedEvent.place}</span>}</div>}
     </section>
 
     <section style={{ ...panel, display: "grid", gap: 10 }}>
@@ -208,7 +213,7 @@ export function GeomagnetismDashboard() {
         <label style={{ color: "#cbd5e1", fontSize: 11 }}>Estación objetivo<select value={target} onChange={(e) => selectStationFromMap(e.target.value)} style={control}><option value="">— selecciona —</option>{stations.map((station) => <StationOption key={station.code} station={station} />)}</select></label>
         {[0,1,2,3].map((index) => <label key={index} style={{ color: "#cbd5e1", fontSize: 11 }}>Referencia {index + 1}<select value={references[index] ?? ""} onChange={(e) => setReference(index, e.target.value)} style={control}><option value="">— ninguna —</option>{stations.filter((station) => station.code !== target).map((station) => <StationOption key={station.code} station={station} />)}</select></label>)}
       </div>
-      <div style={{ color: "#64748b", fontSize: 10 }}>Ideal: 2–3 referencias regionales y una remota. El mapa permite comprobar visualmente que las estaciones de control no estén todas concentradas en el mismo punto.</div>
+      <div style={{ color: "#64748b", fontSize: 10 }}>Ideal: 2–3 referencias suficientemente separadas. Para SJG el preset usa FRD, BOU y HON, todas servidas directamente por USGS.</div>
     </section>
 
     <section style={{ ...panel, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(155px,1fr))", gap: 9 }}>
@@ -216,14 +221,14 @@ export function GeomagnetismDashboard() {
       <label style={{ color: "#cbd5e1", fontSize: 11 }}>Hasta<input type="date" value={endDate} min={startDate} max={today} onChange={(e) => setEndDate(e.target.value)} style={control} /></label>
       <label style={{ color: "#cbd5e1", fontSize: 11 }}>Sismos del período<select value={minMagnitude} onChange={(e) => setMinMagnitude(Number(e.target.value))} style={control}><option value={3}>M3.0+</option><option value={3.5}>M3.5+</option><option value={4.2}>M4.2+</option><option value={5}>M5.0+</option><option value={5.5}>M5.5+</option><option value={6}>M6.0+</option></select></label>
       <label style={{ color: "#cbd5e1", fontSize: 11 }}>Terremoto de referencia<select value={eventId} onChange={(e) => setEventId(e.target.value)} style={control}><option value="">— sin marcador —</option>{events.slice(0, 1000).map((event) => <option key={event.id} value={event.id}>M{event.magnitude.toFixed(1)} · {new Date(event.timeUtc).toISOString().slice(0,16)} · {event.place}</option>)}</select></label>
-      <div style={{ display: "flex", alignItems: "end" }}><button type="button" onClick={runAnalysis} disabled={loading || !target} style={{ ...button, width: "100%", opacity: loading ? .65 : 1 }}>{loading ? "Analizando INTERMAGNET…" : "Analizar anomalía local"}</button></div>
+      <div style={{ display: "flex", alignItems: "end" }}><button type="button" onClick={runAnalysis} disabled={loading || !target} style={{ ...button, width: "100%", opacity: loading ? .65 : 1 }}>{loading ? "Analizando USGS…" : "Analizar anomalía local"}</button></div>
     </section>
 
     {(stationError || eventsError || error) && <section style={{ ...panel, color: "#fca5a5", borderColor: "rgba(248,113,113,.35)" }}>
-      {stationError && <div><b>INTERMAGNET:</b> {stationError}</div>}
+      {stationError && <div><b>USGS Geomagnetismo:</b> {stationError}</div>}
       {eventsError && <div><b>Sismos:</b> {eventsError}</div>}
       {error && <div><b>Análisis:</b> {error}</div>}
-      <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 5 }}>El mapa base permanece disponible aunque falle temporalmente una de las fuentes.</div>
+      <div style={{ color: "#94a3b8", fontSize: 10, marginTop: 5 }}>El mapa base y el catálogo de estaciones permanecen disponibles aunque falle temporalmente una serie magnética.</div>
     </section>}
 
     {metrics && <>
@@ -246,7 +251,7 @@ export function GeomagnetismDashboard() {
     </>}
 
     <section style={{ ...panel, color: "#94a3b8", fontSize: 10, lineHeight: 1.55 }}>
-      <strong style={{ color: "#cbd5e1" }}>Método y límites.</strong> El módulo usa INTERMAGNET XYZF de 1 minuto. Cada estación se centra por su mediana; la mediana de las referencias estima la señal común y se resta de la estación objetivo. El score combina robust z, persistencia, baja coherencia con controles, dB/dt y un proxy Z/H, con penalización por Kp de GFZ. No es un análisis espectral ULF completo y no valida predicción sísmica. INTERMAGNET es generalmente CC BY-NC 4.0 salvo términos distintos de institutos individuales; GFZ Kp es CC BY 4.0.
+      <strong style={{ color: "#cbd5e1" }}>Método y límites.</strong> El módulo usa el USGS Geomagnetism Data Web Service a 60 s. Prioriza XYZF adjusted; si no está disponible usa HDZF variation y convierte H/D a X/Y. Cada estación se centra por su mediana; la mediana de las referencias estima la señal común y se resta de la estación objetivo. El score combina robust z, persistencia, baja coherencia con controles, dB/dt y un proxy Z/H, con penalización por Kp de GFZ. No es un análisis espectral ULF completo y no valida predicción sísmica.
     </section>
   </main>;
 }
