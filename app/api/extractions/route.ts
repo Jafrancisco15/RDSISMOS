@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { REFERENCE_EXTRACTION_SITES, type ExtractionSite } from "@/lib/extractions";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const revalidate = 43_200;
 export const maxDuration = 60;
 
