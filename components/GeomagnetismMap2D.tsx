@@ -10,6 +10,8 @@ export type GeomagneticMapStation = {
   longitude: number | null;
   elevationM?: number | null;
   hasOneSecond?: boolean;
+  country?: string;
+  dataSource?: string;
 };
 
 export type GeomagneticMapProps = {
