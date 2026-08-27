@@ -21,7 +21,6 @@ type UsgsDataPayload = {
   metadata?: Record<string, unknown>;
 };
 
-const DAY_MS = 86_400_000;
 const USGS_DATA_URL = "https://geomag.usgs.gov/ws/data/";
 
 // Active USGS Geomagnetism Program observatories. Coordinates are normalized to -180..180.
@@ -121,15 +120,18 @@ export function parseUsgsGeomagPayload(
   return { code, datasetId, samples };
 }
 
-function chunks(start: Date, end: Date, maxDays = 18) {
+function chunks(start: Date, end: Date, samplingPeriodSeconds: number, elementCount = 4) {
   const out: Array<{ start: Date; end: Date }> = [];
   let cursor = start.getTime();
   const endMs = end.getTime();
-  const chunkMs = maxDays * DAY_MS;
+  // Stay below the documented 144,000 JSON sample limit with safety margin.
+  const maxSamples = 120_000;
+  const maxSeconds = Math.max(samplingPeriodSeconds, Math.floor(maxSamples / Math.max(1, elementCount)) * samplingPeriodSeconds);
+  const chunkMs = maxSeconds * 1_000;
   while (cursor < endMs) {
     const next = Math.min(endMs, cursor + chunkMs);
     out.push({ start: new Date(cursor), end: new Date(next) });
-    cursor = next + 60_000;
+    cursor = next + samplingPeriodSeconds * 1_000;
   }
   return out;
 }
@@ -155,17 +157,19 @@ async function fetchMode(
   end: Date,
   dataType: "adjusted" | "variation" | "quasi-definitive" | "definitive",
   elements: string,
+  samplingPeriodSeconds: 60 | 3600,
   signal?: AbortSignal,
 ) {
   const all: MagneticSample[] = [];
-  const datasetId = `USGS:${dataType}:${elements.replaceAll(",", "")}:PT60S`;
-  for (const window of chunks(start, end)) {
+  const datasetId = `USGS:${dataType}:${elements.replaceAll(",", "")}:PT${samplingPeriodSeconds}S`;
+  const elementCount = elements.split(",").filter(Boolean).length;
+  for (const window of chunks(start, end, samplingPeriodSeconds, elementCount)) {
     const params = new URLSearchParams({
       id: code,
       format: "json",
       type: dataType,
       elements,
-      sampling_period: "60",
+      sampling_period: String(samplingPeriodSeconds),
       starttime: window.start.toISOString(),
       endtime: window.end.toISOString(),
     });
@@ -177,7 +181,13 @@ async function fetchMode(
   return { code, datasetId, samples: [...dedup.values()].sort((a, b) => Date.parse(a.timeUtc) - Date.parse(b.timeUtc)) } satisfies MagneticStationSeries;
 }
 
-export async function fetchUsgsGeomagSeries(code: string, start: Date, end: Date, signal?: AbortSignal) {
+export async function fetchUsgsGeomagSeriesAtSampling(
+  code: string,
+  start: Date,
+  end: Date,
+  samplingPeriodSeconds: 60 | 3600,
+  signal?: AbortSignal,
+) {
   const upper = code.trim().toUpperCase();
   if (!USGS_GEOMAG_CODES.has(upper)) throw new Error(`${upper}: no pertenece a la red geomagnética USGS soportada.`);
   const attempts: Array<{ type: "adjusted" | "variation" | "quasi-definitive" | "definitive"; elements: string }> = [
@@ -187,14 +197,23 @@ export async function fetchUsgsGeomagSeries(code: string, start: Date, end: Date
     { type: "definitive", elements: "X,Y,Z,F" },
   ];
   const errors: string[] = [];
+  const minimumSamples = samplingPeriodSeconds === 60 ? 30 : 12;
   for (const attempt of attempts) {
     try {
-      const series = await fetchMode(upper, start, end, attempt.type, attempt.elements, signal);
-      if (series.samples.length >= 30) return series;
+      const series = await fetchMode(upper, start, end, attempt.type, attempt.elements, samplingPeriodSeconds, signal);
+      if (series.samples.length >= minimumSamples) return series;
       errors.push(`${attempt.type}: ${series.samples.length} muestras válidas`);
     } catch (error) {
       errors.push(`${attempt.type}: ${error instanceof Error ? error.message : "error"}`);
     }
   }
-  throw new Error(`${upper}: no fue posible obtener ≥30 muestras de 1 minuto desde USGS. ${errors.slice(0, 3).join("; ")}`);
+  throw new Error(`${upper}: no fue posible obtener ≥${minimumSamples} muestras desde USGS. ${errors.slice(0, 3).join("; ")}`);
+}
+
+export async function fetchUsgsGeomagSeries(code: string, start: Date, end: Date, signal?: AbortSignal) {
+  return fetchUsgsGeomagSeriesAtSampling(code, start, end, 60, signal);
+}
+
+export async function fetchUsgsGeomagHourlySeries(code: string, start: Date, end: Date, signal?: AbortSignal) {
+  return fetchUsgsGeomagSeriesAtSampling(code, start, end, 3600, signal);
 }
