@@ -5,6 +5,7 @@ export const revalidate = 43_200;
 export const maxDuration = 30;
 
 const CATALOG_URL = "https://imag-data.bgs.ac.uk/GIN_V1/hapi/catalog";
+const CAPABILITIES_URL = "https://imag-data.bgs.ac.uk/GIN_V1/GINServices?Request=GetCapabilities&format=html";
 
 type HapiCatalog = { catalog?: Array<{ id?: string; title?: string }> };
 
@@ -13,7 +14,12 @@ type Station = {
   name: string;
   minuteDatasetId: string;
   hasOneSecond: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  elevationM: number | null;
 };
+
+type ObservatoryMeta = { name: string; latitude: number; longitude: number; elevationM: number | null };
 
 function stationName(title: string | undefined, code: string) {
   if (!title) return code.toUpperCase();
@@ -31,15 +37,70 @@ function rank(id: string) {
   return 99;
 }
 
+function plainHtml(value: string) {
+  return value
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeLongitude(value: number) {
+  let longitude = value;
+  while (longitude > 180) longitude -= 360;
+  while (longitude < -180) longitude += 360;
+  return longitude;
+}
+
+function parseCapabilitiesHtml(html: string) {
+  const result = new Map<string, ObservatoryMeta>();
+  const rows = html.match(/<tr\b[\s\S]*?<\/tr>/gi) ?? [];
+  for (const row of rows) {
+    const cells = [...row.matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((match) => plainHtml(match[1]));
+    if (cells.length < 4) continue;
+    const code = cells[0].toUpperCase();
+    if (!/^[A-Z0-9]{3}$/.test(code)) continue;
+    const latitude = Number(cells[2]);
+    const rawLongitude = Number(cells[3]);
+    const elevation = cells.length > 4 ? Number(cells[4]) : NaN;
+    if (!Number.isFinite(latitude) || !Number.isFinite(rawLongitude)) continue;
+    result.set(code, {
+      name: cells[1] || code,
+      latitude,
+      longitude: normalizeLongitude(rawLongitude),
+      elevationM: Number.isFinite(elevation) ? elevation : null,
+    });
+  }
+  return result;
+}
+
 export async function GET(request: Request) {
   try {
-    const response = await fetch(CATALOG_URL, {
-      signal: request.signal,
-      next: { revalidate: 43_200 },
-      headers: { Accept: "application/json", "User-Agent": "RDSISMOS/1.0" },
-    });
-    if (!response.ok) throw new Error(`INTERMAGNET HAPI respondió HTTP ${response.status}.`);
-    const payload = await response.json() as HapiCatalog;
+    const [catalogResponse, capabilitiesResult] = await Promise.all([
+      fetch(CATALOG_URL, {
+        signal: request.signal,
+        next: { revalidate: 43_200 },
+        headers: { Accept: "application/json", "User-Agent": "RDSISMOS/1.0" },
+      }),
+      fetch(CAPABILITIES_URL, {
+        signal: request.signal,
+        next: { revalidate: 43_200 },
+        headers: { Accept: "text/html", "User-Agent": "RDSISMOS/1.0" },
+      }).then(async (response) => response.ok ? parseCapabilitiesHtml(await response.text()) : new Map<string, ObservatoryMeta>()).catch(() => new Map<string, ObservatoryMeta>()),
+    ]);
+
+    if (!catalogResponse.ok) throw new Error(`INTERMAGNET HAPI respondió HTTP ${catalogResponse.status}.`);
+    const text = await catalogResponse.text();
+    let payload: HapiCatalog;
+    try {
+      payload = JSON.parse(text) as HapiCatalog;
+    } catch {
+      throw new Error(`INTERMAGNET devolvió una respuesta no JSON: ${text.replace(/\s+/g, " ").slice(0, 180)}`);
+    }
+
     const entries = payload.catalog ?? [];
     const byCode = new Map<string, { name: string; minuteDatasetId: string; rank: number; hasOneSecond: boolean }>();
 
@@ -70,17 +131,31 @@ export async function GET(request: Request) {
 
     const stations: Station[] = [...byCode.entries()]
       .filter(([, value]) => Boolean(value.minuteDatasetId))
-      .map(([code, value]) => ({ code: code.toUpperCase(), name: value.name, minuteDatasetId: value.minuteDatasetId, hasOneSecond: value.hasOneSecond }))
+      .map(([code, value]) => {
+        const upper = code.toUpperCase();
+        const meta = capabilitiesResult.get(upper);
+        return {
+          code: upper,
+          name: meta?.name ?? value.name,
+          minuteDatasetId: value.minuteDatasetId,
+          hasOneSecond: value.hasOneSecond,
+          latitude: meta?.latitude ?? null,
+          longitude: meta?.longitude ?? null,
+          elevationM: meta?.elevationM ?? null,
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    const mapped = stations.filter((station) => station.latitude !== null && station.longitude !== null).length;
     return NextResponse.json({
       stations,
       count: stations.length,
-      source: "INTERMAGNET HAPI catalog",
+      mappedCount: mapped,
+      source: "INTERMAGNET HAPI catalog + GIN GetCapabilities",
       generatedAt: new Date().toISOString(),
       licenseNote: "INTERMAGNET data are generally CC BY-NC 4.0 unless an institute states otherwise.",
     }, { headers: { "Cache-Control": "public, s-maxage=43200, stale-while-revalidate=604800" } });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible cargar el catálogo INTERMAGNET." }, { status: 502 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No fue posible cargar el catálogo INTERMAGNET." }, { status: 502, headers: { "Cache-Control": "no-store" } });
   }
 }
