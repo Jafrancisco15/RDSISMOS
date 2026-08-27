@@ -7,7 +7,6 @@ import {
 import { getGeomagneticModelState, insertGeomagneticTrial } from "@/lib/geomagneticLearningStore";
 
 const HAPI_BASE = "https://imag-data.bgs.ac.uk/GIN_V1/hapi";
-const DAY_MS = 86_400_000;
 
 type HapiInfo = { parameters?: Array<{ name?: string }> };
 type HapiData = { data?: unknown[][] };
@@ -64,9 +63,9 @@ async function fetchKp(start: Date, end: Date, signal?: AbortSignal): Promise<Kp
   } catch { return []; }
 }
 
-function sixHourBucket(date: Date) {
-  const hour = Math.floor(date.getUTCHours() / 6) * 6;
-  return `${date.toISOString().slice(0, 10).replaceAll("-", "") }T${String(hour).padStart(2, "0")}`;
+function threeHourBucket(date: Date) {
+  const hour = Math.floor(date.getUTCHours() / 3) * 3;
+  return `${date.toISOString().slice(0, 10).replaceAll("-", "")}T${String(hour).padStart(2, "0")}`;
 }
 
 export async function runAutomaticGeomagneticGeneration(options: { targetLimit?: number; lookbackHours?: number; signal?: AbortSignal } = {}) {
@@ -75,7 +74,7 @@ export async function runAutomaticGeomagneticGeneration(options: { targetLimit?:
   const start = new Date(now.getTime() - lookbackHours * 3_600_000);
   const model = await getGeomagneticModelState();
   const targetLimit = Math.max(1, Math.min(MONITORED_MAGNETIC_STATIONS.length, options.targetLimit ?? 2));
-  const rotation = Math.floor(now.getTime() / (6 * 3_600_000)) % MONITORED_MAGNETIC_STATIONS.length;
+  const rotation = Math.floor(now.getTime() / (3 * 3_600_000)) % MONITORED_MAGNETIC_STATIONS.length;
   const targets = Array.from({ length: targetLimit }, (_, index) => MONITORED_MAGNETIC_STATIONS[(rotation + index) % MONITORED_MAGNETIC_STATIONS.length]);
   const kp = await fetchKp(start, now, options.signal);
   const generated: Array<Record<string, unknown>> = [];
@@ -94,7 +93,7 @@ export async function runAutomaticGeomagneticGeneration(options: { targetLimit?:
       const metrics = analyzeMagneticLocality(target.value, references, kp);
       const emitted = shouldEmitGeomagneticProjection(metrics.localityScore, metrics.referenceCount, model.emissionThreshold);
       const window = geomagneticForecastWindow(now, model.windowHours);
-      const id = `${model.id}:${station.code}:${sixHourBucket(now)}`;
+      const id = `${model.id}:${station.code}:${threeHourBucket(now)}`;
       const persisted = await insertGeomagneticTrial({
         id, modelVersion: model.version, stationCode: station.code, stationName: station.name,
         latitude: station.latitude, longitude: station.longitude, issuedAt: now.toISOString(),
