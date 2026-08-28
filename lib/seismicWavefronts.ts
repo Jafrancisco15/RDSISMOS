@@ -35,7 +35,7 @@ export interface SeismicShadowZones {
   directP: AngularShadowZone | null;
   directS: AngularShadowZone | null;
   resolutionDeg: number;
-  method: "TauP sampled phase availability" | "RDSISMOS local spherical ray tracing";
+  method?: "TauP sampled phase availability" | "RDSISMOS local spherical ray tracing";
 }
 
 export interface SeismicWavefrontTable {
@@ -58,10 +58,7 @@ function rounded(value: number) {
   return Number(value.toFixed(2));
 }
 
-/**
- * Legacy helper retained for reproducibility of archived TauP responses.
- * New live calculations use the local spherical ray tracer.
- */
+/** Legacy helper retained for reproducibility of archived TauP responses. */
 export function deriveDirectShadowZones(arrivals: TauPArrival[], sampleStepDeg: number): SeismicShadowZones {
   const step = Math.max(0.1, Math.abs(sampleStepDeg));
   const p: number[] = [];
@@ -80,30 +77,20 @@ export function deriveDirectShadowZones(arrivals: TauPArrival[], sampleStepDeg: 
   const maxP = p.length ? Math.max(...p) : null;
   const maxS = s.length ? Math.max(...s) : null;
   const minPkp = pkp.length ? Math.min(...pkp) : null;
-
   const pStart = maxP === null ? null : Math.min(180, maxP + step / 2);
   const pEnd = minPkp === null ? null : Math.max(0, minPkp - step / 2);
   const sStart = maxS === null ? null : Math.min(180, maxS + step / 2);
 
   return {
-    directP: pStart !== null && pEnd !== null && pEnd > pStart
-      ? { startDeg: rounded(pStart), endDeg: rounded(pEnd) }
-      : null,
-    directS: sStart !== null && sStart < 180
-      ? { startDeg: rounded(sStart), endDeg: 180 }
-      : null,
+    directP: pStart !== null && pEnd !== null && pEnd > pStart ? { startDeg: rounded(pStart), endDeg: rounded(pEnd) } : null,
+    directS: sStart !== null && sStart < 180 ? { startDeg: rounded(sStart), endDeg: 180 } : null,
     resolutionDeg: rounded(step),
     method: "TauP sampled phase availability",
   };
 }
 
-/** Collapse multiple sampled branches to the earliest direct P/S arrival per distance. */
 export function buildDirectSurfaceCurves(arrivals: TauPArrival[]) {
-  const byPhase: Record<SurfaceWavePhase, Map<number, SurfaceWavefrontPoint>> = {
-    P: new Map(),
-    S: new Map(),
-  };
-
+  const byPhase: Record<SurfaceWavePhase, Map<number, SurfaceWavefrontPoint>> = { P: new Map(), S: new Map() };
   for (const arrival of arrivals) {
     const phase = arrival.phase === "P" ? "P" : arrival.phase === "S" ? "S" : null;
     if (!phase) continue;
@@ -112,26 +99,17 @@ export function buildDirectSurfaceCurves(arrivals: TauPArrival[]) {
     if (distanceDeg === null || timeSec === null || distanceDeg < 0 || distanceDeg > 180 || timeSec < 0) continue;
     const key = Number(distanceDeg.toFixed(3));
     const existing = byPhase[phase].get(key);
-    if (!existing || timeSec < existing.timeSec) {
-      byPhase[phase].set(key, { distanceDeg: key, timeSec, phase });
-    }
+    if (!existing || timeSec < existing.timeSec) byPhase[phase].set(key, { distanceDeg: key, timeSec, phase });
   }
-
   return {
     P: [...byPhase.P.values()].sort((a, b) => a.distanceDeg - b.distanceDeg),
     S: [...byPhase.S.values()].sort((a, b) => a.distanceDeg - b.distanceDeg),
   };
 }
 
-/** Returns current surface arrival radius without interpolating across a large shadow gap. */
-export function distanceAtElapsed(
-  curve: SurfaceWavefrontPoint[],
-  elapsedSec: number,
-  maxGapDeg = 3.25,
-): number | null {
+export function distanceAtElapsed(curve: SurfaceWavefrontPoint[], elapsedSec: number, maxGapDeg = 3.25): number | null {
   if (!curve.length || elapsedSec < curve[0].timeSec) return null;
   let best: number | null = null;
-
   for (let i = 0; i < curve.length; i += 1) {
     const point = curve[i];
     if (point.timeSec <= elapsedSec) best = Math.max(best ?? -Infinity, point.distanceDeg);
@@ -145,7 +123,6 @@ export function distanceAtElapsed(
     const interpolated = point.distanceDeg + (next.distanceDeg - point.distanceDeg) * mix;
     if (Number.isFinite(interpolated)) best = Math.max(best ?? -Infinity, interpolated);
   }
-
   return best !== null && Number.isFinite(best) ? Math.max(0, Math.min(180, best)) : null;
 }
 
@@ -155,21 +132,11 @@ export function geodesicCircle(latitude: number, longitude: number, distanceDeg:
   const lon1 = longitude * Math.PI / 180;
   const points: Array<{ lat: number; lng: number }> = [];
   const count = Math.max(18, segments);
-
   for (let index = 0; index <= count; index += 1) {
     const bearing = index / count * Math.PI * 2;
-    const lat2 = Math.asin(
-      Math.sin(lat1) * Math.cos(angular)
-      + Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing),
-    );
-    const lon2 = lon1 + Math.atan2(
-      Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1),
-      Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2),
-    );
-    points.push({
-      lat: lat2 * 180 / Math.PI,
-      lng: ((lon2 * 180 / Math.PI + 540) % 360) - 180,
-    });
+    const lat2 = Math.asin(Math.sin(lat1) * Math.cos(angular) + Math.cos(lat1) * Math.sin(angular) * Math.cos(bearing));
+    const lon2 = lon1 + Math.atan2(Math.sin(bearing) * Math.sin(angular) * Math.cos(lat1), Math.cos(angular) - Math.sin(lat1) * Math.sin(lat2));
+    points.push({ lat: lat2 * 180 / Math.PI, lng: ((lon2 * 180 / Math.PI + 540) % 360) - 180 });
   }
   return points;
 }
