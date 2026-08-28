@@ -3,6 +3,7 @@ import { EARTH_RADIUS_KM, localRayModel, traceRayFamilies, type LocalRayPath } f
 import type { TravelTimeModel } from "@/lib/seismicWavefronts";
 
 const MODELS = new Set<TravelTimeModel>(["ak135", "prem", "iasp91"]);
+const XML_ENTITIES: Record<string, string> = { "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" };
 const CX = 450;
 const CY = 314;
 const R = 250;
@@ -22,26 +23,18 @@ function modelParam(value: string | null): TravelTimeModel {
   return MODELS.has(model) ? model : "ak135";
 }
 
-function radiusAtDepth(depthKm: number) {
-  return R * Math.max(0, EARTH_RADIUS_KM - depthKm) / EARTH_RADIUS_KM;
-}
-
+function radiusAtDepth(depthKm: number) { return R * Math.max(0, EARTH_RADIUS_KM - depthKm) / EARTH_RADIUS_KM; }
 function xy(depthKm: number, thetaRad: number, mirror = false) {
   const radius = radiusAtDepth(depthKm);
   const sign = mirror ? -1 : 1;
-  return {
-    x: CX + sign * radius * Math.sin(thetaRad),
-    y: CY - radius * Math.cos(thetaRad),
-  };
+  return { x: CX + sign * radius * Math.sin(thetaRad), y: CY - radius * Math.cos(thetaRad) };
 }
-
 function pathD(ray: LocalRayPath, mirror = false) {
   return ray.points.map((point, index) => {
     const position = xy(point.depthKm, point.thetaRad, mirror);
     return `${index ? "L" : "M"}${position.x.toFixed(1)},${position.y.toFixed(1)}`;
   }).join(" ");
 }
-
 function phaseStyle(phase: LocalRayPath["phase"]) {
   if (phase === "P") return { stroke: "#0284c7", width: 1.45, dash: "" };
   if (phase === "S") return { stroke: "#f59e0b", width: 1.45, dash: "" };
@@ -51,28 +44,20 @@ function phaseStyle(phase: LocalRayPath["phase"]) {
   if (phase === "SKS") return { stroke: "#db2777", width: 1.45, dash: "4 2" };
   return { stroke: "#dc2626", width: 1.65, dash: "" };
 }
-
 function evenly<T>(items: T[], maximum: number) {
   if (items.length <= maximum) return items;
   return Array.from({ length: maximum }, (_, index) => items[Math.round(index * (items.length - 1) / Math.max(1, maximum - 1))]);
 }
-
 function selectedRays(rays: LocalRayPath[], detail: "basic" | "full") {
-  const phases: LocalRayPath["phase"][] = detail === "basic"
-    ? ["P", "S"]
-    : ["P", "S", "PcP", "ScS", "PKP", "SKS", "PKIKP"];
+  const phases: LocalRayPath["phase"][] = detail === "basic" ? ["P", "S"] : ["P", "S", "PcP", "ScS", "PKP", "SKS", "PKIKP"];
   return phases.flatMap((phase) => evenly(rays.filter((ray) => ray.phase === phase), phase === "P" || phase === "S" ? 11 : 7));
 }
-
-function escapeXml(value: string) {
-  return value.replace(/[<>&"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[character] ?? character);
-}
+function escapeXml(value: string) { return value.replace(/[<>&"]/g, (character) => XML_ENTITIES[character] ?? character); }
 
 function renderSvg(modelName: TravelTimeModel, depthKm: number, detail: "basic" | "full") {
   const model = localRayModel(modelName);
   const rays = selectedRays(traceRayFamilies(modelName, depthKm, detail === "basic" ? 34 : 42), detail);
   if (!rays.length) throw new Error("El trazador local no produjo rayos válidos para esta profundidad.");
-
   const mantleR = radiusAtDepth(model.cmbDepthKm);
   const innerCoreR = radiusAtDepth(model.icbDepthKm);
   const focus = xy(depthKm, 0);
@@ -82,7 +67,6 @@ function renderSvg(modelName: TravelTimeModel, depthKm: number, detail: "basic" 
     const opacity = ray.phase === "P" || ray.phase === "S" ? 0.68 : 0.78;
     return `<path d="${pathD(ray)}" fill="none" stroke="${style.stroke}" stroke-width="${style.width}"${dash} opacity="${opacity}"/><path d="${pathD(ray, true)}" fill="none" stroke="${style.stroke}" stroke-width="${style.width}"${dash} opacity="${opacity}"/>`;
   }).join("");
-
   const distanceTicks = [20,40,60,80,100,120,140,160,180].map((distance) => {
     const angle = distance * Math.PI / 180;
     const x = CX + (R + 15) * Math.sin(angle);
@@ -90,10 +74,7 @@ function renderSvg(modelName: TravelTimeModel, depthKm: number, detail: "basic" 
     const xm = CX - (R + 15) * Math.sin(angle);
     return `<text x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-size="10" fill="#475569" text-anchor="middle">${distance}°</text>${distance < 180 ? `<text x="${xm.toFixed(1)}" y="${y.toFixed(1)}" font-size="10" fill="#475569" text-anchor="middle">${distance}°</text>` : ""}`;
   }).join("");
-
-  const legend = detail === "basic"
-    ? [["P","#0284c7"],["S","#f59e0b"]]
-    : [["P","#0284c7"],["S","#f59e0b"],["PcP","#06b6d4"],["ScS","#f97316"],["PKP","#7c3aed"],["SKS","#db2777"],["PKIKP","#dc2626"]];
+  const legend = detail === "basic" ? [["P","#0284c7"],["S","#f59e0b"]] : [["P","#0284c7"],["S","#f59e0b"],["PcP","#06b6d4"],["ScS","#f97316"],["PKP","#7c3aed"],["SKS","#db2777"],["PKIKP","#dc2626"]];
   const legendSvg = legend.map(([name,color], index) => {
     const x = 76 + (index % 4) * 120;
     const y = 583 + Math.floor(index / 4) * 20;
@@ -132,21 +113,9 @@ export async function GET(request: NextRequest) {
   const detail = request.nextUrl.searchParams.get("detail") === "basic" ? "basic" : "full";
   try {
     const svg = renderSvg(model, depthKm, detail);
-    return new NextResponse(svg, {
-      status: 200,
-      headers: {
-        "Content-Type": "image/svg+xml; charset=utf-8",
-        "Cache-Control": "public, s-maxage=2592000, stale-while-revalidate=7776000",
-        "X-Content-Type-Options": "nosniff",
-        "X-RDSISMOS-Model": model,
-        "X-RDSISMOS-Engine": "local-spherical-ray-tracer",
-      },
-    });
+    return new NextResponse(svg, { status: 200, headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "public, s-maxage=2592000, stale-while-revalidate=7776000", "X-Content-Type-Options": "nosniff", "X-RDSISMOS-Model": model, "X-RDSISMOS-Engine": "local-spherical-ray-tracer" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No fue posible calcular las trayectorias sísmicas.";
-    return new NextResponse(errorSvg(message), {
-      status: 500,
-      headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
-    });
+    return new NextResponse(errorSvg(message), { status: 500, headers: { "Content-Type": "image/svg+xml; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } });
   }
 }
