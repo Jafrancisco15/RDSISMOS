@@ -2,6 +2,7 @@
 
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { GlobeMapLayersResponse } from "@/lib/globeLayers";
+import { SeismicEarthInteriorDiagram } from "./SeismicEarthInteriorDiagram";
 import { SeismicSurfaceContext } from "./SeismicSurfaceContext";
 
 export type RayDiagramModel = "ak135" | "prem" | "iasp91";
@@ -68,31 +69,28 @@ export function SeismicRayDiagramCard({
       {layers ? <SeismicSurfaceContext event={event} layers={layers} /> : <div style={{ minHeight: 180, display: "grid", placeItems: "center", borderRadius: 14, background: "#030914", color: "#64748b", fontSize: 10 }}>Cargando países, placas y fallas…</div>}
     </div>
 
-    <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,260px),1fr))", gap: 12, alignItems: "start" }}>
-      <div style={{ borderRadius: 14, overflow: "auto", background: "white", minHeight: 360, display: "grid", placeItems: "center" }}>
+    <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: 12, alignItems: "start" }}>
+      <SeismicEarthInteriorDiagram event={event} model={model} />
+
+      <div style={{ borderRadius: 14, overflow: "auto", background: "white", minHeight: 360, display: "grid", placeItems: "center", border: "1px solid rgba(148,163,184,.16)" }}>
         <img src={rayImage} alt={`Trayectorias sísmicas TauP para M${event.magnitude.toFixed(1)} ${event.place}`} loading="lazy" style={{ width: "100%", minWidth: 300, height: "auto", display: "block" }} />
       </div>
+    </div>
 
-      <aside style={{ display: "grid", gap: 8 }}>
-        <section style={{ borderRadius: 12, padding: 10, background: "rgba(15,23,42,.72)", border: "1px solid rgba(148,163,184,.13)" }}>
-          <div style={{ color: "#a5b4fc", fontSize: 9, fontWeight: 900 }}>LECTURA DEL CORTE</div>
-          <p style={{ color: "#cbd5e1", fontSize: 9.5, lineHeight: 1.5, margin: "6px 0 0" }}>Las curvas provienen del cálculo de trayectorias de TauP para la profundidad real del sismo. Las distancias receptoras muestreadas llegan hasta 180° para mostrar el otro lado del planeta y la antípoda.</p>
-        </section>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8, marginTop: 10 }}>
+      <section style={{ borderRadius: 12, padding: 10, background: "rgba(15,23,42,.72)", border: "1px solid rgba(148,163,184,.13)" }}>
+        <div style={{ color: "#a5b4fc", fontSize: 9, fontWeight: 900 }}>LECTURA DEL CORTE</div>
+        <p style={{ color: "#cbd5e1", fontSize: 9.5, lineHeight: 1.5, margin: "6px 0 0" }}>La gráfica coloreada fija la geometría de manto, núcleo externo e interno y calcula las sombras para esta profundidad/modelo. El panel blanco conserva las trayectorias reales generadas por TauP hasta 180°.</p>
+      </section>
 
-        {legend.map(([phase, description]) => <section key={phase} style={{ borderRadius: 10, padding: 9, background: "rgba(2,8,18,.7)", border: "1px solid rgba(148,163,184,.11)" }}>
-          <strong style={{ color: phase.startsWith("S") ? "#fbbf24" : "#38bdf8", fontSize: 10 }}>{phase}</strong>
-          <div style={{ color: "#94a3b8", fontSize: 9, lineHeight: 1.4, marginTop: 2 }}>{description}</div>
-        </section>)}
-
-        <section style={{ borderRadius: 12, padding: 10, background: "rgba(127,29,29,.12)", border: "1px solid rgba(251,113,133,.2)" }}>
-          <div style={{ color: "#fda4af", fontSize: 9, fontWeight: 900 }}>ZONAS DE SOMBRA</div>
-          <div style={{ color: "#cbd5e1", fontSize: 9, lineHeight: 1.45, marginTop: 5 }}>La ausencia de S directa más allá del núcleo externo y la discontinuidad de P directa alrededor de ~103°–142° son propiedades del modelo terrestre; las fases de núcleo vuelven a aparecer al otro lado.</div>
-        </section>
-      </aside>
+      {legend.map(([phase, description]) => <section key={phase} style={{ borderRadius: 10, padding: 9, background: "rgba(2,8,18,.7)", border: "1px solid rgba(148,163,184,.11)" }}>
+        <strong style={{ color: phase.startsWith("S") ? "#fbbf24" : "#38bdf8", fontSize: 10 }}>{phase}</strong>
+        <div style={{ color: "#94a3b8", fontSize: 9, lineHeight: 1.4, marginTop: 2 }}>{description}</div>
+      </section>)}
     </div>
 
     <div style={{ marginTop: 10, color: "#64748b", fontSize: 9, lineHeight: 1.5 }}>
-      <b style={{ color: "#94a3b8" }}>Importante:</b> el mapa superior muestra el contexto geográfico real del epicentro y de su antípoda. El corte inferior es un modelo 1-D esférico y por tanto no representa un azimut geográfico específico; no se asignan países concretos a cada rayo para evitar falsa precisión.
+      <b style={{ color: "#94a3b8" }}>Importante:</b> el mapa superior muestra el contexto geográfico real del epicentro y de su antípoda. El corte inferior es un modelo 1-D esférico y por tanto no representa un azimut geográfico específico; no se asignan países concretos a cada rayo para evitar falsa precisión. Las zonas marcadas son sombras de las fases <i>directas</i>; fases difractadas o de núcleo pueden existir dentro o después de esos intervalos.
     </div>
   </article>;
 }
