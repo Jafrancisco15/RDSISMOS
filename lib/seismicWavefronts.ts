@@ -26,6 +26,18 @@ export interface SurfaceWavefrontPoint {
   phase: SurfaceWavePhase;
 }
 
+export interface AngularShadowZone {
+  startDeg: number;
+  endDeg: number;
+}
+
+export interface SeismicShadowZones {
+  directP: AngularShadowZone | null;
+  directS: AngularShadowZone | null;
+  resolutionDeg: number;
+  method: "TauP sampled phase availability";
+}
+
 export interface SeismicWavefrontTable {
   provider: "EarthScope NSF SAGE / TauP";
   model: TravelTimeModel;
@@ -33,12 +45,59 @@ export interface SeismicWavefrontTable {
   sampleStepDeg: number;
   generatedAt: string;
   curves: Record<SurfaceWavePhase, SurfaceWavefrontPoint[]>;
+  shadowZones?: SeismicShadowZones;
   note: string;
 }
 
 function finite(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function rounded(value: number) {
+  return Number(value.toFixed(2));
+}
+
+/**
+ * Derives the classical body-wave shadow sectors from phase availability in the same
+ * TauP model/depth used by the diagram. The P-direct shadow ends where the first PKP
+ * branch becomes available. The S-direct shadow runs from the last direct S to 180°.
+ * Boundaries are placed halfway between sampled epicentral distances, so uncertainty is
+ * approximately half the sampling interval.
+ */
+export function deriveDirectShadowZones(arrivals: TauPArrival[], sampleStepDeg: number): SeismicShadowZones {
+  const step = Math.max(0.1, Math.abs(sampleStepDeg));
+  const p: number[] = [];
+  const s: number[] = [];
+  const pkp: number[] = [];
+
+  for (const arrival of arrivals) {
+    const distance = finite(arrival.distdeg);
+    if (distance === null || distance < 0 || distance > 180) continue;
+    const phase = String(arrival.phase ?? "").trim();
+    if (phase === "P") p.push(distance);
+    else if (phase === "S") s.push(distance);
+    else if (/^PKP(?!I)/i.test(phase)) pkp.push(distance);
+  }
+
+  const maxP = p.length ? Math.max(...p) : null;
+  const maxS = s.length ? Math.max(...s) : null;
+  const minPkp = pkp.length ? Math.min(...pkp) : null;
+
+  const pStart = maxP === null ? null : Math.min(180, maxP + step / 2);
+  const pEnd = minPkp === null ? null : Math.max(0, minPkp - step / 2);
+  const sStart = maxS === null ? null : Math.min(180, maxS + step / 2);
+
+  return {
+    directP: pStart !== null && pEnd !== null && pEnd > pStart
+      ? { startDeg: rounded(pStart), endDeg: rounded(pEnd) }
+      : null,
+    directS: sStart !== null && sStart < 180
+      ? { startDeg: rounded(sStart), endDeg: 180 }
+      : null,
+    resolutionDeg: rounded(step),
+    method: "TauP sampled phase availability",
+  };
 }
 
 /**
