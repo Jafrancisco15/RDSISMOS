@@ -5,7 +5,8 @@ const USER_AGENT = "RDSISMOS/1.0 TauP-ray-diagram";
 const MODELS = new Set(["ak135", "prem", "iasp91"]);
 const BASIC_PHASES = "P,S,Pdiff,Sdiff";
 const FULL_PHASES = "P,S,PP,SS,PcP,ScS,Pdiff,Sdiff,PKP,SKS,PKiKP,SKiKS,PKIKP,SKIKS";
-const DISTANCES = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100, 110, 120, 130, 140, 150, 160, 170, 180];
+const DISTANCES = [20, 40, 60, 80, 100, 120, 140, 160, 180];
+const XML_ENTITIES: Record<string, string> = { "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" };
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +34,7 @@ function sanitizeSvg(svg: string) {
 }
 
 function errorSvg(message: string) {
-  const safe = message.replace(/[<>&"]/g, (character) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[character] ?? character);
+  const safe = message.replace(/[<>&"]/g, (character) => XML_ENTITIES[character] ?? character);
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620"><rect width="900" height="620" fill="#07111d"/><circle cx="450" cy="315" r="220" fill="#151d2e" stroke="#334155" stroke-width="2"/><text x="450" y="290" text-anchor="middle" fill="#fca5a5" font-family="sans-serif" font-size="22" font-weight="700">TauP no disponible</text><text x="450" y="325" text-anchor="middle" fill="#cbd5e1" font-family="sans-serif" font-size="14">${safe}</text><text x="450" y="355" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="12">RDSISMOS · EarthScope NSF SAGE</text></svg>`;
 }
 
