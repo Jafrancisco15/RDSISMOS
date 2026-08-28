@@ -35,11 +35,11 @@ export interface SeismicShadowZones {
   directP: AngularShadowZone | null;
   directS: AngularShadowZone | null;
   resolutionDeg: number;
-  method: "TauP sampled phase availability";
+  method: "TauP sampled phase availability" | "RDSISMOS local spherical ray tracing";
 }
 
 export interface SeismicWavefrontTable {
-  provider: "EarthScope NSF SAGE / TauP";
+  provider: "EarthScope NSF SAGE / TauP" | "RDSISMOS local spherical ray tracer";
   model: TravelTimeModel;
   depthKm: number;
   sampleStepDeg: number;
@@ -59,11 +59,8 @@ function rounded(value: number) {
 }
 
 /**
- * Derives the classical body-wave shadow sectors from phase availability in the same
- * TauP model/depth used by the diagram. The P-direct shadow ends where the first PKP
- * branch becomes available. The S-direct shadow runs from the last direct S to 180°.
- * Boundaries are placed halfway between sampled epicentral distances, so uncertainty is
- * approximately half the sampling interval.
+ * Legacy helper retained for reproducibility of archived TauP responses.
+ * New live calculations use the local spherical ray tracer.
  */
 export function deriveDirectShadowZones(arrivals: TauPArrival[], sampleStepDeg: number): SeismicShadowZones {
   const step = Math.max(0.1, Math.abs(sampleStepDeg));
@@ -100,12 +97,7 @@ export function deriveDirectShadowZones(arrivals: TauPArrival[], sampleStepDeg: 
   };
 }
 
-/**
- * Collapse TauP's multiple branches at the same epicentral distance to the earliest
- * direct P or direct S arrival. We intentionally do not merge PKP/SKS/etc. into these
- * curves: when a direct phase is absent, the resulting surface front has a gap rather
- * than pretending propagation continued through a shadow zone.
- */
+/** Collapse multiple sampled branches to the earliest direct P/S arrival per distance. */
 export function buildDirectSurfaceCurves(arrivals: TauPArrival[]) {
   const byPhase: Record<SurfaceWavePhase, Map<number, SurfaceWavefrontPoint>> = {
     P: new Map(),
@@ -131,10 +123,7 @@ export function buildDirectSurfaceCurves(arrivals: TauPArrival[]) {
   };
 }
 
-/**
- * Returns the current surface arrival radius for a direct phase. A large gap in the
- * TauP distance grid is treated as a shadow zone and is not interpolated across.
- */
+/** Returns current surface arrival radius without interpolating across a large shadow gap. */
 export function distanceAtElapsed(
   curve: SurfaceWavefrontPoint[],
   elapsedSec: number,
