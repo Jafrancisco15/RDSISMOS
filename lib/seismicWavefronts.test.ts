@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildDirectSurfaceCurves, depthKey, distanceAtElapsed, geodesicCircle } from "./seismicWavefronts";
+import {
+  buildDirectSurfaceCurves,
+  depthKey,
+  deriveDirectShadowZones,
+  distanceAtElapsed,
+  geodesicCircle,
+  type TauPArrival,
+} from "./seismicWavefronts";
 
 test("TauP direct branches collapse to earliest P/S arrival per distance", () => {
   const curves = buildDirectSurfaceCurves([
@@ -39,4 +46,37 @@ test("geodesic circle closes cleanly", () => {
   assert.equal(circle.length, 37);
   assert.ok(Math.abs(circle[0].lat - circle[circle.length - 1].lat) < 1e-9);
   assert.ok(Math.abs(circle[0].lng - circle[circle.length - 1].lng) < 1e-9);
+});
+
+function arrival(distdeg: number, phase: string): TauPArrival {
+  return { distdeg, phase, time: 100 + distdeg };
+}
+
+test("shadow zones follow last direct P/S and first PKP availability", () => {
+  const zones = deriveDirectShadowZones([
+    arrival(0, "P"),
+    arrival(60, "P"),
+    arrival(102, "P"),
+    arrival(0, "S"),
+    arrival(60, "S"),
+    arrival(102, "S"),
+    arrival(144, "PKP"),
+    arrival(150, "PKP"),
+  ], 1.5);
+
+  assert.deepEqual(zones.directP, { startDeg: 102.75, endDeg: 143.25 });
+  assert.deepEqual(zones.directS, { startDeg: 102.75, endDeg: 180 });
+  assert.equal(zones.resolutionDeg, 1.5);
+});
+
+test("P shadow is not invented when no PKP branch is available", () => {
+  const zones = deriveDirectShadowZones([
+    arrival(0, "P"),
+    arrival(90, "P"),
+    arrival(0, "S"),
+    arrival(100, "S"),
+  ], 2);
+
+  assert.equal(zones.directP, null);
+  assert.deepEqual(zones.directS, { startDeg: 101, endDeg: 180 });
 });
