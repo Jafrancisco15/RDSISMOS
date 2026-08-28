@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   buildDirectSurfaceCurves,
+  deriveDirectShadowZones,
   type TauPJsonResponse,
   type TravelTimeModel,
 } from "@/lib/seismicWavefronts";
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
     distdeg: distances.join(","),
     evdepth: depthKm.toFixed(1),
     model,
-    phases: "P,S",
+    phases: "P,S,PKP",
     format: "json",
   });
 
@@ -56,6 +57,7 @@ export async function GET(request: NextRequest) {
 
     const curves = buildDirectSurfaceCurves(payload.arrivals);
     if (!curves.P.length && !curves.S.length) throw new Error("TauP no devolvió fases P/S directas para esta profundidad.");
+    const shadowZones = deriveDirectShadowZones(payload.arrivals, STEP_DEG);
 
     return NextResponse.json({
       provider: "EarthScope NSF SAGE / TauP",
@@ -64,7 +66,8 @@ export async function GET(request: NextRequest) {
       sampleStepDeg: STEP_DEG,
       generatedAt: new Date().toISOString(),
       curves,
-      note: "Frentes de llegada superficial calculados con TauP y un modelo terrestre 1-D esférico. Se muestran fases P y S directas; las zonas sin fase directa permanecen vacías en vez de interpolarse a través de la sombra sísmica.",
+      shadowZones,
+      note: "Frentes de llegada superficial calculados con TauP y un modelo terrestre 1-D esférico. Las sombras se derivan de la disponibilidad de P directa, S directa y del comienzo de PKP en la misma profundidad/modelo; resolución angular aproximada ±0.75°.",
       source: "EarthScope IRISWS traveltime v1",
     });
   } catch (error) {
