@@ -68,15 +68,15 @@ export function SeismicRayDiagramCard({
       {layers ? <SeismicSurfaceContext event={event} layers={layers} /> : <div style={{ minHeight: 180, display: "grid", placeItems: "center", borderRadius: 14, background: "#030914", color: "#64748b", fontSize: 10 }}>Cargando países, placas y fallas…</div>}
     </div>
 
-    <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(210px,280px)", gap: 12, alignItems: "start" }}>
-      <div style={{ borderRadius: 14, overflow: "hidden", background: "white", minHeight: 420, display: "grid", placeItems: "center" }}>
-        <img src={rayImage} alt={`Trayectorias sísmicas TauP para M${event.magnitude.toFixed(1)} ${event.place}`} loading="lazy" style={{ width: "100%", height: "auto", display: "block" }} />
+    <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,260px),1fr))", gap: 12, alignItems: "start" }}>
+      <div style={{ borderRadius: 14, overflow: "auto", background: "white", minHeight: 360, display: "grid", placeItems: "center" }}>
+        <img src={rayImage} alt={`Trayectorias sísmicas TauP para M${event.magnitude.toFixed(1)} ${event.place}`} loading="lazy" style={{ width: "100%", minWidth: 300, height: "auto", display: "block" }} />
       </div>
 
       <aside style={{ display: "grid", gap: 8 }}>
         <section style={{ borderRadius: 12, padding: 10, background: "rgba(15,23,42,.72)", border: "1px solid rgba(148,163,184,.13)" }}>
           <div style={{ color: "#a5b4fc", fontSize: 9, fontWeight: 900 }}>LECTURA DEL CORTE</div>
-          <p style={{ color: "#cbd5e1", fontSize: 9.5, lineHeight: 1.5, margin: "6px 0 0" }}>Las curvas provienen del cálculo de trayectorias de TauP para la profundidad real del sismo. Las distancias receptoras muestreadas van de 10° a 180° para mostrar el otro lado del planeta y la antípoda.</p>
+          <p style={{ color: "#cbd5e1", fontSize: 9.5, lineHeight: 1.5, margin: "6px 0 0" }}>Las curvas provienen del cálculo de trayectorias de TauP para la profundidad real del sismo. Las distancias receptoras muestreadas llegan hasta 180° para mostrar el otro lado del planeta y la antípoda.</p>
         </section>
 
         {legend.map(([phase, description]) => <section key={phase} style={{ borderRadius: 10, padding: 9, background: "rgba(2,8,18,.7)", border: "1px solid rgba(148,163,184,.11)" }}>
