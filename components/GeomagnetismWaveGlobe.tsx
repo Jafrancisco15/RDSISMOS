@@ -89,7 +89,7 @@ function waveLabel(item: WavePath) {
 
 function eventLabel(item: EventPoint) {
   const event = item.event;
-  return `<div class="globe-tooltip"><strong>Hipocentro proyectado · M${event.magnitude.toFixed(1)}</strong><span>${escapeHtml(event.place)}</span><small>${event.depthKm.toFixed(1)} km · ${new Date(event.timeUtc).toISOString().replace("T", " ").slice(0, 19)} UTC</small></div>`;
+  return `<div class="globe-tooltip"><strong>Epicentro · M${event.magnitude.toFixed(1)}</strong><span>${escapeHtml(event.place)}</span><small>hipocentro ${event.depthKm.toFixed(1)} km · ${new Date(event.timeUtc).toISOString().replace("T", " ").slice(0, 19)} UTC</small></div>`;
 }
 
 async function mapWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T) => Promise<void>) {
@@ -150,11 +150,19 @@ export function GeomagnetismWaveGlobe({ events, selectedEventId }: { events: Ear
     return [...unique.entries()].map(([key, depth]) => ({ key, depth }));
   }, [activeEvents, model, scope]);
 
+  const requestSignature = useMemo(() => tableRequests.map((item) => item.key).sort().join("|"), [tableRequests]);
+
   useEffect(() => {
     const missing = tableRequests.filter(({ key }) => !tables[key]);
-    if (!missing.length) return;
+    if (!missing.length) {
+      setLoadingCount(0);
+      return;
+    }
+
     const controller = new AbortController();
     let disposed = false;
+    const loaded: Record<string, SeismicWavefrontTable> = {};
+    const errors: string[] = [];
     setLoadingCount(missing.length);
     setLoadErrors([]);
 
@@ -164,17 +172,23 @@ export function GeomagnetismWaveGlobe({ events, selectedEventId }: { events: Ear
         const response = await fetch(`/api/geomagnetism/wavefronts?${params}`, { cache: "force-cache", signal: controller.signal });
         const payload = await response.json() as SeismicWavefrontTable & { error?: string };
         if (!response.ok) throw new Error(payload.error ?? `HTTP ${response.status}`);
-        if (!disposed) setTables((current) => ({ ...current, [key]: payload }));
+        loaded[key] = payload;
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") return;
-        if (!disposed) setLoadErrors((current) => [...current, `Prof. ${depth.toFixed(1)} km: ${error instanceof Error ? error.message : "sin curva TauP"}`].slice(0, 8));
+        errors.push(`Prof. ${depth.toFixed(1)} km: ${error instanceof Error ? error.message : "sin curva TauP"}`);
       } finally {
         if (!disposed) setLoadingCount((current) => Math.max(0, current - 1));
       }
+    }).then(() => {
+      if (disposed) return;
+      if (Object.keys(loaded).length) setTables((current) => ({ ...current, ...loaded }));
+      if (errors.length) setLoadErrors(errors.slice(0, 8));
     });
 
     return () => { disposed = true; controller.abort(); };
-  }, [model, tableRequests, tables]);
+    // tables is intentionally omitted: a completed table is merged once per request set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, requestSignature]);
 
   const durationSec = useMemo(() => {
     let maximum = 0;
@@ -286,7 +300,7 @@ export function GeomagnetismWaveGlobe({ events, selectedEventId }: { events: Ear
         if (!event) return null;
         return <button key={id} type="button" onClick={() => setManualIds((current) => current.filter((item) => item !== id))} style={{ border: "1px solid #334155", borderRadius: 999, background: "#0f172a", color: "#e2e8f0", padding: "5px 8px", fontSize: 9, cursor: "pointer" }}>M{event.magnitude.toFixed(1)} {event.place.slice(0, 28)} ×</button>;
       })}
-      {!manualIds.length && <span style={{ color: "#64748b", fontSize: 9 }}>Selecciona un sismo en el mapa 2D y pulsa “Añadir”.</span>}
+      {!manualIds.length && <span style={{ color: "#64748b", fontSize: 9 }}>Elige un sismo en el selector superior y pulsa “Añadir”.</span>}
     </div>}
 
     {scope === "all" && <div style={{ color: "#fde68a", fontSize: 9, marginTop: 8 }}>Modo Todos: usa la profundidad redondeada al bloque de 5 km más cercano para compartir tablas TauP entre eventos y mantener el globo fluido. Uno/Varios usa profundidad a 0.1 km.</div>}
