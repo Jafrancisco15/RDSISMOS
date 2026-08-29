@@ -1,5 +1,6 @@
 export type TravelTimeModel = "ak135" | "prem" | "iasp91";
 export type SurfaceWavePhase = "P" | "S";
+export type AntipodalCorePhase = "PKP" | "SKS" | "PKIKP";
 
 export interface TauPArrival {
   distdeg: number;
@@ -38,6 +39,23 @@ export interface SeismicShadowZones {
   method?: "TauP sampled phase availability" | "RDSISMOS local spherical ray tracing";
 }
 
+export interface AntipodalFocusArrival {
+  family: "P-like" | "S-like";
+  phase: AntipodalCorePhase;
+  timeSec: number;
+  sampledDistanceDeg: number;
+  distanceErrorDeg: number;
+  focusing: "supported" | "weak-or-uncertain" | "diametral-not-focused";
+}
+
+export interface AntipodalFocusModel {
+  pLike: AntipodalFocusArrival | null;
+  sLike: AntipodalFocusArrival | null;
+  reboundCurves: Record<SurfaceWavePhase, SurfaceWavefrontPoint[]>;
+  method: "nearest antipodal core-transmitted ray + local 1-D continuation";
+  note: string;
+}
+
 export interface SeismicWavefrontTable {
   provider: "EarthScope NSF SAGE / TauP" | "RDSISMOS local spherical ray tracer";
   model: TravelTimeModel;
@@ -46,6 +64,7 @@ export interface SeismicWavefrontTable {
   generatedAt: string;
   curves: Record<SurfaceWavePhase, SurfaceWavefrontPoint[]>;
   shadowZones?: SeismicShadowZones;
+  antipodalFocus?: AntipodalFocusModel;
   note: string;
 }
 
