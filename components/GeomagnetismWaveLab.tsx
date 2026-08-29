@@ -99,9 +99,9 @@ export function GeomagnetismWaveLab() {
 
   return <div style={{ display: "grid", gap: 12, padding: "0 12px 22px" }}>
     <section style={panel}>
-      <div style={{ color: "#7dd3fc", fontSize: 10, fontWeight: 900, letterSpacing: ".1em" }}>SEISMIC RAY LAB · TAUP · CORTE TERRESTRE</div>
-      <h2 style={{ color: "white", margin: "5px 0 4px", fontSize: 21 }}>Trayectorias P/S por terremoto seleccionado</h2>
-      <p style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.55, margin: 0, maxWidth: 980 }}>Cada sismo genera su propia ficha: contexto real de países, fallas, placas, epicentro y antípoda; debajo, un corte interno calculado por EarthScope TauP con la profundidad real del evento. En modo completo se incluyen reflexiones y fases que atraviesan el núcleo.</p>
+      <div style={{ color: "#7dd3fc", fontSize: 10, fontWeight: 900, letterSpacing: ".1em" }}>SEISMIC IMPACT & RAY LAB · MOTOR LOCAL RDSISMOS</div>
+      <h2 style={{ color: "white", margin: "5px 0 4px", fontSize: 21 }}>Ondas P/S, países alcanzados e impacto estimado</h2>
+      <p style={{ color: "#94a3b8", fontSize: 10, lineHeight: 1.55, margin: 0, maxWidth: 980 }}>Cada sismo genera su propia ficha: contexto real de países, fallas, placas, epicentro y antípoda; globo 3D transparente con frentes P/S y probabilidad de intensidad por país; perfil 2D de MMI; y corte interno con rayos calculados localmente mediante AK135, PREM o IASP91.</p>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8, marginTop: 11 }}>
         <label style={{ color: "#cbd5e1", fontSize: 10 }}>Desde<input type="date" value={startDate} max={endDate} onChange={(event) => setStartDate(event.target.value)} style={control} /></label>
@@ -110,7 +110,7 @@ export function GeomagnetismWaveLab() {
         <label style={{ color: "#cbd5e1", fontSize: 10 }}>Sismo<select value={selectedEventId} onChange={(event) => setSelectedEventId(event.target.value)} style={control}><option value="">— ninguno —</option>{events.slice(0, 1500).map((event) => <option key={event.id} value={event.id}>M{event.magnitude.toFixed(1)} · {new Date(event.timeUtc).toISOString().slice(0, 16)} · {event.place}</option>)}</select></label>
         <label style={{ color: "#cbd5e1", fontSize: 10 }}>Mostrar<select value={scope} onChange={(event) => { setScope(event.target.value as ScopeMode); setPage(1); }} style={control}><option value="one">Uno · seleccionado</option><option value="several">Varios · lista manual</option><option value="all">Todos · paginados</option></select></label>
         <label style={{ color: "#cbd5e1", fontSize: 10 }}>Modelo<select value={model} onChange={(event) => setModel(event.target.value as RayDiagramModel)} style={control}><option value="ak135">AK135</option><option value="prem">PREM</option><option value="iasp91">IASP91</option></select></label>
-        <label style={{ color: "#cbd5e1", fontSize: 10 }}>Trayectorias<select value={detail} onChange={(event) => setDetail(event.target.value as RayDiagramDetail)} style={control}><option value="full">Completo · P/S + reflejos + núcleo</option><option value="basic">Básico · P/S + difracción</option></select></label>
+        <label style={{ color: "#cbd5e1", fontSize: 10 }}>Trayectorias<select value={detail} onChange={(event) => setDetail(event.target.value as RayDiagramDetail)} style={control}><option value="full">Completo · P/S + reflejos + núcleo</option><option value="basic">Básico · P/S directas</option></select></label>
         <div style={{ display: "flex", alignItems: "end" }}><button type="button" style={{ ...button, width: "100%" }} onClick={addSelected} disabled={!selectedEvent}>Añadir a Varios</button></div>
       </div>
 
@@ -137,7 +137,7 @@ export function GeomagnetismWaveLab() {
     </section>}
 
     <section style={{ ...panel, color: "#94a3b8", fontSize: 9.5, lineHeight: 1.55 }}>
-      <b style={{ color: "#cbd5e1" }}>Método.</b> El contexto superficial reutiliza Natural Earth, PB2002 y GEM Global Active Faults ya presentes en RDSISMOS. Las trayectorias internas se solicitan como SVG directamente al servicio EarthScope IRISWS Traveltime/TauP para distancias de 10° a 180°. Modelo predeterminado: AK135. No se dibujan rayos mediante curvas manuales.
+      <b style={{ color: "#cbd5e1" }}>Método.</b> El contexto superficial reutiliza Natural Earth, PB2002 y GEM Global Active Faults. Los rayos y frentes P/S se calculan localmente con perfiles 1-D AK135/PREM/IASP91. El impacto por país usa la ecuación de predicción de intensidad Allen–Wald–Worden 2012 con distancia hipocentral y dispersión; no incluye Vs30, directividad ni geometría finita de ruptura y no sustituye ShakeMap.
     </section>
   </div>;
 }
