@@ -3,6 +3,7 @@
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { GlobeMapLayersResponse } from "@/lib/globeLayers";
 import { SeismicEarthInteriorDiagram } from "./SeismicEarthInteriorDiagram";
+import { SeismicImpactPanel } from "./SeismicImpactPanel";
 import { SeismicSurfaceContext } from "./SeismicSurfaceContext";
 
 export type RayDiagramModel = "ak135" | "prem" | "iasp91";
@@ -63,6 +64,10 @@ export function SeismicRayDiagramCard({ event, model, detail, layers }: {
       {layers ? <SeismicSurfaceContext event={event} layers={layers} /> : <div style={{ minHeight: 180, display: "grid", placeItems: "center", borderRadius: 14, background: "#030914", color: "#64748b", fontSize: 10 }}>Cargando países, placas y fallas…</div>}
     </div>
 
+    <div style={{ marginTop: 12 }}>
+      <SeismicImpactPanel event={event} model={model} layers={layers} />
+    </div>
+
     <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,320px),1fr))", gap: 12, alignItems: "start" }}>
       <SeismicEarthInteriorDiagram event={event} model={model} />
       <div style={{ borderRadius: 14, overflow: "auto", background: "white", minHeight: 360, display: "grid", placeItems: "center", border: "1px solid rgba(148,163,184,.16)" }}>
@@ -73,7 +78,7 @@ export function SeismicRayDiagramCard({ event, model, detail, layers }: {
     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8, marginTop: 10 }}>
       <section style={{ borderRadius: 12, padding: 10, background: "rgba(15,23,42,.72)", border: "1px solid rgba(148,163,184,.13)" }}>
         <div style={{ color: "#a5b4fc", fontSize: 9, fontWeight: 900 }}>LECTURA DEL CORTE</div>
-        <p style={{ color: "#cbd5e1", fontSize: 9.5, lineHeight: 1.5, margin: "6px 0 0" }}>Ambos paneles se calculan localmente con teoría de rayos en una Tierra esférica 1-D y el perfil {modelLabel(model)}. La curvatura surge de la ley de Snell esférica y de los cambios de velocidad con profundidad; no se dibuja a mano.</p>
+        <p style={{ color: "#cbd5e1", fontSize: 9.5, lineHeight: 1.5, margin: "6px 0 0" }}>Los cortes se calculan localmente con teoría de rayos en una Tierra esférica 1-D y el perfil {modelLabel(model)}. El globo superior separa propagación P/S de impacto humano estimado mediante una IPE de intensidad.</p>
       </section>
       {legend.map(([phase, description]) => <section key={phase} style={{ borderRadius: 10, padding: 9, background: "rgba(2,8,18,.7)", border: "1px solid rgba(148,163,184,.11)" }}>
         <strong style={{ color: phase.startsWith("S") ? "#fbbf24" : "#38bdf8", fontSize: 10 }}>{phase}</strong>
@@ -82,7 +87,7 @@ export function SeismicRayDiagramCard({ event, model, detail, layers }: {
     </div>
 
     <div style={{ marginTop: 10, color: "#64748b", fontSize: 9, lineHeight: 1.5 }}>
-      <b style={{ color: "#94a3b8" }}>Importante:</b> el mapa superior muestra el contexto geográfico real del epicentro y de su antípoda. Los cortes usan modelos radiales 1-D y no representan heterogeneidad 3-D lateral. Las trayectorias son cálculo físico local aproximado a partir de perfiles estándar AK135/PREM/IASP91; no son una reproducción byte-a-byte de TauP.
+      <b style={{ color: "#94a3b8" }}>Importante:</b> el mapa superior muestra el contexto geográfico real del epicentro y de su antípoda. Los cortes usan modelos radiales 1-D y no representan heterogeneidad 3-D lateral. La estimación de impacto no sustituye ShakeMap ni una GMPE regional con Vs30 y geometría de ruptura.
     </div>
   </article>;
 }
