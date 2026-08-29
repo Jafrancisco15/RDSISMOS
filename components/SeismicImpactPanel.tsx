@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Globe, { type GlobeMethods } from "react-globe.gl";
+import type { AntipodalFocusResponse } from "@/lib/antipodalSeismic";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { GlobeMapLayersResponse, GlobeMapPath, GlobeMapPoint } from "@/lib/globeLayers";
 import {
@@ -20,7 +21,7 @@ import {
 interface RenderPath {
   id: string;
   name: string;
-  kind: "country" | "impact" | "wave";
+  kind: "country" | "impact" | "wave" | "antipodal-wave";
   points: Array<GlobeMapPoint & { altitude: number }>;
   color: string;
   stroke: number;
@@ -45,6 +46,7 @@ function clamp(value: number, min: number, max: number) { return Math.min(max, M
 function pct(value: number) { return `${(value * 100).toFixed(value >= .1 ? 0 : 1)}%`; }
 function mins(seconds: number | null) { return seconds === null ? "—" : seconds < 60 ? `${Math.round(seconds)} s` : `${(seconds / 60).toFixed(1)} min`; }
 function escapeHtml(value: string) { return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;"); }
+function normalizeLongitude(value: number) { return ((value + 540) % 360) - 180; }
 
 function impactColor(item: CountryImpactEstimate, alpha = 1) {
   if (item.probabilityMmi6 >= .2 || item.meanMmi >= 6) return `rgba(239,68,68,${alpha})`;
@@ -76,7 +78,7 @@ function countryPaths(borders: GlobeMapPath[], impacts: Map<string, CountryImpac
   });
 }
 
-function circlePath(id: string, name: string, lat: number, lng: number, radiusKm: number, color: string, kind: "impact" | "wave", altitude: number, dashLength = 1, dashGap = 0): RenderPath {
+function circlePath(id: string, name: string, lat: number, lng: number, radiusKm: number, color: string, kind: RenderPath["kind"], altitude: number, dashLength = 1, dashGap = 0): RenderPath {
   const distanceDeg = radiusKm / EARTH_RADIUS_KM * 180 / Math.PI;
   return {
     id,
@@ -84,7 +86,7 @@ function circlePath(id: string, name: string, lat: number, lng: number, radiusKm
     kind,
     points: geodesicCircle(lat, lng, distanceDeg, 120).map((point) => ({ ...point, altitude })),
     color,
-    stroke: kind === "wave" ? 1.35 : .9,
+    stroke: kind === "wave" || kind === "antipodal-wave" ? 1.35 : .9,
     dashLength,
     dashGap,
     label: `<div class="globe-tooltip"><strong>${escapeHtml(name)}</strong><span>radio aproximado ${Math.round(radiusKm).toLocaleString("es-DO")} km</span></div>`,
@@ -127,14 +129,40 @@ function ImpactProfile({ event, impacts }: { event: EarthquakeEvent; impacts: Co
   </div>;
 }
 
+function AntipodalTimeline({ antipodal, elapsedSec, durationSec }: { antipodal: AntipodalFocusResponse | null; elapsedSec: number; durationSec: number }) {
+  if (!antipodal) return <div style={{ padding: "0 11px 11px", color: "#64748b", fontSize: 9 }}>Calculando focalización antipodal…</div>;
+  const width = 900; const height = 126; const left = 48; const right = 20; const axisY = 70;
+  const x = (seconds: number) => left + clamp(seconds / Math.max(1, durationSec), 0, 1) * (width - left - right);
+  const currentX = x(elapsedSec);
+  const arrivals = [antipodal.pLike, antipodal.sLike].filter((item): item is NonNullable<typeof item> => Boolean(item));
+  return <div style={{ padding: "0 11px 11px" }}>
+    <div style={{ color: "#c4b5fd", fontSize: 9, fontWeight: 900, letterSpacing: ".08em", marginBottom: 5 }}>2D · CONVERGENCIA / REBOTE ANTIPODAL</div>
+    <div style={{ overflowX: "auto" }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", minWidth: 650, display: "block", background: "#020812", borderRadius: 12 }} role="img" aria-label="Línea de tiempo de focalización antipodal">
+        <line x1={left} y1={axisY} x2={width-right} y2={axisY} stroke="#475569" strokeWidth="2"/>
+        <text x={left} y={axisY+25} fill="#94a3b8" fontSize="9">origen</text><text x={width-right-62} y={axisY+25} fill="#94a3b8" fontSize="9">{mins(durationSec)}</text>
+        {arrivals.map((arrival, index) => {
+          const px = x(arrival.timeSec);
+          const color = arrival.family === "P-like" ? "#c084fc" : "#f472b6";
+          return <g key={arrival.family}><line x1={px} y1={24} x2={px} y2={axisY+8} stroke={color} strokeWidth="2" strokeDasharray="4 3"/><circle cx={px} cy={axisY} r="5" fill={color}/><text x={Math.min(width-190, px+6)} y={26+index*17} fill={color} fontSize="10" fontWeight="800">{arrival.phase} · foco ~{mins(arrival.timeSec)}</text><text x={Math.min(width-190, px+6)} y={38+index*17} fill="#94a3b8" fontSize="8">Δ muestreada {arrival.sampledDistanceDeg.toFixed(1)}° · error {arrival.distanceErrorDeg.toFixed(1)}°</text></g>;
+        })}
+        <line x1={currentX} y1={16} x2={currentX} y2={axisY+12} stroke="#f8fafc" strokeWidth="1.3"/><text x={Math.min(width-95,currentX+5)} y={112} fill="#e2e8f0" fontSize="9">ahora {mins(elapsedSec)}</text>
+      </svg>
+    </div>
+    <p style={{ color: "#64748b", fontSize: 8.7, lineHeight: 1.5, margin: "6px 0 0" }}>El frente secundario representa continuidad/focalización de energía alrededor de la antípoda. No representa un segundo terremoto ni se usa para asignar MMI de daño a 180°.</p>
+  </div>;
+}
+
 export function SeismicImpactPanel({ event, model, layers }: { event: EarthquakeEvent; model: TravelTimeModel; layers: GlobeMapLayersResponse | null }) {
   const globeRef = useRef<GlobeMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 900, height: 560 });
   const [wavefronts, setWavefronts] = useState<SeismicWavefrontTable | null>(null);
+  const [antipodal, setAntipodal] = useState<AntipodalFocusResponse | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(30);
+  const [showAntipodal, setShowAntipodal] = useState(true);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -146,12 +174,18 @@ export function SeismicImpactPanel({ event, model, layers }: { event: Earthquake
   useEffect(() => {
     const controller = new AbortController();
     const params = new URLSearchParams({ depth: event.depthKm.toFixed(1), model });
-    fetch(`/api/geomagnetism/wavefronts?${params}`, { cache: "force-cache", signal: controller.signal })
-      .then(async (response) => { const payload = await response.json() as SeismicWavefrontTable; if (!response.ok) throw new Error(`HTTP ${response.status}`); return payload; })
-      .then((payload) => { setWavefronts(payload); setElapsedSec(0); setPlaying(false); })
-      .catch((error) => { if (!(error instanceof DOMException && error.name === "AbortError")) setWavefronts(null); });
+    setWavefronts(null); setAntipodal(null); setElapsedSec(0); setPlaying(false);
+    Promise.allSettled([
+      fetch(`/api/geomagnetism/wavefronts?${params}`, { cache: "force-cache", signal: controller.signal }).then(async (response) => { const payload = await response.json() as SeismicWavefrontTable; if (!response.ok) throw new Error(`HTTP ${response.status}`); return payload; }),
+      fetch(`/api/geomagnetism/antipodal?${params}`, { cache: "force-cache", signal: controller.signal }).then(async (response) => { const payload = await response.json() as AntipodalFocusResponse; if (!response.ok) throw new Error(`HTTP ${response.status}`); return payload; }),
+    ]).then(([waveResult, antipodalResult]) => {
+      if (waveResult.status === "fulfilled") setWavefronts(waveResult.value);
+      if (antipodalResult.status === "fulfilled") setAntipodal(antipodalResult.value);
+    }).catch(() => undefined);
     return () => controller.abort();
   }, [event.depthKm, model]);
+
+  const antipode = useMemo(() => ({ lat: -event.latitude, lng: normalizeLongitude(event.longitude + 180) }), [event.latitude, event.longitude]);
 
   useEffect(() => {
     const controls = globeRef.current?.controls();
@@ -166,10 +200,15 @@ export function SeismicImpactPanel({ event, model, layers }: { event: Earthquake
   }, [event.id, event.latitude, event.longitude]);
 
   const durationSec = useMemo(() => {
-    if (!wavefronts) return 1800;
-    const values = [...wavefronts.curves.P, ...wavefronts.curves.S].map((point) => point.timeSec);
-    return Math.max(300, Math.ceil((values.length ? Math.max(...values) : 1800) / 60) * 60);
-  }, [wavefronts]);
+    const directValues = wavefronts ? [...wavefronts.curves.P, ...wavefronts.curves.S].map((point) => point.timeSec) : [];
+    const directMax = directValues.length ? Math.max(...directValues) : 1800;
+    if (!antipodal) return Math.max(300, Math.ceil(directMax / 60) * 60);
+    const reboundPMax = antipodal.reboundCurves.P.length ? Math.max(...antipodal.reboundCurves.P.map((point) => point.timeSec)) : 0;
+    const reboundSMax = antipodal.reboundCurves.S.length ? Math.max(...antipodal.reboundCurves.S.map((point) => point.timeSec)) : 0;
+    const pEnd = antipodal.pLike ? antipodal.pLike.timeSec + reboundPMax : 0;
+    const sEnd = antipodal.sLike ? antipodal.sLike.timeSec + reboundSMax : 0;
+    return Math.max(300, Math.ceil(Math.max(directMax, pEnd, sEnd) / 60) * 60);
+  }, [antipodal, wavefronts]);
 
   useEffect(() => {
     if (!playing) return;
@@ -188,14 +227,25 @@ export function SeismicImpactPanel({ event, model, layers }: { event: Earthquake
   const paths = useMemo<RenderPath[]>(() => {
     const base = countryPaths(layers?.countryBorders ?? [], impactMap);
     const impact = radii.flatMap((item) => item.radiusKm === null ? [] : [circlePath(`mmi:${item.mmi}`, `MMI ${item.mmi} media`, event.latitude, event.longitude, item.radiusKm, item.mmi === 6 ? "#ef4444" : item.mmi === 5 ? "#f97316" : "#eab308", "impact", .018, .08, .035)]);
-    if (!wavefronts) return [...base, ...impact];
-    const pDeg = currentFront(wavefronts.curves.P, elapsedSec);
-    const sDeg = currentFront(wavefronts.curves.S, elapsedSec);
     const waves: RenderPath[] = [];
-    if (pDeg !== null) waves.push(circlePath("wave:P", `Frente P · t+${Math.round(elapsedSec)} s`, event.latitude, event.longitude, pDeg * Math.PI / 180 * EARTH_RADIUS_KM, "#38bdf8", "wave", .035));
-    if (sDeg !== null) waves.push(circlePath("wave:S", `Frente S · t+${Math.round(elapsedSec)} s`, event.latitude, event.longitude, sDeg * Math.PI / 180 * EARTH_RADIUS_KM, "#f59e0b", "wave", .041));
+    if (wavefronts) {
+      const pDeg = currentFront(wavefronts.curves.P, elapsedSec);
+      const sDeg = currentFront(wavefronts.curves.S, elapsedSec);
+      if (pDeg !== null) waves.push(circlePath("wave:P", `Frente P directo · t+${Math.round(elapsedSec)} s`, event.latitude, event.longitude, pDeg * Math.PI / 180 * EARTH_RADIUS_KM, "#38bdf8", "wave", .035));
+      if (sDeg !== null) waves.push(circlePath("wave:S", `Frente S directo · t+${Math.round(elapsedSec)} s`, event.latitude, event.longitude, sDeg * Math.PI / 180 * EARTH_RADIUS_KM, "#f59e0b", "wave", .041));
+    }
+    if (showAntipodal && antipodal) {
+      if (antipodal.pLike && elapsedSec >= antipodal.pLike.timeSec) {
+        const pReboundDeg = currentFront(antipodal.reboundCurves.P, elapsedSec - antipodal.pLike.timeSec);
+        if (pReboundDeg !== null) waves.push(circlePath("wave:P-antipodal", `P↻ antipodal · ${antipodal.pLike.phase} · t+${Math.round(elapsedSec)} s`, antipode.lat, antipode.lng, pReboundDeg * Math.PI / 180 * EARTH_RADIUS_KM, "#c084fc", "antipodal-wave", .052, .075, .035));
+      }
+      if (antipodal.sLike && elapsedSec >= antipodal.sLike.timeSec) {
+        const sReboundDeg = currentFront(antipodal.reboundCurves.S, elapsedSec - antipodal.sLike.timeSec);
+        if (sReboundDeg !== null) waves.push(circlePath("wave:S-antipodal", `S↻ antipodal · ${antipodal.sLike.phase} · t+${Math.round(elapsedSec)} s`, antipode.lat, antipode.lng, sReboundDeg * Math.PI / 180 * EARTH_RADIUS_KM, "#f472b6", "antipodal-wave", .058, .075, .035));
+      }
+    }
     return [...base, ...impact, ...waves];
-  }, [elapsedSec, event.latitude, event.longitude, impactMap, layers, radii, wavefronts]);
+  }, [antipodal, antipode.lat, antipode.lng, elapsedSec, event.latitude, event.longitude, impactMap, layers, radii, showAntipodal, wavefronts]);
 
   const points = useMemo<ImpactPoint[]>(() => impacts.filter((item) => item.probabilityMmi3 >= .03).slice(0, 28).map((item) => ({
     ...item,
@@ -207,12 +257,26 @@ export function SeismicImpactPanel({ event, model, layers }: { event: Earthquake
   })), [impacts]);
 
   const sourcePoint = useMemo(() => ({ id: "source", lat: event.latitude, lng: event.longitude, altitude: .12, radius: .38, color: "#fb7185", label: `<div class="globe-tooltip"><strong>Epicentro · M${event.magnitude.toFixed(1)}</strong><span>${escapeHtml(event.place)}</span><small>${event.depthKm.toFixed(1)} km de profundidad</small></div>` }), [event]);
+  const antipodePoint = useMemo(() => {
+    const p = antipodal?.pLike;
+    const s = antipodal?.sLike;
+    const reached = Boolean((p && elapsedSec >= p.timeSec) || (s && elapsedSec >= s.timeSec));
+    return {
+      id: "antipode",
+      lat: antipode.lat,
+      lng: antipode.lng,
+      altitude: .095,
+      radius: reached ? .32 : .22,
+      color: reached ? "#c084fc" : "#64748b",
+      label: `<div class="globe-tooltip"><strong>Antípoda</strong><span>${antipode.lat.toFixed(3)}°, ${antipode.lng.toFixed(3)}°</span><small>${p ? `${p.phase} ~${mins(p.timeSec)} · Δ ${p.sampledDistanceDeg.toFixed(1)}°` : "P-core sin foco resuelto"}</small><small>${s ? `${s.phase} ~${mins(s.timeSec)} · Δ ${s.sampledDistanceDeg.toFixed(1)}°` : "S-core sin foco resuelto"}</small><small>Focalización instrumental; no equivale a un segundo terremoto.</small></div>`,
+    };
+  }, [antipodal, antipode.lat, antipode.lng, elapsedSec]);
 
   return <section style={panel}>
     <div style={{ padding: "12px 12px 0" }}>
       <div style={{ color: "#67e8f9", fontSize: 9, fontWeight: 900, letterSpacing: ".09em" }}>ALCANCE E IMPACTO · GLOBO 3D TRANSPARENTE</div>
-      <h4 style={{ color: "white", margin: "4px 0 3px", fontSize: 17 }}>Países alcanzados vs impacto humano estimado</h4>
-      <p style={{ color: "#94a3b8", fontSize: 9.5, lineHeight: 1.5, margin: 0 }}>Azul/naranja = frentes P/S directos. Amarillo/naranja/rojo = radios de MMI media III/V/VI. Los países se resaltan por probabilidad de intensidad, no simplemente porque una onda instrumental los atraviese.</p>
+      <h4 style={{ color: "white", margin: "4px 0 3px", fontSize: 17 }}>Países alcanzados, impacto humano y focalización antipodal</h4>
+      <p style={{ color: "#94a3b8", fontSize: 9.5, lineHeight: 1.5, margin: 0 }}>Azul/naranja = P/S directas. Violeta/rosa = P↻/S↻ después de converger cerca de la antípoda. Amarillo/naranja/rojo = radios de MMI media III/V/VI. La focalización antipodal se muestra como alcance instrumental, no como una nueva zona automática de daño.</p>
     </div>
 
     <div ref={containerRef} style={{ width: "100%", position: "relative", marginTop: 7 }}>
@@ -236,7 +300,7 @@ export function SeismicImpactPanel({ event, model, layers }: { event: Earthquake
         pathDashAnimateTime={0}
         pathLabel={(item) => String((item as RenderPath).label)}
         pathTransitionDuration={0}
-        pointsData={[sourcePoint, ...points]}
+        pointsData={[sourcePoint, ...(showAntipodal ? [antipodePoint] : []), ...points]}
         pointLat="lat"
         pointLng="lng"
         pointAltitude="altitude"
@@ -249,14 +313,17 @@ export function SeismicImpactPanel({ event, model, layers }: { event: Earthquake
         <div style={{ display: "flex", gap: 7, alignItems: "center", flexWrap: "wrap" }}>
           <button type="button" style={button} onClick={() => setPlaying((value) => !value)} disabled={!wavefronts}>{playing ? "Pausa" : "▶ P/S"}</button>
           <button type="button" style={button} onClick={() => { setPlaying(false); setElapsedSec(0); }}>Reiniciar</button>
+          <button type="button" style={{ ...button, borderColor: showAntipodal ? "#a78bfa" : "#334155", color: showAntipodal ? "#ddd6fe" : "#94a3b8" }} onClick={() => setShowAntipodal((value) => !value)}>Antípoda {showAntipodal ? "ON" : "OFF"}</button>
           <select value={speed} onChange={(event) => setSpeed(Number(event.target.value))} style={{ ...button, padding: "6px 8px" }}><option value={5}>5×</option><option value={10}>10×</option><option value={30}>30×</option><option value={60}>60×</option></select>
           <strong style={{ color: "white", fontSize: 10 }}>t + {mins(elapsedSec)}</strong>
           <input type="range" min={0} max={durationSec} step={1} value={elapsedSec} onChange={(event) => { setPlaying(false); setElapsedSec(Number(event.target.value)); }} style={{ flex: "1 1 220px" }} />
         </div>
+        {showAntipodal && antipodal && <div style={{ display: "flex", gap: 12, flexWrap: "wrap", color: "#c4b5fd", fontSize: 8.7, marginTop: 6 }}><span>P-core: {antipodal.pLike ? `${antipodal.pLike.phase} ~${mins(antipodal.pLike.timeSec)}` : "N/D"}</span><span>S-core: {antipodal.sLike ? `${antipodal.sLike.phase} ~${mins(antipodal.sLike.timeSec)}` : "N/D"}</span><span>antípoda {antipode.lat.toFixed(2)}°, {antipode.lng.toFixed(2)}°</span></div>}
       </div>
     </div>
 
     <ImpactProfile event={event} impacts={impacts} />
+    {showAntipodal && <AntipodalTimeline antipodal={antipodal} elapsedSec={elapsedSec} durationSec={durationSec} />}
 
     <div style={{ padding: "0 11px 11px" }}>
       <div style={{ color: "#a5b4fc", fontSize: 9, fontWeight: 900, marginBottom: 6 }}>PAÍSES / ÁREAS CON MAYOR POSIBILIDAD DE PERCEPCIÓN</div>
@@ -266,7 +333,7 @@ export function SeismicImpactPanel({ event, model, layers }: { event: Earthquake
         </div>)}
         {!impacts.some((item) => item.probabilityMmi3 >= .01) && <div style={{ color: "#64748b", fontSize: 10 }}>No aparecen países con P(MMI≥III) ≥1% en este cribado.</div>}
       </div>
-      <p style={{ color: "#64748b", fontSize: 8.8, lineHeight: 1.5, margin: "8px 0 0" }}><b style={{ color: "#94a3b8" }}>Límite:</b> Allen–Wald–Worden 2012 Rhypo es una IPE para regiones corticales activas y no incorpora Vs30, cuenca, directividad, mecanismo focal ni geometría finita de ruptura. Distancias &gt;500 km se muestran solo como extrapolación orientativa. Para un evento con ShakeMap oficial, ese producto debe tener prioridad.</p>
+      <p style={{ color: "#64748b", fontSize: 8.8, lineHeight: 1.5, margin: "8px 0 0" }}><b style={{ color: "#94a3b8" }}>Límite:</b> Allen–Wald–Worden 2012 Rhypo es una IPE para regiones corticales activas y no incorpora Vs30, cuenca, directividad, mecanismo focal ni geometría finita de ruptura. Distancias &gt;500 km se muestran solo como extrapolación orientativa. Para un evento con ShakeMap oficial, ese producto debe tener prioridad. La focalización antipodal no usa esta IPE para estimar daño.</p>
     </div>
   </section>;
 }
