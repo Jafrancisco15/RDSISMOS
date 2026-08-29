@@ -1,6 +1,6 @@
 export type TravelTimeModel = "ak135" | "prem" | "iasp91";
 export type SurfaceWavePhase = "P" | "S";
-export type AntipodalCorePhase = "PKP" | "SKS" | "PKIKP";
+export type AntipodalCorePhase = "PKP" | "SKS" | "PKIKP" | "PP" | "SS";
 
 export interface TauPArrival {
   distdeg: number;
