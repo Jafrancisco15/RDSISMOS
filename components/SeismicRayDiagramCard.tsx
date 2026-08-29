@@ -1,10 +1,18 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { GlobeMapLayersResponse } from "@/lib/globeLayers";
 import { SeismicEarthInteriorDiagram } from "./SeismicEarthInteriorDiagram";
-import { SeismicImpactPanel } from "./SeismicImpactPanel";
 import { SeismicSurfaceContext } from "./SeismicSurfaceContext";
+
+const SeismicImpactPanel = dynamic(
+  () => import("./SeismicImpactPanel").then((module) => module.SeismicImpactPanel),
+  {
+    ssr: false,
+    loading: () => <div style={{ minHeight: 420, display: "grid", placeItems: "center", borderRadius: 14, background: "#030914", border: "1px solid rgba(56,189,248,.14)", color: "#64748b", fontSize: 10 }}>Preparando globo 3D de alcance e impacto…</div>,
+  },
+);
 
 export type RayDiagramModel = "ak135" | "prem" | "iasp91";
 export type RayDiagramDetail = "basic" | "full";
