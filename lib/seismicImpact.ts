@@ -26,6 +26,11 @@ export interface ImpactRadius {
   radiusKm: number | null;
 }
 
+interface CountryGroup {
+  points: Array<{ lat: number; lng: number }>;
+  rings: Array<Array<{ lat: number; lng: number }>>;
+}
+
 function clamp(value: number, min: number, max: number) { return Math.min(max, Math.max(min, value)); }
 function radians(value: number) { return value * Math.PI / 180; }
 
@@ -49,6 +54,29 @@ function sphericalMean(points: Array<{ lat: number; lng: number }>) {
     latitude: Math.atan2(z, Math.hypot(x, y)) * 180 / Math.PI,
     longitude: Math.atan2(y, x) * 180 / Math.PI,
   };
+}
+
+function longitudeNear(value: number, reference: number) {
+  let result = value;
+  while (result - reference > 180) result -= 360;
+  while (result - reference < -180) result += 360;
+  return result;
+}
+
+function pointInRing(latitude: number, longitude: number, ring: Array<{ lat: number; lng: number }>) {
+  if (ring.length < 4) return false;
+  const first = ring[0]; const last = ring[ring.length - 1];
+  if (greatCircleDistanceKm(first.lat, first.lng, last.lat, last.lng) > 80) return false;
+  const x = longitude;
+  const y = latitude;
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xi = longitudeNear(ring[i].lng, x); const yi = ring[i].lat;
+    const xj = longitudeNear(ring[j].lng, x); const yj = ring[j].lat;
+    const intersects = ((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / ((yj - yi) || 1e-12) + xi);
+    if (intersects) inside = !inside;
+  }
+  return inside;
 }
 
 // Allen, Wald & Worden (2012), hypocentral-distance IPE for active crustal regions.
@@ -107,23 +135,26 @@ export function estimateCountryImpacts(
   countryBorders: GlobeMapPath[],
   wavefronts?: SeismicWavefrontTable | null,
 ): CountryImpactEstimate[] {
-  const groups = new Map<string, Array<{ lat: number; lng: number }>>();
+  const groups = new Map<string, CountryGroup>();
   for (const path of countryBorders) {
     if (path.kind !== "country-border" || !path.name) continue;
-    const points = groups.get(path.name) ?? [];
-    // Keep enough points to approximate the nearest edge without making mobile analysis expensive.
+    const group = groups.get(path.name) ?? { points: [], rings: [] };
     const stride = Math.max(1, Math.ceil(path.points.length / 36));
-    for (let index = 0; index < path.points.length; index += stride) points.push(path.points[index]);
-    groups.set(path.name, points);
+    for (let index = 0; index < path.points.length; index += stride) group.points.push(path.points[index]);
+    if (path.points.length >= 4) group.rings.push(path.points);
+    groups.set(path.name, group);
   }
 
   const output: CountryImpactEstimate[] = [];
-  for (const [country, points] of groups) {
-    if (!points.length) continue;
-    const center = sphericalMean(points);
-    let surfaceDistanceKm = Infinity;
-    for (const point of points) {
-      surfaceDistanceKm = Math.min(surfaceDistanceKm, greatCircleDistanceKm(event.latitude, event.longitude, point.lat, point.lng));
+  for (const [country, group] of groups) {
+    if (!group.points.length) continue;
+    const center = sphericalMean(group.points);
+    const containsEpicenter = group.rings.some((ring) => pointInRing(event.latitude, event.longitude, ring));
+    let surfaceDistanceKm = containsEpicenter ? 0 : Infinity;
+    if (!containsEpicenter) {
+      for (const point of group.points) {
+        surfaceDistanceKm = Math.min(surfaceDistanceKm, greatCircleDistanceKm(event.latitude, event.longitude, point.lat, point.lng));
+      }
     }
     if (!Number.isFinite(surfaceDistanceKm)) continue;
     const rhypoKm = Math.hypot(surfaceDistanceKm, Math.max(0, event.depthKm));
