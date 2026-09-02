@@ -1,5 +1,6 @@
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { MagneticLocalityMetrics } from "@/lib/geomagnetism";
+import type { GeomagCoverage } from "@/lib/geomagNetwork";
 import { assessFreundCompatibility, type FreundCriterionState } from "@/lib/freundExperimental";
 
 const panel: React.CSSProperties = {
@@ -27,9 +28,11 @@ function classificationColor(classification: ReturnType<typeof assessFreundCompa
 export function FreundExperimentalPanel({
   metrics,
   event,
+  coverage = null,
 }: {
   metrics: MagneticLocalityMetrics | null;
   event: EarthquakeEvent | null;
+  coverage?: GeomagCoverage | null;
 }) {
   const assessment = metrics ? assessFreundCompatibility(metrics) : null;
 
@@ -52,7 +55,7 @@ export function FreundExperimentalPanel({
     </div>
 
     {!assessment ? <div style={{ marginTop: 12, color: "#94a3b8", fontSize: 11 }}>
-      Ejecuta <b style={{ color: "#e2e8f0" }}>Analizar anomalía local</b> para calcular el índice experimental Freund con los datos USGS de la estación objetivo y sus controles.
+      Ejecuta <b style={{ color: "#e2e8f0" }}>Analizar señal local</b> para calcular el índice experimental Freund con la red federada USGS + INTERMAGNET y sus controles.
     </div> : <>
       <div style={{ display: "grid", gridTemplateColumns: "minmax(180px,230px) 1fr", gap: 12, marginTop: 12, alignItems: "stretch" }}>
         <article style={{ borderRadius: 13, padding: 12, background: "rgba(30,27,75,.42)", border: "1px solid rgba(129,140,248,.2)" }}>
@@ -60,6 +63,9 @@ export function FreundExperimentalPanel({
           <strong style={{ display: "block", color: "white", fontSize: 34, marginTop: 3 }}>{assessment.score}/100</strong>
           <div style={{ color: classificationColor(assessment.classification), fontSize: 11, fontWeight: 900 }}>{assessment.label}</div>
           <div style={{ color: "#64748b", fontSize: 9, marginTop: 6 }}>Índice de compatibilidad física, no probabilidad sísmica.</div>
+          {coverage && <div style={{ marginTop: 9, paddingTop: 8, borderTop: "1px solid rgba(148,163,184,.15)", color: coverage.score >= 58 ? "#86efac" : "#fde68a", fontSize: 9, lineHeight: 1.4 }}>
+            Cobertura observacional: <b>{coverage.score}/100 · {coverage.label}</b><br />{coverage.referenceCount} controles · {coverage.azimuthCoverageDeg}° de cobertura azimutal
+          </div>}
         </article>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(145px,1fr))", gap: 8 }}>
@@ -70,6 +76,10 @@ export function FreundExperimentalPanel({
           </article>)}
         </div>
       </div>
+
+      {coverage && coverage.score < 35 && <div style={{ marginTop: 10, padding: 9, borderRadius: 10, background: "rgba(120,53,15,.18)", border: "1px solid rgba(245,158,11,.25)", color: "#fde68a", fontSize: 9.5, lineHeight: 1.5 }}>
+        Cobertura insuficiente: un Freund score alto con esta geometría de estaciones debe tratarse como evidencia débil hasta disponer de más controles alrededor del observatorio.
+      </div>}
 
       {event && <div style={{ marginTop: 10, color: "#cbd5e1", fontSize: 10, lineHeight: 1.5 }}>
         <b style={{ color: "#fda4af" }}>Referencia temporal:</b> M{event.magnitude.toFixed(1)} · {event.place} · {new Date(event.timeUtc).toLocaleString("es-DO")}. El terremoto seleccionado <b>no entra en el cálculo del índice</b>; se conserva separado para evitar convertir una asociación retrospectiva en evidencia predictiva.
