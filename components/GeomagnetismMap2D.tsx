@@ -12,6 +12,8 @@ export type GeomagneticMapStation = {
   hasOneSecond?: boolean;
   country?: string;
   dataSource?: string;
+  sources?: Array<"USGS" | "INTERMAGNET">;
+  dataEmbargoHours?: number | null;
 };
 
 export type GeomagneticMapProps = {
@@ -28,7 +30,7 @@ const LeafletMap = dynamic(
   () => import("./GeomagnetismLeafletMap").then((module) => module.GeomagnetismLeafletMap),
   {
     ssr: false,
-    loading: () => <div style={{ height: "clamp(430px,64vh,680px)", display: "grid", placeItems: "center", borderRadius: 14, background: "linear-gradient(#0b3550,#07131f)", color: "#bae6fd" }}>Cargando mapa topográfico…</div>,
+    loading: () => <div style={{ height: "clamp(430px,64vh,680px)", display: "grid", placeItems: "center", borderRadius: 14, background: "linear-gradient(#0b3550,#07131f)", color: "#bae6fd" }}>Cargando red geomagnética global…</div>,
   },
 );
 
