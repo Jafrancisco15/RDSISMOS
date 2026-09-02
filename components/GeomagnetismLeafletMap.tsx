@@ -8,10 +8,7 @@ import type { GeomagneticMapProps, GeomagneticMapStation } from "./GeomagnetismM
 function FocusSelection({ station, event }: { station: GeomagneticMapStation | null; event: EarthquakeEvent | null }) {
   const map = useMap();
   useEffect(() => {
-    if (event) {
-      map.flyTo([event.latitude, event.longitude], Math.max(4, map.getZoom()), { duration: 0.8 });
-      return;
-    }
+    if (event) { map.flyTo([event.latitude, event.longitude], Math.max(4, map.getZoom()), { duration: 0.8 }); return; }
     if (station?.latitude !== null && station?.longitude !== null && station?.latitude !== undefined && station?.longitude !== undefined) {
       map.flyTo([station.latitude, station.longitude], Math.max(3, map.getZoom()), { duration: 0.8 });
     }
@@ -25,6 +22,13 @@ function quakeColor(depthKm: number) {
   return "#ef4444";
 }
 
+function stationBaseColor(station: GeomagneticMapStation) {
+  const sources = station.sources ?? [];
+  if (sources.includes("USGS") && sources.includes("INTERMAGNET")) return "#c084fc";
+  if (sources.includes("INTERMAGNET")) return "#34d399";
+  return "#38bdf8";
+}
+
 export function GeomagnetismLeafletMap({ stations, targetCode, referenceCodes, events, selectedEventId, onStationSelect, onEventSelect }: GeomagneticMapProps) {
   const mappedStations = stations.filter((station) => Number.isFinite(station.latitude) && Number.isFinite(station.longitude));
   const target = mappedStations.find((station) => station.code === targetCode) ?? null;
@@ -32,33 +36,25 @@ export function GeomagnetismLeafletMap({ stations, targetCode, referenceCodes, e
   const references = new Set(referenceCodes);
 
   return <div style={{ borderRadius: 14, overflow: "hidden", border: "1px solid rgba(56,189,248,.2)", background: "#07131f" }}>
-    <MapContainer center={[24, -75]} zoom={2} minZoom={2} worldCopyJump style={{ height: "clamp(430px,64vh,680px)", width: "100%" }}>
+    <MapContainer center={[18, -20]} zoom={2} minZoom={2} worldCopyJump style={{ height: "clamp(430px,64vh,680px)", width: "100%" }}>
       <FocusSelection station={target} event={selectedEvent} />
-      <TileLayer
-        attribution="Tiles © Esri — USGS Geomagnetism observatories — USGS/ComCat earthquakes"
-        url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}"
-        maxZoom={18}
-      />
+      <TileLayer attribution="Tiles © Esri — USGS/INTERMAGNET observatories — USGS/ComCat earthquakes" url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}" maxZoom={18} />
 
       {mappedStations.map((station) => {
         const isTarget = station.code === targetCode;
         const isReference = references.has(station.code);
-        const color = isTarget ? "#fde047" : isReference ? "#22d3ee" : "#38bdf8";
-        return <CircleMarker
-          key={station.code}
-          center={[station.latitude!, station.longitude!]}
-          radius={isTarget ? 8 : isReference ? 6 : 5}
-          eventHandlers={{ click: () => onStationSelect(station.code) }}
-          pathOptions={{ color, fillColor: color, fillOpacity: isTarget ? 0.95 : 0.78, weight: isTarget ? 3 : 1.5 }}
-        >
+        const baseColor = stationBaseColor(station);
+        const color = isTarget ? "#fde047" : isReference ? "#22d3ee" : baseColor;
+        return <CircleMarker key={station.code} center={[station.latitude!, station.longitude!]} radius={isTarget ? 8 : isReference ? 6.5 : 4.5} eventHandlers={{ click: () => onStationSelect(station.code) }} pathOptions={{ color, fillColor: baseColor, fillOpacity: isTarget ? 0.98 : isReference ? 0.92 : 0.72, weight: isTarget ? 3 : isReference ? 2.5 : 1.3 }}>
           <Tooltip direction="top" offset={[0, -4]} opacity={0.92}>{station.code} · {station.name}</Tooltip>
           <Popup>
             <strong>{station.code} · {station.name}</strong><br />
-            {station.dataSource ?? "USGS Geomagnetism observatory"}<br />
+            {station.dataSource ?? "Geomagnetic observatory"}<br />
             {station.country ? <>{station.country}<br /></> : null}
             {station.latitude!.toFixed(3)}, {station.longitude!.toFixed(3)}<br />
-            {station.elevationM !== null && station.elevationM !== undefined ? `Elevación: ${station.elevationM.toFixed(0)} m` : ""}
-            {station.hasOneSecond ? <><br />Webservice USGS: 1 s / 60 s según producto</> : null}
+            {station.elevationM !== null && station.elevationM !== undefined ? <>Elevación: {station.elevationM.toFixed(0)} m<br /></> : null}
+            {station.sources?.includes("INTERMAGNET") ? <>INTERMAGNET · IAGA {station.code}{station.dataEmbargoHours ? ` · embargo ${station.dataEmbargoHours} h` : ""}<br /></> : null}
+            {station.hasOneSecond ? <>USGS: producto de 1 s disponible</> : <>Análisis RDSISMOS: 60 s</>}
           </Popup>
         </CircleMarker>;
       })}
@@ -67,31 +63,20 @@ export function GeomagnetismLeafletMap({ stations, targetCode, referenceCodes, e
         const active = event.id === selectedEventId;
         const radius = Math.max(3, Math.min(14, 2.1 + Math.pow(Math.max(event.magnitude, 0), 1.23)));
         const color = quakeColor(event.depthKm);
-        return <CircleMarker
-          key={event.id}
-          center={[event.latitude, event.longitude]}
-          radius={active ? radius + 3 : radius}
-          eventHandlers={{ click: () => onEventSelect(event) }}
-          pathOptions={{ color: active ? "#ffffff" : color, fillColor: color, fillOpacity: active ? 0.98 : 0.68, weight: active ? 3 : 1 }}
-        >
+        return <CircleMarker key={event.id} center={[event.latitude, event.longitude]} radius={active ? radius + 3 : radius} eventHandlers={{ click: () => onEventSelect(event) }} pathOptions={{ color: active ? "#ffffff" : color, fillColor: color, fillOpacity: active ? 0.98 : 0.68, weight: active ? 3 : 1 }}>
           <Tooltip direction="top" opacity={0.92}>M{event.magnitude.toFixed(1)} · {event.place}</Tooltip>
-          <Popup>
-            <strong>M{event.magnitude.toFixed(1)} · {event.place}</strong><br />
-            {new Date(event.timeUtc).toLocaleString("es-DO", { timeZoneName: "short" })}<br />
-            Profundidad: {event.depthKm.toFixed(1)} km<br />
-            {event.latitude.toFixed(4)}, {event.longitude.toFixed(4)}
-          </Popup>
+          <Popup><strong>M{event.magnitude.toFixed(1)} · {event.place}</strong><br />{new Date(event.timeUtc).toLocaleString("es-DO", { timeZoneName: "short" })}<br />Profundidad: {event.depthKm.toFixed(1)} km<br />{event.latitude.toFixed(4)}, {event.longitude.toFixed(4)}</Popup>
         </CircleMarker>;
       })}
     </MapContainer>
     <div style={{ display: "flex", gap: 13, flexWrap: "wrap", padding: "8px 10px", color: "#cbd5e1", fontSize: 10, background: "rgba(2,8,18,.94)" }}>
       <span><b style={{ color: "#fde047" }}>●</b> objetivo</span>
-      <span><b style={{ color: "#22d3ee" }}>●</b> referencias</span>
-      <span><b style={{ color: "#38bdf8" }}>●</b> observatorios USGS</span>
+      <span><b style={{ color: "#22d3ee" }}>●</b> controles automáticos/manuales</span>
+      <span><b style={{ color: "#38bdf8" }}>●</b> USGS</span>
+      <span><b style={{ color: "#34d399" }}>●</b> INTERMAGNET</span>
+      <span><b style={{ color: "#c084fc" }}>●</b> USGS + INTERMAGNET</span>
       <span><b style={{ color: "#ef4444" }}>●</b> sismo cortical</span>
-      <span><b style={{ color: "#f97316" }}>●</b> 70–300 km</span>
-      <span><b style={{ color: "#8b5cf6" }}>●</b> &gt;300 km</span>
-      <span>{mappedStations.length} estaciones USGS · {events.length} sismos en el período</span>
+      <span>{mappedStations.length} observatorios federados · {events.length} sismos</span>
     </div>
   </div>;
 }
