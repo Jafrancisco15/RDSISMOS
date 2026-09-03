@@ -1,8 +1,11 @@
 import type { MagneticStationSeries } from "./geomagnetism";
 import { mad, median, percentile } from "./geomagnetism";
 import type { GeomagneticStation } from "./geomagNetwork";
+import { expectedMainFieldNt } from "./geomagneticReference";
 
 const EARTH_RADIUS_KM = 6371;
+
+export type MagneticGridMetric = "reference" | "change" | "anomaly" | "orbital";
 
 export interface GroundMagneticObservation {
   id: string;
@@ -14,7 +17,11 @@ export interface GroundMagneticObservation {
   strengthNt: number;
   observedAt: string;
   anomalyZ: number;
+  signedAnomalyZ: number;
   baselineNt: number;
+  changeNt: number;
+  expectedMainFieldNt: number | null;
+  modelResidualNt: number | null;
   sampleCount: number;
 }
 
@@ -24,14 +31,17 @@ export interface MagneticGridCell {
   sizeDeg: number;
   fieldNt: number;
   intensity01: number;
+  signed01: number;
+  metric: MagneticGridMetric;
   supportCount: number;
   nearestKm: number;
+  scaleAbs?: number;
 }
 
 type ScalarFieldPoint = {
   latitude: number;
   longitude: number;
-  strengthNt: number;
+  value: number;
 };
 
 function clamp(value: number, min: number, max: number) { return Math.min(max, Math.max(min, value)); }
@@ -57,7 +67,9 @@ export function observationFromSeries(station: GeomagneticStation, series: Magne
   if (!(latest > 1_000 && latest < 100_000)) return null;
   const baseline = median(values);
   const robustSigma = Math.max(0.5, 1.4826 * mad(values));
-  const anomalyZ = Math.abs(latest - baseline) / robustSigma;
+  const signedAnomalyZ = (latest - baseline) / robustSigma;
+  const when = new Date(latestSample.timeUtc);
+  const expected = expectedMainFieldNt(station.latitude, station.longitude, 0, Number.isNaN(when.getTime()) ? new Date() : when);
   return {
     id: `ground:${station.code}`,
     stationCode: station.code,
@@ -67,8 +79,12 @@ export function observationFromSeries(station: GeomagneticStation, series: Magne
     longitude: station.longitude,
     strengthNt: latest,
     observedAt: latestSample.timeUtc,
-    anomalyZ,
+    anomalyZ: Math.abs(signedAnomalyZ),
+    signedAnomalyZ,
     baselineNt: baseline,
+    changeNt: latest - baseline,
+    expectedMainFieldNt: expected,
+    modelResidualNt: expected === null ? null : latest - expected,
     sampleCount: values.length,
   };
 }
@@ -98,13 +114,19 @@ export function selectGlobalGroundStations(stations: GeomagneticStation[], maxim
   return selected;
 }
 
-function buildScalarGrid(points: ScalarFieldPoint[], stepDeg: number, supportRadiusKm: number, nearestScaleKm: number, maximumNeighbors: number): MagneticGridCell[] {
+function buildObservedGrid(
+  points: ScalarFieldPoint[],
+  metric: MagneticGridMetric,
+  stepDeg: number,
+  supportRadiusKm: number,
+  nearestScaleKm: number,
+  maximumNeighbors: number,
+  minimumScale: number,
+): MagneticGridCell[] {
   if (!points.length) return [];
-  const strengths = points.map((point) => point.strengthNt).filter(Number.isFinite);
-  if (!strengths.length) return [];
-  const low = percentile(strengths, .08);
-  const high = percentile(strengths, .92);
-  const span = Math.max(500, high - low);
+  const values = points.map((point) => point.value).filter(Number.isFinite);
+  if (!values.length) return [];
+  const absScale = Math.max(minimumScale, percentile(values.map(Math.abs), .90));
   const cells: MagneticGridCell[] = [];
 
   for (let latitude = -85; latitude <= 85; latitude += stepDeg) {
@@ -119,36 +141,107 @@ function buildScalarGrid(points: ScalarFieldPoint[], stepDeg: number, supportRad
       let totalWeight = 0;
       for (const item of nearby) {
         const weight = 1 / (1 + (item.distance / nearestScaleKm) ** 2);
-        weighted += item.point.strengthNt * weight;
+        weighted += item.point.value * weight;
         totalWeight += weight;
       }
       if (!(totalWeight > 0)) continue;
-      const fieldNt = weighted / totalWeight;
+      const value = weighted / totalWeight;
+      const signed01 = clamp(value / absScale, -1, 1);
       cells.push({
         latitude,
         longitude,
         sizeDeg: stepDeg,
-        fieldNt,
-        intensity01: clamp((fieldNt - low) / span, 0, 1),
+        fieldNt: value,
+        intensity01: Math.abs(signed01),
+        signed01,
+        metric,
         supportCount: nearby.length,
         nearestKm: Math.round(nearby[0].distance),
+        scaleAbs: absScale,
       });
     }
   }
   return cells;
 }
 
-export function buildMagneticGrid(observations: GroundMagneticObservation[], stepDeg = 10, supportRadiusKm = 3200): MagneticGridCell[] {
-  return buildScalarGrid(observations, stepDeg, supportRadiusKm, 700, 6);
+let referenceCacheKey = "";
+let referenceCache: MagneticGridCell[] = [];
+
+/** WMM2025 expected main field. Continuous global context, never interpreted as anomaly. */
+export function buildReferenceFieldGrid(when = new Date(), stepDeg = 5): MagneticGridCell[] {
+  const key = `${when.toISOString().slice(0, 10)}:${stepDeg}`;
+  if (referenceCacheKey === key && referenceCache.length) return referenceCache;
+  const raw: Array<{ latitude: number; longitude: number; fieldNt: number }> = [];
+  for (let latitude = -85; latitude <= 85; latitude += stepDeg) {
+    for (let longitude = -175; longitude <= 175; longitude += stepDeg) {
+      const fieldNt = expectedMainFieldNt(latitude, longitude, 0, when);
+      if (fieldNt !== null) raw.push({ latitude, longitude, fieldNt });
+    }
+  }
+  const fields = raw.map((item) => item.fieldNt);
+  const low = percentile(fields, .05);
+  const high = percentile(fields, .95);
+  const span = Math.max(1, high - low);
+  referenceCache = raw.map((item) => ({
+    latitude: item.latitude,
+    longitude: item.longitude,
+    sizeDeg: stepDeg,
+    fieldNt: item.fieldNt,
+    intensity01: clamp((item.fieldNt - low) / span, 0, 1),
+    signed01: 0,
+    metric: "reference" as const,
+    supportCount: 0,
+    nearestKm: 0,
+  }));
+  referenceCacheKey = key;
+  return referenceCache;
 }
 
-/**
- * Current orbital field layer. It deliberately remains separate from ground observations:
- * Swarm measures |F| at satellite altitude, so it is suitable as a spatial fallback/background,
- * not as a direct replacement for a surface magnetometer residual.
- */
-export function buildSwarmMagneticGrid(points: ScalarFieldPoint[], stepDeg = 5, supportRadiusKm = 1700): MagneticGridCell[] {
-  return buildScalarGrid(points, stepDeg, supportRadiusKm, 420, 10);
+/** Default map: recent temporal change, latest F minus each station's own recent median. */
+export function buildRecentChangeGrid(observations: GroundMagneticObservation[], stepDeg = 5, supportRadiusKm = 2400): MagneticGridCell[] {
+  return buildObservedGrid(
+    observations.map((point) => ({ latitude: point.latitude, longitude: point.longitude, value: point.changeNt })),
+    "change", stepDeg, supportRadiusKm, 620, 6, 5,
+  );
+}
+
+/** Robust standardized temporal deviation. Magnitude is meaningful only near supporting stations. */
+export function buildRobustAnomalyGrid(observations: GroundMagneticObservation[], stepDeg = 5, supportRadiusKm = 1700): MagneticGridCell[] {
+  return buildObservedGrid(
+    observations.map((point) => ({ latitude: point.latitude, longitude: point.longitude, value: point.signedAnomalyZ })),
+    "anomaly", stepDeg, supportRadiusKm, 480, 5, 3,
+  );
+}
+
+/** Legacy absolute observed field grid retained for diagnostics, not used as the default map. */
+export function buildMagneticGrid(observations: GroundMagneticObservation[], stepDeg = 10, supportRadiusKm = 3200): MagneticGridCell[] {
+  const points = observations.map((point) => ({ latitude: point.latitude, longitude: point.longitude, value: point.strengthNt }));
+  if (!points.length) return [];
+  const strengths = points.map((point) => point.value);
+  const low = percentile(strengths, .08);
+  const high = percentile(strengths, .92);
+  const span = Math.max(500, high - low);
+  const cells: MagneticGridCell[] = [];
+  for (let latitude = -85; latitude <= 85; latitude += stepDeg) {
+    for (let longitude = -175; longitude <= 175; longitude += stepDeg) {
+      const nearby = points.map((point) => ({ point, distance: distanceKm(latitude, longitude, point.latitude, point.longitude) })).filter((item) => item.distance <= supportRadiusKm).sort((a, b) => a.distance - b.distance).slice(0, 6);
+      if (!nearby.length) continue;
+      let weighted = 0; let totalWeight = 0;
+      for (const item of nearby) { const weight = 1 / (1 + (item.distance / 700) ** 2); weighted += item.point.value * weight; totalWeight += weight; }
+      if (!(totalWeight > 0)) continue;
+      const fieldNt = weighted / totalWeight;
+      cells.push({ latitude, longitude, sizeDeg: stepDeg, fieldNt, intensity01: clamp((fieldNt - low) / span, 0, 1), signed01: 0, metric: "orbital", supportCount: nearby.length, nearestKm: Math.round(nearby[0].distance) });
+    }
+  }
+  return cells;
+}
+
+export function buildSwarmMagneticGrid(points: Array<{ latitude: number; longitude: number; strengthNt: number }>, stepDeg = 5, supportRadiusKm = 1700): MagneticGridCell[] {
+  const scalarPoints = points.map((point) => ({ latitude: point.latitude, longitude: point.longitude, value: point.strengthNt }));
+  if (!scalarPoints.length) return [];
+  const strengths = scalarPoints.map((point) => point.value);
+  const low = percentile(strengths, .08); const high = percentile(strengths, .92); const span = Math.max(500, high - low);
+  return buildObservedGrid(scalarPoints.map((point) => ({ ...point, value: (point.value - low) / span })), "orbital", stepDeg, supportRadiusKm, 420, 10, .1);
 }
 
 export function anomalyObservations(observations: GroundMagneticObservation[], threshold = 3) {
