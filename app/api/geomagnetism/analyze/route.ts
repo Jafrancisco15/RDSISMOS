@@ -18,18 +18,15 @@ function parseDate(value: string | null, fallback: Date, end = false) {
   if (Number.isNaN(parsed.getTime())) throw new Error(`Fecha inválida: ${value}`);
   return parsed;
 }
-
 function normalizedCode(value: string | null, label: string) {
   const code = String(value ?? "").trim().toUpperCase();
   if (!/^[A-Z0-9]{3}$/.test(code)) throw new Error(`${label} debe ser un código IAGA de 3 caracteres.`);
   return code;
 }
-
 function numeric(value: unknown) {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
-
 async function responseJson<T>(response: Response, label: string): Promise<T> {
   const text = await response.text();
   if (!text.trim()) throw new Error(`${label}: respuesta vacía.`);
@@ -61,12 +58,36 @@ function stationByCode(stations: GeomagneticStation[], code: string) {
   return station;
 }
 
+function compactWarnings(items: string[]) {
+  if (!items.length) return [];
+  const temporal: string[] = [];
+  const kp: string[] = [];
+  const coverage: string[] = [];
+  const network: string[] = [];
+  const other: string[] = [];
+  for (const warning of items) {
+    if (/sin datos en la ventana|disponibilidad|solo \d+ minutos válidos|sin datos recientes|time outside valid range/i.test(warning)) temporal.push(warning);
+    else if (/\bKp\b|GFZ/i.test(warning)) kp.push(warning);
+    else if (/cobertura insuficiente|solo una referencia/i.test(warning)) coverage.push(warning);
+    else if (/INTERMAGNET no disponible|fallback/i.test(warning)) network.push(warning);
+    else other.push(warning);
+  }
+  const output: string[] = [];
+  if (temporal.length) output.push(`${temporal.length} observatorio${temporal.length === 1 ? "" : "s"} de control no cubrían suficientemente esta ventana y fueron descartados automáticamente.`);
+  if (coverage.length) output.push(coverage[0]);
+  if (kp.length) output.push("Kp de GFZ no estuvo disponible para toda la ventana; el score conserva la penalización por incertidumbre geomagnética global.");
+  if (network.length) output.push(network[0]);
+  output.push(...other.slice(0, 2));
+  return [...new Set(output)];
+}
+
 export async function GET(request: NextRequest) {
   try {
     const now = new Date();
     const start = parseDate(request.nextUrl.searchParams.get("start"), new Date(now.getTime() - 3 * DAY_MS));
-    const end = parseDate(request.nextUrl.searchParams.get("end"), now, true);
-    if (start >= end) throw new Error("La fecha inicial debe ser anterior a la final.");
+    const requestedEnd = parseDate(request.nextUrl.searchParams.get("end"), now, true);
+    const end = new Date(Math.min(now.getTime(), requestedEnd.getTime()));
+    if (start >= end) throw new Error("La fecha inicial debe ser anterior a la final y no puede comenzar en el futuro.");
     const days = (end.getTime() - start.getTime()) / DAY_MS;
     if (days > MAX_DAYS) throw new Error(`El análisis geomagnético admite hasta ${MAX_DAYS} días por consulta.`);
 
@@ -93,19 +114,19 @@ export async function GET(request: NextRequest) {
 
     const referenceSeries: MagneticStationSeries[] = [];
     const referenceStations: GeomagneticStation[] = [];
-    const warnings = [...networkWarnings];
+    const warningDetails = [...networkWarnings];
     for (let index = 0; index < candidateResults.length; index += 1) {
       const result = candidateResults[index];
       if (result.status === "fulfilled" && referenceSeries.length < 4) {
         referenceSeries.push(result.value);
         referenceStations.push(candidates[index]);
       } else if (result.status === "rejected") {
-        warnings.push(`${candidates[index].code}: ${result.reason instanceof Error ? result.reason.message : "sin datos"}`);
+        warningDetails.push(`${candidates[index].code}: ${result.reason instanceof Error ? result.reason.message : "sin datos"}`);
       }
     }
     if (!referenceSeries.length) throw new Error("Ninguna estación de referencia federada tuvo datos coincidentes en la ventana solicitada.");
-    if (referenceSeries.length < 2) warnings.push("Solo una referencia tuvo datos válidos; la clasificación de localidad tiene cobertura insuficiente.");
-    if (!kp.length) warnings.push("Kp de GFZ no estuvo disponible; el score aplica una penalización por incertidumbre geomagnética global.");
+    if (referenceSeries.length < 2) warningDetails.push("Solo una referencia tuvo datos válidos; la clasificación de localidad tiene cobertura insuficiente.");
+    if (!kp.length) warningDetails.push("Kp de GFZ no estuvo disponible; el score aplica una penalización por incertidumbre geomagnética global.");
 
     const metrics = analyzeMagneticLocality(targetResult, referenceSeries, kp);
     const coverage = coverageForReferences(targetStation, referenceStations);
@@ -117,9 +138,10 @@ export async function GET(request: NextRequest) {
       references: referenceSeries.map((series, index) => ({ code: series.code, datasetId: series.datasetId, samples: series.samples.length, source: referenceStations[index]?.dataSource ?? "federada" })),
       referenceMode: manual ? "manual" : "automatic",
       coverage,
-      requestedStart: start.toISOString(), requestedEnd: end.toISOString(), start: actualStart, end: actualEnd,
+      requestedStart: start.toISOString(), requestedEnd: requestedEnd.toISOString(), effectiveEnd: end.toISOString(), start: actualStart, end: actualEnd,
       metrics,
-      warnings,
+      warnings: compactWarnings(warningDetails),
+      warningDetails,
       methodology: {
         cadence: "60 s",
         sources: "USGS Geomagnetism + INTERMAGNET HAPI, federados por código IAGA; USGS tiene prioridad cuando ambos sirven la misma estación",
