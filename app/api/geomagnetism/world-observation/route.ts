@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { fetchFederatedGeomagneticSeries, fetchFederatedGeomagneticStations, usgsStationsAsNetwork } from "@/lib/geomagneticProviders";
-import { anomalyObservations, buildMagneticGrid, buildSwarmMagneticGrid, observationFromSeries, selectGlobalGroundStations, type GroundMagneticObservation } from "@/lib/geomagneticWorld";
+import { anomalyObservations, buildRecentChangeGrid, buildReferenceFieldGrid, buildRobustAnomalyGrid, observationFromSeries, selectGlobalGroundStations, type GroundMagneticObservation } from "@/lib/geomagneticWorld";
+import { referenceMetadata } from "@/lib/geomagneticReference";
 import { fetchUsgsGeomagSeries } from "@/lib/usgsGeomag";
 import { fetchRecentSwarmMagnetics } from "@/lib/swarmGeomag";
 import { fetchSuperMagContext } from "@/lib/supermag";
@@ -60,10 +61,6 @@ async function recentFederatedSnapshot(signal?: AbortSignal) {
   return { stations, selected, observations, warnings };
 }
 
-/**
- * USGS documentation supports 60 s and 3600 s, but operational guidance notes that
- * 3600 s queries are historically less reliable. Use 60 s over a short, lagged window.
- */
 async function usgsMinuteFallback(existingCodes: Set<string>, signal?: AbortSignal) {
   const stations = usgsStationsAsNetwork().filter((station) => !existingCodes.has(station.code));
   if (!stations.length) return { observations: [] as GroundMagneticObservation[], warnings: [] as string[] };
@@ -118,6 +115,7 @@ function compactWarnings(items: string[]) {
 
 export async function GET() {
   try {
+    const now = new Date();
     const [groundResult, swarmResult, supermagResult] = await Promise.allSettled([
       groundSnapshot(),
       fetchRecentSwarmMagnetics(3),
@@ -129,27 +127,29 @@ export async function GET() {
     const swarm = swarmResult.status === "fulfilled" ? swarmResult.value : { points: [], warnings: [swarmResult.reason instanceof Error ? swarmResult.reason.message : "Swarm no disponible"], datasets: [], hours: 3 };
     const supermag = supermagResult.status === "fulfilled" ? supermagResult.value : null;
 
-    const groundGrid = buildMagneticGrid(ground.observations, 5, 3400);
-    const swarmGrid = buildSwarmMagneticGrid(swarm.points, 5, 1800);
-    const useGroundField = ground.observations.length >= 4 && groundGrid.length >= 20;
-    const fieldMode = useGroundField ? "ground" : swarmGrid.length ? "swarm" : "none";
-    const grid = fieldMode === "ground" ? groundGrid : fieldMode === "swarm" ? swarmGrid : [];
+    // Reference field is continuous worldwide. Observed change/anomaly layers remain deliberately
+    // limited to areas supported by real ground stations, so blank overlay areas mean "no observation",
+    // not "no magnetic field".
+    const referenceGrid = buildReferenceFieldGrid(now, 5);
+    const changeGrid = buildRecentChangeGrid(ground.observations, 5, 2400);
+    const anomalyGrid = buildRobustAnomalyGrid(ground.observations, 5, 1700);
 
     const warningDetails = [
       ...ground.warnings,
       ...swarm.warnings,
       ...(supermagResult.status === "rejected" ? [`SuperMAG: ${supermagResult.reason instanceof Error ? supermagResult.reason.message : "sin datos"}`] : []),
     ];
-    if (!useGroundField && swarmGrid.length) warningDetails.push("Campo base mostrado desde Swarm porque la red terrestre reciente no alcanzó cobertura mínima de 4 observatorios.");
+    if (!ground.observations.length) warningDetails.push("Sin observatorios terrestres recientes: WMM2025 sigue mostrando el campo base, pero ΔF temporal y robust-Z no se calculan sin mediciones de suelo.");
 
     return NextResponse.json({
-      generatedAt: new Date().toISOString(),
+      generatedAt: now.toISOString(),
+      defaultView: "change",
+      reference: referenceMetadata(now),
       window: { groundLookbackHours: LOOKBACK_HOURS, usgsFallbackHours: USGS_FALLBACK_HOURS, usgsSafeLagMinutes: USGS_SAFE_LAG_MINUTES, swarmLookbackHours: swarm.hours, earthquakesDays: 30 },
       groundPoints: ground.observations,
-      grid,
-      groundGrid,
-      swarmGrid,
-      fieldMode,
+      referenceGrid,
+      changeGrid,
+      anomalyGrid,
       anomalies: ground.anomalies,
       swarmPoints: swarm.points,
       supermag,
@@ -159,9 +159,12 @@ export async function GET() {
         groundPoints: ground.observations.length,
         fallbackGroundPoints: ground.fallbackGroundPoints,
         swarmPoints: swarm.points.length,
-        activeGridCells: grid.length,
+        referenceCells: referenceGrid.length,
+        changeCells: changeGrid.length,
+        anomalyCells: anomalyGrid.length,
       },
       sourceStatus: {
+        WMM2025: referenceGrid.length > 0,
         USGS: ground.observations.some((point) => point.source.includes("USGS")),
         INTERMAGNET: ground.observations.some((point) => point.source.includes("INTERMAGNET")),
         Swarm: swarm.points.length > 0,
@@ -170,17 +173,15 @@ export async function GET() {
       warnings: compactWarnings(warningDetails),
       warningDetails,
       methodology: {
-        fieldLayer: fieldMode === "ground"
-          ? "|F| magnético absoluto reciente de observatorios terrestres; grilla IDW de 5° limitada a 3400 km de observaciones."
-          : fieldMode === "swarm"
-            ? "|F| magnético observado por Swarm A/B/C a altitud orbital; grilla IDW de 5° limitada a 1800 km de las trayectorias recientes. Se usa como fallback espacial cuando la cobertura terrestre es insuficiente."
-            : "Sin cobertura suficiente para construir un campo observado.",
-        groundFallback: "USGS usa datos de 60 s durante una ventana corta con 20 min de retraso para evitar minutos aún no publicados; no se usa el fallback de 3600 s.",
-        anomalies: "desviación robusta del último |F| terrestre respecto a la mediana de su propia serie reciente (MAD × 1.4826); z≥3 se marca como anomalía preliminar, no como precursor sísmico.",
-        swarm: "Swarm A/B/C FAST MAGx_LR_1B a 1 Hz desde VirES HAPI, decimado aproximadamente a 1 punto/minuto. Sus anomalías no se mezclan con las terrestres por diferencia de altitud.",
-        supermag: "SME/SMU/SML desde el espejo público CDPP/AMDA; sirve como contexto de perturbación magnetosférica. Los vectores directos de estaciones SuperMAG requieren acceso propio de SuperMAG.",
+        reference: "WMM2025 calcula el campo principal esperado global a nivel del suelo. Esta capa es contexto físico y nunca se etiqueta como anomalía.",
+        change: "Vista predeterminada: ΔF temporal = último |F| de cada observatorio menos la mediana de su propia serie reciente. Se interpola solo cerca de observatorios reales; rojo=aumento reciente, azul=disminución reciente.",
+        anomaly: "robust-Z firmado = ΔF temporal / (MAD × 1.4826). La magnitud z≥3 se marca como desviación preliminar; no demuestra origen tectónico ni capacidad predictiva.",
+        modelResidual: "El popup de cada estación incluye además observado−WMM2025 como residuo espacial. No se usa como mapa de anomalía porque puede contener estructura geológica/crustal estática.",
+        groundFallback: "USGS usa datos de 60 s durante una ventana corta con 20 min de retraso para evitar minutos aún no publicados.",
+        swarm: "Swarm A/B/C se conserva como trayectoria satelital independiente. No se mezcla numéricamente con ΔF terrestre por diferencia de altitud y de referencia física.",
+        supermag: "SME/SMU/SML desde el espejo público CDPP/AMDA sirve como contexto de perturbación magnetosférica, no como campo absoluto local.",
       },
-      licenseNote: "USGS, INTERMAGNET, ESA Swarm/VirES y SuperMAG/CDPP-AMDA conservan sus respectivos términos, atribuciones y reglas de uso.",
+      licenseNote: "WMM2025 es un modelo oficial NGA/DGC desarrollado con NCEI/BGS. USGS, INTERMAGNET, ESA Swarm/VirES y SuperMAG/CDPP-AMDA conservan sus respectivos términos, atribuciones y reglas de uso.",
     }, {
       headers: { "Cache-Control": "no-store, max-age=0" },
     });
