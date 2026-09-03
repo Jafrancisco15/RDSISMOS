@@ -15,6 +15,7 @@ export type WorldMapLayers = {
 
 export type GeomagneticWorldMapProps = {
   grid: MagneticGridCell[];
+  fieldMode?: "ground" | "swarm" | "none";
   groundPoints: GroundMagneticObservation[];
   anomalies: GroundMagneticObservation[];
   swarmPoints: SwarmMagneticPoint[];
@@ -25,20 +26,23 @@ export type GeomagneticWorldMapProps = {
 function heatColor(value: number) {
   const t = Math.max(0, Math.min(1, value));
   const hue = 54 * (1 - t);
-  const lightness = 52 - 5 * t;
-  return `hsl(${hue.toFixed(1)} 96% ${lightness.toFixed(1)}%)`;
+  const lightness = 53 - 6 * t;
+  return `hsl(${hue.toFixed(1)} 98% ${lightness.toFixed(1)}%)`;
 }
-function heatOpacity(cell: MagneticGridCell) {
-  const support = Math.min(1, cell.supportCount / 4);
-  const distance = Math.max(0, Math.min(1, 1 - cell.nearestKm / 3400));
-  return .30 + .20 * support + .10 * distance;
+function heatOpacity(cell: MagneticGridCell, mode: "ground" | "swarm" | "none") {
+  const support = Math.min(1, cell.supportCount / (mode === "swarm" ? 6 : 4));
+  const maxDistance = mode === "swarm" ? 1800 : 3400;
+  const distance = Math.max(0, Math.min(1, 1 - cell.nearestKm / maxDistance));
+  return .38 + .22 * support + .12 * distance;
 }
 function swarmColor(satellite: string) { return satellite === "B" ? "#818cf8" : satellite === "C" ? "#22d3ee" : "#60a5fa"; }
 function quakeRadius(magnitude: number) { return Math.max(2.5, Math.min(9, 1.1 + Math.pow(Math.max(0, magnitude), 1.12))); }
 function nT(value: number) { return `${Math.round(value).toLocaleString("es-DO")} nT`; }
 
-export function GeomagneticWorldLeafletMap({ grid, groundPoints, anomalies, swarmPoints, events, layers }: GeomagneticWorldMapProps) {
+export function GeomagneticWorldLeafletMap({ grid, fieldMode = "none", groundPoints, anomalies, swarmPoints, events, layers }: GeomagneticWorldMapProps) {
   const anomalyCodes = new Set(anomalies.map((point) => point.stationCode));
+  const fieldLabel = fieldMode === "swarm" ? "Swarm orbital |F|" : fieldMode === "ground" ? "campo terrestre |F|" : "campo";
+  const supportLabel = fieldMode === "swarm" ? "muestra Swarm más próxima" : "estación más próxima";
   return <div style={{ borderRadius: 14, overflow: "hidden", border: "1px solid rgba(56,189,248,.22)", background: "#07131f" }}>
     <MapContainer center={[18, 0]} zoom={2} minZoom={2} worldCopyJump preferCanvas style={{ height: "clamp(480px,68vh,760px)", width: "100%" }}>
       <TileLayer
@@ -56,11 +60,11 @@ export function GeomagneticWorldLeafletMap({ grid, groundPoints, anomalies, swar
             pathOptions={{
               color: heatColor(cell.intensity01),
               fillColor: heatColor(cell.intensity01),
-              fillOpacity: heatOpacity(cell),
-              opacity: .12,
-              weight: .15,
+              fillOpacity: heatOpacity(cell, fieldMode),
+              opacity: .15,
+              weight: .12,
             }}
-          ><Tooltip sticky opacity={.93}>Campo interpolado {nT(cell.fieldNt)} · intensidad relativa {(cell.intensity01 * 100).toFixed(0)}% · soporte {cell.supportCount} · estación más próxima ~{cell.nearestKm.toLocaleString("es-DO")} km</Tooltip></Rectangle>;
+          ><Tooltip sticky opacity={.95}>{fieldLabel} · {nT(cell.fieldNt)} · intensidad relativa {(cell.intensity01 * 100).toFixed(0)}% · soporte {cell.supportCount} · {supportLabel} ~{cell.nearestKm.toLocaleString("es-DO")} km</Tooltip></Rectangle>;
         })}
       </Pane>
 
@@ -79,7 +83,7 @@ export function GeomagneticWorldLeafletMap({ grid, groundPoints, anomalies, swar
         center={[point.latitude, point.longitude]}
         radius={10 + Math.min(9, point.anomalyZ)}
         pathOptions={{ color: "#f0abfc", fillColor: "#d946ef", fillOpacity: .10, weight: 2.5, dashArray: "4 3" }}
-      ><Tooltip direction="top" opacity={.96}>ANOMALÍA · {point.stationCode} · z={point.anomalyZ.toFixed(1)}</Tooltip></CircleMarker>)}
+      ><Tooltip direction="top" opacity={.96}>ANOMALÍA TERRESTRE · {point.stationCode} · z={point.anomalyZ.toFixed(1)}</Tooltip></CircleMarker>)}
 
       {layers.swarm && swarmPoints.map((point) => <CircleMarker
         key={point.id}
@@ -106,10 +110,11 @@ export function GeomagneticWorldLeafletMap({ grid, groundPoints, anomalies, swar
     </MapContainer>
     <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, padding: "8px 10px 4px", background: "rgba(2,8,18,.95)", color: "#cbd5e1", fontSize: 9 }}>
       <span>campo menor relativo</span>
-      <div style={{ width: "min(240px,42vw)", height: 10, borderRadius: 999, background: "linear-gradient(90deg,hsl(54 96% 52%),hsl(38 96% 51%),hsl(20 96% 49%),hsl(0 96% 47%))", border: "1px solid rgba(255,255,255,.18)" }} />
+      <div style={{ width: "min(240px,42vw)", height: 10, borderRadius: 999, background: "linear-gradient(90deg,hsl(54 98% 53%),hsl(38 98% 51%),hsl(20 98% 49%),hsl(0 98% 47%))", border: "1px solid rgba(255,255,255,.18)" }} />
       <span style={{ textAlign: "right" }}>campo alto relativo</span>
     </div>
     <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "4px 10px 8px", color: "#cbd5e1", fontSize: 9.5, background: "rgba(2,8,18,.95)" }}>
+      <span><b style={{ color: fieldMode === "swarm" ? "#60a5fa" : "#f8fafc" }}>■</b> gradiente: {fieldMode === "swarm" ? "Swarm orbital" : fieldMode === "ground" ? "observatorios terrestres" : "sin datos"}</span>
       <span><b style={{ color: "#f8fafc" }}>●</b> estación terrestre</span>
       <span><b style={{ color: "#f0abfc" }}>◯</b> anomalía z≥3</span>
       <span><b style={{ color: "#60a5fa" }}>●</b> Swarm</span>
