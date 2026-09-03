@@ -23,10 +23,15 @@ export type GeomagneticWorldMapProps = {
 };
 
 function heatColor(value: number) {
-  if (value >= .72) return "#ef4444";
-  if (value >= .42) return "#f97316";
-  if (value >= .18) return "#f59e0b";
-  return "#fde047";
+  const t = Math.max(0, Math.min(1, value));
+  const hue = 54 * (1 - t);
+  const lightness = 52 - 5 * t;
+  return `hsl(${hue.toFixed(1)} 96% ${lightness.toFixed(1)}%)`;
+}
+function heatOpacity(cell: MagneticGridCell) {
+  const support = Math.min(1, cell.supportCount / 4);
+  const distance = Math.max(0, Math.min(1, 1 - cell.nearestKm / 3400));
+  return .30 + .20 * support + .10 * distance;
 }
 function swarmColor(satellite: string) { return satellite === "B" ? "#818cf8" : satellite === "C" ? "#22d3ee" : "#60a5fa"; }
 function quakeRadius(magnitude: number) { return Math.max(2.5, Math.min(9, 1.1 + Math.pow(Math.max(0, magnitude), 1.12))); }
@@ -42,36 +47,38 @@ export function GeomagneticWorldLeafletMap({ grid, groundPoints, anomalies, swar
         maxZoom={18}
       />
 
-      {layers.field && grid.map((cell) => {
-        const half = cell.sizeDeg / 2;
-        return <Rectangle
-          key={`field:${cell.latitude}:${cell.longitude}`}
-          bounds={[[Math.max(-90, cell.latitude - half), Math.max(-180, cell.longitude - half)], [Math.min(90, cell.latitude + half), Math.min(180, cell.longitude + half)]]}
-          pathOptions={{
-            color: heatColor(cell.intensity01),
-            fillColor: heatColor(cell.intensity01),
-            fillOpacity: .18 + Math.min(.19, cell.supportCount * .025),
-            opacity: .05,
-            weight: .25,
-          }}
-        ><Tooltip sticky opacity={.93}>Campo interpolado {nT(cell.fieldNt)} · soporte {cell.supportCount} · estación más próxima ~{cell.nearestKm.toLocaleString("es-DO")} km</Tooltip></Rectangle>;
-      })}
+      <Pane name="geomagnetic-field" style={{ zIndex: 360, pointerEvents: "auto" }}>
+        {layers.field && grid.map((cell) => {
+          const half = cell.sizeDeg / 2;
+          return <Rectangle
+            key={`field:${cell.latitude}:${cell.longitude}`}
+            bounds={[[Math.max(-90, cell.latitude - half), Math.max(-180, cell.longitude - half)], [Math.min(90, cell.latitude + half), Math.min(180, cell.longitude + half)]]}
+            pathOptions={{
+              color: heatColor(cell.intensity01),
+              fillColor: heatColor(cell.intensity01),
+              fillOpacity: heatOpacity(cell),
+              opacity: .12,
+              weight: .15,
+            }}
+          ><Tooltip sticky opacity={.93}>Campo interpolado {nT(cell.fieldNt)} · intensidad relativa {(cell.intensity01 * 100).toFixed(0)}% · soporte {cell.supportCount} · estación más próxima ~{cell.nearestKm.toLocaleString("es-DO")} km</Tooltip></Rectangle>;
+        })}
+      </Pane>
 
       {layers.dataPoints && groundPoints.map((point) => <CircleMarker
         key={point.id}
         center={[point.latitude, point.longitude]}
-        radius={anomalyCodes.has(point.stationCode) ? 5 : 3.5}
-        pathOptions={{ color: "#0f172a", fillColor: "#f8fafc", fillOpacity: .95, weight: 1.3 }}
+        radius={anomalyCodes.has(point.stationCode) ? 5 : 4}
+        pathOptions={{ color: "#0f172a", fillColor: "#f8fafc", fillOpacity: .98, weight: 1.4 }}
       >
         <Tooltip direction="top" opacity={.94}>{point.stationCode} · {nT(point.strengthNt)}</Tooltip>
-        <Popup><strong>{point.stationCode} · {point.stationName}</strong><br />{point.source}<br />|F|: {nT(point.strengthNt)}<br />z local preliminar: {point.anomalyZ.toFixed(2)}<br />{new Date(point.observedAt).toLocaleString("es-DO")}</Popup>
+        <Popup><strong>{point.stationCode} · {point.stationName}</strong><br />{point.source}<br />|F|: {nT(point.strengthNt)}<br />baseline: {nT(point.baselineNt)}<br />z local preliminar: {point.anomalyZ.toFixed(2)}<br />{new Date(point.observedAt).toLocaleString("es-DO")}</Popup>
       </CircleMarker>)}
 
       {layers.anomalies && anomalies.map((point) => <CircleMarker
         key={`anomaly:${point.id}`}
         center={[point.latitude, point.longitude]}
         radius={10 + Math.min(9, point.anomalyZ)}
-        pathOptions={{ color: "#f0abfc", fillColor: "#d946ef", fillOpacity: .08, weight: 2.5, dashArray: "4 3" }}
+        pathOptions={{ color: "#f0abfc", fillColor: "#d946ef", fillOpacity: .10, weight: 2.5, dashArray: "4 3" }}
       ><Tooltip direction="top" opacity={.96}>ANOMALÍA · {point.stationCode} · z={point.anomalyZ.toFixed(1)}</Tooltip></CircleMarker>)}
 
       {layers.swarm && swarmPoints.map((point) => <CircleMarker
@@ -97,10 +104,13 @@ export function GeomagneticWorldLeafletMap({ grid, groundPoints, anomalies, swar
         />
       </Pane>
     </MapContainer>
-    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "8px 10px", color: "#cbd5e1", fontSize: 9.5, background: "rgba(2,8,18,.95)" }}>
-      <span><b style={{ color: "#fde047" }}>■</b> campo menor relativo</span>
-      <span><b style={{ color: "#f97316" }}>■</b> medio</span>
-      <span><b style={{ color: "#ef4444" }}>■</b> campo alto relativo</span>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", gap: 8, padding: "8px 10px 4px", background: "rgba(2,8,18,.95)", color: "#cbd5e1", fontSize: 9 }}>
+      <span>campo menor relativo</span>
+      <div style={{ width: "min(240px,42vw)", height: 10, borderRadius: 999, background: "linear-gradient(90deg,hsl(54 96% 52%),hsl(38 96% 51%),hsl(20 96% 49%),hsl(0 96% 47%))", border: "1px solid rgba(255,255,255,.18)" }} />
+      <span style={{ textAlign: "right" }}>campo alto relativo</span>
+    </div>
+    <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "4px 10px 8px", color: "#cbd5e1", fontSize: 9.5, background: "rgba(2,8,18,.95)" }}>
+      <span><b style={{ color: "#f8fafc" }}>●</b> estación terrestre</span>
       <span><b style={{ color: "#f0abfc" }}>◯</b> anomalía z≥3</span>
       <span><b style={{ color: "#60a5fa" }}>●</b> Swarm</span>
       <span><b style={{ color: "#06b6d4" }}>●</b> sismos 30 días</span>
