@@ -6,17 +6,24 @@ import type { SeismicMechanism } from "./seismicMechanisms";
 import { reconstructTectonicState4D, TECTONIC_STATE_DEPTH_BANDS } from "./tectonicState4d";
 
 function event(id: string, day: number, magnitude: number): EarthquakeEvent {
+  const timeUtc = new Date(Date.UTC(2026, 0, day)).toISOString();
   return {
     id,
-    timeUtc: new Date(Date.UTC(2026, 0, day)).toISOString(),
+    externalId: id,
+    sourceCatalog: "USGS",
+    timeUtc,
+    updatedUtc: timeUtc,
     latitude: 18,
     longitude: -68,
     depthKm: 20,
     magnitude,
+    magnitudeType: "mw",
     place: "Test",
-    sourceCatalog: "USGS",
-    sourceUrl: null,
+    countryOrRegion: "Test",
     eventType: "earthquake",
+    status: "reviewed",
+    network: "us",
+    sourceUrl: "https://earthquake.usgs.gov/",
   };
 }
 
@@ -29,10 +36,8 @@ function mechanism(): SeismicMechanism {
     longitude: -68,
     depthKm: 20,
     magnitude: 6,
-    pAxisAzimuthDeg: 10,
-    pAxisPlungeDeg: 20,
-    tAxisAzimuthDeg: 100,
-    tAxisPlungeDeg: 30,
+    pAxis: { azimuthDeg: 10, plungeDeg: 20 },
+    tAxis: { azimuthDeg: 100, plungeDeg: 30 },
     strikeDeg: 90,
     dipDeg: 45,
     rakeDeg: 90,
