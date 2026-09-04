@@ -26,6 +26,7 @@ import { SeismicGlobe3D } from "./SeismicGlobe3D";
 import { Slab2AboutNote } from "./Slab2AboutNote";
 import { SlabContextExplorer } from "./SlabContextExplorer";
 import { TectonicDepth3D } from "./TectonicDepth3D";
+import { TectonicState4D } from "./TectonicState4D";
 import { TectonicSimulator } from "./TectonicSimulator";
 import { VolcanoActivityDashboard } from "./VolcanoActivityDashboard";
 
@@ -34,7 +35,7 @@ const LunarPhaseExperimental = dynamic(
   { ssr: false, loading: () => <div className="map-loading" style={{ margin: 28 }}>Inicializando globo lunar 3D…</div> },
 );
 
-type AppTab = "globe" | "depth3d" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
+type AppTab = "globe" | "depth3d" | "tectonic4d" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -65,6 +66,7 @@ export function AppShell() {
         <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>ETAS Projection</button>
         <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Placas 3D</button>
+        <button className={tab === "tectonic4d" ? "active" : ""} onClick={() => setTab("tectonic4d")}>Tectonic State 4D</button>
         <button className={tab === "extractions" ? "active" : ""} onClick={() => setTab("extractions")}>Extracciones</button>
         <button className={tab === "geomagnetism" ? "active" : ""} onClick={() => setTab("geomagnetism")}>Geomagnetismo</button>
         <button className={tab === "volcano" ? "active" : ""} onClick={() => setTab("volcano")}>Volcano activity</button>
@@ -127,6 +129,7 @@ export function AppShell() {
       )}
 
       {tab === "depth3d" && <TectonicDepth3D />}
+      {tab === "tectonic4d" && <TectonicState4D />}
       {tab === "extractions" && <ExtractionDashboard />}
       {tab === "geomagnetism" && <>
         <GeomagneticWorldObservation />
