@@ -9,7 +9,7 @@ import {
   selectWaveformStations,
 } from "./earthscopeWaveforms";
 
-test("parses FDSN channel metadata and prefers broadband vertical channels", () => {
+test("parses FDSN channel metadata and follows the current BHZ vertical priority", () => {
   const text = [
     "#Network|Station|Location|Channel|Latitude|Longitude|Elevation|Depth|Azimuth|Dip|Instrument|Scale|ScaleFreq|ScaleUnits|SampleRate|StartTime|EndTime",
     "IU|ANMO|00|LHZ|34.94|-106.45|1800|0|0|-90|sensor|1|1|M/S|1|2000-01-01T00:00:00|",
@@ -18,7 +18,7 @@ test("parses FDSN channel metadata and prefers broadband vertical channels", () 
   ].join("\n");
   const parsed = parseEarthScopeChannels(text);
   assert.equal(parsed.length, 3);
-  assert.equal(choosePreferredChannel(parsed)?.channel, "HHZ");
+  assert.equal(choosePreferredChannel(parsed)?.channel, "BHZ");
 });
 
 test("parses GeoCSV time-value rows relative to the earthquake origin time", () => {
