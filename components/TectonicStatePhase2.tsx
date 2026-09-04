@@ -123,7 +123,7 @@ export function TectonicStatePhase2({ events }: { events: EarthquakeEvent[] }) {
     <div style={{ color: "#5eead4", fontSize: 9, fontWeight: 900, letterSpacing: ".09em" }}>FASE 2 · WAVEFIELD OBSERVADO + RAY COVERAGE</div>
     <h2 style={{ margin: "5px 0", color: "white", fontSize: 19 }}>Z/N/E reales + sensibilidad por voxel</h2>
     <p style={{ margin: 0, color: "#94a3b8", fontSize: 9.5, lineHeight: 1.55 }}>
-      Usa un terremoto real como fuente, busca estaciones abiertas en EarthScope, recupera tres componentes cuando existen y traza familias P/S con iasp91 hacia esas mismas estaciones. Fase 2 mide <b style={{ color: "#d1fae5" }}>cobertura observacional</b>; el mismo cálculo alimenta ahora Fase 3, que compara llegadas observadas contra IASP91.
+      Usa un terremoto real como fuente, busca estaciones abiertas en EarthScope, recupera tres componentes por <b style={{ color: "#d1fae5" }}>FDSN dataselect</b> cuando existen y traza familias P/S con iasp91 hacia esas mismas estaciones. Fase 2 mide cobertura observacional; el mismo cálculo alimenta Fase 3, que compara llegadas observadas contra IASP91.
     </p>
 
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end", marginTop: 10 }}>
@@ -144,7 +144,7 @@ export function TectonicStatePhase2({ events }: { events: EarthquakeEvent[] }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(125px,1fr))", gap: 7, marginTop: 11 }}>
         <article style={card}><div style={{ color: "#67e8f9", fontSize: 8, fontWeight: 900 }}>ESTACIONES CANDIDATAS</div><strong style={{ color: "white", fontSize: 18 }}>{result.stationCandidates ?? 0}</strong></article>
         <article style={card}><div style={{ color: "#a7f3d0", fontSize: 8, fontWeight: 900 }}>ESTACIONES 3C</div><strong style={{ color: "white", fontSize: 18 }}>{result.waveforms?.completeStations ?? 0}</strong><div style={{ color: "#64748b", fontSize: 8 }}>de {result.waveforms?.requestedStations ?? 0} solicitadas</div></article>
-        <article style={card}><div style={{ color: "#c4b5fd", fontSize: 8, fontWeight: 900 }}>TRAZAS REALES</div><strong style={{ color: "white", fontSize: 18 }}>{result.waveforms?.traceCount ?? 0}</strong><div style={{ color: "#64748b", fontSize: 8 }}>respuesta corregida cuando disponible</div></article>
+        <article style={card}><div style={{ color: "#c4b5fd", fontSize: 8, fontWeight: 900 }}>TRAZAS REALES</div><strong style={{ color: "white", fontSize: 18 }}>{result.waveforms?.traceCount ?? 0}</strong><div style={{ color: "#64748b", fontSize: 8 }}>GeoCSV · sensibilidad instrumental aplicada</div></article>
         <article style={card}><div style={{ color: "#fda4af", fontSize: 8, fontWeight: 900 }}>RAYOS P/S</div><strong style={{ color: "white", fontSize: 18 }}>{coverage?.rayCount ?? 0}</strong><div style={{ color: "#64748b", fontSize: 8 }}>iasp91 · estaciones con waveform</div></article>
         <article style={card}><div style={{ color: "#fde68a", fontSize: 8, fontWeight: 900 }}>VOXELES CUBIERTOS</div><strong style={{ color: "white", fontSize: 18 }}>{coverage?.coveredVoxelCount ?? 0}</strong><div style={{ color: "#64748b", fontSize: 8 }}>4° × 4° × 50 km</div></article>
         <article style={card}><div style={{ color: "#5eead4", fontSize: 8, fontWeight: 900 }}>COBERTURA FASE 2</div><strong style={{ color: "white", fontSize: 18 }}>{coverage?.coverageScore ?? 0}/100</strong><div style={{ color: "#64748b", fontSize: 8 }}>soporte geométrico, no riesgo</div></article>
