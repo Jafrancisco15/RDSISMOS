@@ -9,11 +9,11 @@ import {
   type EarthScopeObservedTrace,
   type EarthScopeWaveformSource,
 } from "./earthscopeWaveforms";
+import { fetchEarthScopeGeoCsv } from "./earthscopeDataSelect";
 import { traceRayFamilies, type LocalRayPath } from "./localSeismicRayTracer";
 
 const STATION_URL = "https://service.earthscope.org/fdsnws/station/1/query";
-const DATASELECT_URL = "https://service.earthscope.org/fdsnws/dataselect/1/query";
-const USER_AGENT = "RDSISMOS/1.3 Tectonic-State-4D-dataselect";
+const USER_AGENT = "RDSISMOS/1.4 Tectonic-State-4D-dataselect";
 const PRE_EVENT_SECONDS = 60;
 
 export interface EarthScopeThreeComponentStation {
@@ -118,10 +118,6 @@ export function chooseThreeComponentGroup(channels: EarthScopeChannel[]) {
   return rankThreeComponentGroups(channels)[0] ?? null;
 }
 
-function locationParam(value: string) {
-  return !value || value === "--" ? "--" : value;
-}
-
 async function preferredGroups(station: EarthScopeStation, eventTimeUtc: string, signal?: AbortSignal) {
   const event = new Date(eventTimeUtc);
   const end = new Date(event.getTime() + 45 * 60_000);
@@ -176,24 +172,17 @@ async function fetchComponentTrace(
   const postEventSeconds = nearestArrivalTime(source, station);
   const start = new Date(eventMs - PRE_EVENT_SECONDS * 1000).toISOString();
   const end = new Date(eventMs + postEventSeconds * 1000).toISOString();
-  const params = new URLSearchParams({
-    net: channel.network,
-    sta: channel.station,
-    loc: locationParam(channel.location),
-    cha: channel.channel,
-    start,
-    end,
-    format: "geocsv.inline",
-    scale: "AUTO",
-    nodata: "404",
-  });
-  const response = await fetch(`${DATASELECT_URL}?${params}`, {
-    headers: { Accept: "text/plain,text/csv", "User-Agent": USER_AGENT },
+  const fetched = await fetchEarthScopeGeoCsv({
+    network: channel.network,
+    station: channel.station,
+    location: channel.location,
+    channel: channel.channel,
+    startTimeUtc: start,
+    endTimeUtc: end,
+    userAgent: USER_AGENT,
     signal,
-    cache: "no-store",
   });
-  if (!response.ok) throw new Error(`dataselect HTTP ${response.status}`);
-  const rawPoints = parseEarthScopeGeoCsv(await response.text(), source.timeUtc);
+  const rawPoints = parseEarthScopeGeoCsv(fetched.text, source.timeUtc);
   if (rawPoints.length < 8) throw new Error("dataselect sin muestras suficientes");
   const compact = compactAndNormalizeWaveform(demean(rawPoints), 600);
   return {
@@ -206,7 +195,7 @@ async function fetchComponentTrace(
     distanceKm: Number(haversineKm(source.latitude, source.longitude, channel.latitude, channel.longitude).toFixed(1)),
     siteName: station.siteName,
     sampleRateHz: channel.sampleRateHz,
-    units: channel.scaleUnits || "unidad física según sensibilidad",
+    units: fetched.scaledBySensitivity ? (channel.scaleUnits || "unidad física según sensibilidad") : "counts (raw)",
     calibration: "sensitivity-scaled",
     maxAbs: compact.maxAbs,
     samples: compact.samples,
@@ -301,6 +290,6 @@ export async function loadEarthScopeThreeComponentWaveforms(options: {
     windowStartUtc: new Date(eventMs - PRE_EVENT_SECONDS * 1000).toISOString(),
     windowEndUtc: new Date(eventMs + latestWindowSec * 1000).toISOString(),
     warnings: warnings.slice(0, 20),
-    note: "Fase 2 usa registros reales Z/N/E (o Z/1/2) de EarthScope FDSN dataselect en GeoCSV. scale=AUTO aplica la sensibilidad instrumental; la eliminación completa de respuesta ya no se hace en servidor porque irisws-timeseries fue retirado. RDSISMOS prueba familias alternativas de canales cuando una banda no tiene datos. La normalización es únicamente para visualización y picking.",
+    note: "Fase 2 usa registros reales Z/N/E (o Z/1/2) de EarthScope FDSN dataselect en GeoCSV. scale=AUTO aplica la sensibilidad instrumental cuando está disponible; si no, RDSISMOS conserva counts crudos porque Fase 3 usa tiempos de llegada relativos. RDSISMOS prueba familias alternativas de canales cuando una banda no tiene datos. La normalización es únicamente para visualización y picking.",
   };
 }
