@@ -57,7 +57,7 @@ async function loadStations(source: EarthScopeWaveformSource, signal: AbortSigna
     nodata: "404",
   });
   const response = await fetch(`${STATION_URL}?${params}`, {
-    headers: { Accept: "text/plain", "User-Agent": "RDSISMOS/1.2 Tectonic-State-4D-phase3" },
+    headers: { Accept: "text/plain", "User-Agent": "RDSISMOS/1.3 Tectonic-State-4D-phase3" },
     signal,
     cache: "no-store",
   });
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
       phase3,
       warnings: [...waveforms.warnings, ...phase3.warnings].slice(0, 36),
       methodology: {
-        observedWavefield: "EarthScope FDSN/irisws timeseries, 3 componentes cuando están disponibles",
+        observedWavefield: "EarthScope fdsnws-dataselect GeoCSV, 3 componentes cuando están disponibles; scale=AUTO aplica sensibilidad instrumental",
         rayGeometry: "RDSISMOS spherical ray tracer, iasp91",
         voxelGrid: "4° × 4° × 50 km",
         inversionStatus: "arrival-time-backprojection-v0.1",
