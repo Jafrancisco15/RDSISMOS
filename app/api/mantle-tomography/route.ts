@@ -14,13 +14,16 @@ import {
   type NetcdfClassicHeader,
   type NetcdfVariable,
 } from "@/lib/netcdfClassic";
+import {
+  SEISGLOB2_LEGACY_URL,
+  resolveSeisglob2ModelUrl,
+} from "@/lib/earthscopeEmc";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const MODEL = "SEISGLOB2" as const;
-const MODEL_FILE_URL = "https://ds.iris.edu/files/products/emc/emc-files/SEISGLOB2_percent.nc";
 const HEADER_RANGE_END = 131_071;
 const MODEL_MIN_DEPTH_KM = 50;
 const MODEL_DEPTH_STEP_KM = 50;
@@ -29,6 +32,7 @@ type Bounds = { west: number; south: number; east: number; north: number };
 type HeaderCache = { header: NetcdfClassicHeader; initialBuffer: ArrayBuffer; fullFile: boolean };
 
 let headerPromise: Promise<HeaderCache> | null = null;
+let discoveredUrlPromise: Promise<string | null> | null = null;
 
 function normalizeLongitude(value: number) {
   let longitude = value;
@@ -72,20 +76,43 @@ function longitudeInside(longitude: number, bounds: Bounds) {
   return value >= bounds.west || value <= bounds.east;
 }
 
+async function modelUrls(signal: AbortSignal) {
+  if (!discoveredUrlPromise) {
+    discoveredUrlPromise = resolveSeisglob2ModelUrl(signal)
+      .then((url) => url)
+      .catch(() => null);
+  }
+  const discovered = await discoveredUrlPromise;
+  return [...new Set([discovered, SEISGLOB2_LEGACY_URL].filter((value): value is string => Boolean(value)))];
+}
+
 async function fetchModelRange(start: number, end: number, signal: AbortSignal) {
-  const response = await fetch(MODEL_FILE_URL, {
-    headers: {
-      Accept: "application/x-netcdf,application/octet-stream,*/*",
-      "Accept-Encoding": "identity",
-      Range: `bytes=${start}-${end}`,
-      "User-Agent": "RDSISMOS/1.0",
-    },
-    signal,
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error(`EarthScope EMC NetCDF respondió HTTP ${response.status}.`);
-  const buffer = await response.arrayBuffer();
-  return { buffer, partial: response.status === 206 };
+  const urls = await modelUrls(signal);
+  const failures: string[] = [];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/x-netcdf,application/octet-stream,*/*",
+          "Accept-Encoding": "identity",
+          Range: `bytes=${start}-${end}`,
+          "User-Agent": "RDSISMOS/1.1 EarthScope-EMC",
+        },
+        signal,
+        cache: "no-store",
+        redirect: "follow",
+      });
+      if (!response.ok) {
+        failures.push(`${new URL(url).host} HTTP ${response.status}`);
+        continue;
+      }
+      const buffer = await response.arrayBuffer();
+      return { buffer, partial: response.status === 206 };
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : "fuente no disponible");
+    }
+  }
+  throw new Error(`EarthScope EMC no entregó SEISGLOB2 (${failures.join("; ") || "sin fuentes"}).`);
 }
 
 async function loadHeader(signal: AbortSignal) {
@@ -96,6 +123,7 @@ async function loadHeader(signal: AbortSignal) {
       return { header, initialBuffer: first.buffer, fullFile: !first.partial };
     })().catch((error) => {
       headerPromise = null;
+      discoveredUrlPromise = null;
       throw error;
     });
   }
