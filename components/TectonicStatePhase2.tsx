@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import type { EarthScopeThreeComponentWaveforms } from "@/lib/earthscopeThreeComponent";
 import type { TectonicStatePhase2Coverage } from "@/lib/tectonicStatePhase2";
+import type { TectonicStatePhase3Result } from "@/lib/tectonicStatePhase3";
 import { readJsonResponse } from "@/lib/safeFetchJson";
+import { TectonicStatePhase3 } from "./TectonicStatePhase3";
 
 type Phase2Response = {
   phase: 2;
@@ -13,6 +15,7 @@ type Phase2Response = {
   stationCandidates?: number;
   waveforms: EarthScopeThreeComponentWaveforms | null;
   rayCoverage: TectonicStatePhase2Coverage | null;
+  phase3?: TectonicStatePhase3Result | null;
   warnings?: string[];
   methodology?: {
     observedWavefield?: string;
@@ -101,10 +104,10 @@ export function TectonicStatePhase2({ events }: { events: EarthquakeEvent[] }) {
         cache: "no-store",
       });
       const body = await readJsonResponse<Phase2Response>(response);
-      if (!response.ok) throw new Error(body.error ?? `Fase 2 HTTP ${response.status}`);
+      if (!response.ok) throw new Error(body.error ?? `Fase 2/3 HTTP ${response.status}`);
       setResult(body);
     } catch (runError) {
-      setError(runError instanceof Error ? runError.message : "No fue posible cargar Fase 2.");
+      setError(runError instanceof Error ? runError.message : "No fue posible cargar Fase 2/3.");
       setResult(null);
     } finally {
       setLoading(false);
@@ -120,7 +123,7 @@ export function TectonicStatePhase2({ events }: { events: EarthquakeEvent[] }) {
     <div style={{ color: "#5eead4", fontSize: 9, fontWeight: 900, letterSpacing: ".09em" }}>FASE 2 · WAVEFIELD OBSERVADO + RAY COVERAGE</div>
     <h2 style={{ margin: "5px 0", color: "white", fontSize: 19 }}>Z/N/E reales + sensibilidad por voxel</h2>
     <p style={{ margin: 0, color: "#94a3b8", fontSize: 9.5, lineHeight: 1.55 }}>
-      Usa un terremoto real como fuente, busca estaciones abiertas en EarthScope, recupera tres componentes cuando existen y traza familias P/S con iasp91 hacia esas mismas estaciones. Esta fase mide <b style={{ color: "#d1fae5" }}>cobertura observacional</b>; todavía no altera Vp/Vs/Q.
+      Usa un terremoto real como fuente, busca estaciones abiertas en EarthScope, recupera tres componentes cuando existen y traza familias P/S con iasp91 hacia esas mismas estaciones. Fase 2 mide <b style={{ color: "#d1fae5" }}>cobertura observacional</b>; el mismo cálculo alimenta ahora Fase 3, que compara llegadas observadas contra IASP91.
     </p>
 
     <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "end", marginTop: 10 }}>
@@ -130,7 +133,7 @@ export function TectonicStatePhase2({ events }: { events: EarthquakeEvent[] }) {
         </select>
       </label>
       <button type="button" onClick={() => void run()} disabled={!selected || loading} style={{ ...control, borderColor: "#14b8a6", cursor: selected && !loading ? "pointer" : "default", opacity: selected ? 1 : .5 }}>
-        {loading ? "Cargando wavefield…" : "Cargar Z/N/E + rayos"}
+        {loading ? "Cargando wavefield…" : "Cargar Fase 2 + 3"}
       </button>
     </div>
 
@@ -175,16 +178,18 @@ export function TectonicStatePhase2({ events }: { events: EarthquakeEvent[] }) {
           </div>
         </article>
         <article style={card}>
-          <div style={{ color: "#a7f3d0", fontSize: 8.5, fontWeight: 900 }}>QUÉ SIGNIFICA ESTA FASE</div>
+          <div style={{ color: "#a7f3d0", fontSize: 8.5, fontWeight: 900 }}>CÓMO LEER FASE 2</div>
           <div style={{ color: "#cbd5e1", fontSize: 9, lineHeight: 1.55, marginTop: 6 }}>
-            Los registros son <b>observados</b>; la geometría de rayos es un modelo 1-D iasp91. Un voxel con más rayos tiene mayor capacidad potencial de ser interrogado por una inversión posterior. <b>No significa mayor tensión ni mayor probabilidad de sismo.</b>
+            Las curvas Z/N/E son <b>registros reales</b>. Un voxel con más rayos y más estaciones tiene mejor geometría para ser interrogado. El Coverage Score mide esa capacidad de observación: <b>no es tensión, anomalía ni probabilidad sísmica.</b>
           </div>
         </article>
       </div>}
 
+      {selected && result.phase3 && <TectonicStatePhase3 result={result.phase3} event={selected} />}
+
       {(result.warnings?.length ?? 0) > 0 && <details style={{ marginTop: 8, ...card, color: "#94a3b8", fontSize: 8.5 }}>
         <summary style={{ cursor: "pointer", color: "#cbd5e1", fontWeight: 800 }}>Advertencias de disponibilidad ({result.warnings?.length})</summary>
-        <div style={{ marginTop: 5, lineHeight: 1.5 }}>{result.warnings?.slice(0, 12).map((warning, index) => <div key={`${warning}-${index}`}>• {warning}</div>)}</div>
+        <div style={{ marginTop: 5, lineHeight: 1.5 }}>{result.warnings?.slice(0, 16).map((warning, index) => <div key={`${warning}-${index}`}>• {warning}</div>)}</div>
       </details>}
     </>}
   </section>;
