@@ -141,7 +141,7 @@ async function preferredGroups(station: EarthScopeStation, eventTimeUtc: string,
   return rankThreeComponentGroups(parseEarthScopeChannels(await response.text())).slice(0, 5);
 }
 
-function nearestArrivalTime(source: EarthScopeWaveformSource, station: EarthScopeStation) {
+function nearestArrivalTime(source: EarthScopeWaveformSource, station: { distanceKm: number }) {
   const distanceDeg = station.distanceKm / 111.195;
   const paths = traceRayFamilies("iasp91", source.depthKm, 48);
   const candidates: Array<{ path: LocalRayPath; mismatch: number }> = [];
