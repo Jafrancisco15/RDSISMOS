@@ -10,17 +10,19 @@ test("INTERMAGNET capabilities parser normalizes longitude and removes closed st
     ],
   });
   assert.equal(stations.length, 1);
-  assert.equal(stations[0].code, "SJG");
-  assert.ok(stations[0].longitude < 0);
-  assert.deepEqual(stations[0].sources, ["INTERMAGNET"]);
+  const selected = stations[0];
+  assert.ok(selected);
+  assert.equal(selected.code, "SJG");
+  assert.ok(selected.longitude !== null && selected.longitude < 0);
+  assert.deepEqual(selected.sources, ["INTERMAGNET"]);
 });
 
 test("INTERMAGNET request range is clipped to HAPI start/stop availability", () => {
   const available = { start: new Date("2026-08-01T00:00:00Z"), stop: new Date("2026-09-01T12:00:00Z") };
   const clipped = clampIntermagnetRange(new Date("2026-08-30T00:00:00Z"), new Date("2026-09-02T23:59:00Z"), available);
   assert.ok(clipped);
-  assert.equal(clipped?.start.toISOString(), "2026-08-30T00:00:00.000Z");
-  assert.equal(clipped?.end.toISOString(), "2026-09-01T12:00:00.000Z");
+  assert.equal(clipped.start.toISOString(), "2026-08-30T00:00:00.000Z");
+  assert.equal(clipped.end.toISOString(), "2026-09-01T12:00:00.000Z");
 });
 
 test("INTERMAGNET returns no overlap when requested window is outside dataset range", () => {
