@@ -22,8 +22,18 @@ test("world observation derives field magnitude and robust local anomaly", () =>
 
 test("magnetic grid only fills cells supported by nearby observations", () => {
   const observations = [
-    { id: "a", stationCode: "A", stationName: "A", source: "INTERMAGNET" as const, latitude: 0, longitude: 0, strengthNt: 30_000, observedAt: "2026-08-01T00:00:00Z", anomalyZ: 0, baselineNt: 30_000, sampleCount: 50 },
-    { id: "b", stationCode: "B", stationName: "B", source: "INTERMAGNET" as const, latitude: 10, longitude: 10, strengthNt: 60_000, observedAt: "2026-08-01T00:00:00Z", anomalyZ: 0, baselineNt: 60_000, sampleCount: 50 },
+    {
+      id: "a", stationCode: "A", stationName: "A", source: "INTERMAGNET" as const,
+      latitude: 0, longitude: 0, strengthNt: 30_000, observedAt: "2026-08-01T00:00:00Z",
+      anomalyZ: 0, signedAnomalyZ: 0, baselineNt: 30_000, changeNt: 0,
+      expectedMainFieldNt: null, modelResidualNt: null, sampleCount: 50,
+    },
+    {
+      id: "b", stationCode: "B", stationName: "B", source: "INTERMAGNET" as const,
+      latitude: 10, longitude: 10, strengthNt: 60_000, observedAt: "2026-08-01T00:00:00Z",
+      anomalyZ: 0, signedAnomalyZ: 0, baselineNt: 60_000, changeNt: 0,
+      expectedMainFieldNt: null, modelResidualNt: null, sampleCount: 50,
+    },
   ];
   const grid = buildMagneticGrid(observations, 10, 2500);
   assert.ok(grid.length > 0);
