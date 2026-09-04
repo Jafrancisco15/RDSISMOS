@@ -13,7 +13,7 @@ import { traceRayFamilies, type LocalRayPath } from "./localSeismicRayTracer";
 
 const STATION_URL = "https://service.earthscope.org/fdsnws/station/1/query";
 const DATASELECT_URL = "https://service.earthscope.org/fdsnws/dataselect/1/query";
-const USER_AGENT = "RDSISMOS/1.2 Tectonic-State-4D-dataselect";
+const USER_AGENT = "RDSISMOS/1.3 Tectonic-State-4D-dataselect";
 const PRE_EVENT_SECONDS = 60;
 
 export interface EarthScopeThreeComponentStation {
@@ -45,9 +45,16 @@ export interface EarthScopeThreeComponentWaveforms {
   note: string;
 }
 
+type ThreeComponentGroup = {
+  key: string;
+  band: string;
+  location: string;
+  channels: EarthScopeChannel[];
+  complete: boolean;
+  sampleRateHz: number;
+};
+
 function bandPriority(value: string) {
-  // Prefer moderate-rate broadband channels for arrival picking. This avoids
-  // downloading unnecessarily huge 100+ Hz records when BH/LH exists.
   const order = ["BH", "LH", "HH", "EH", "HN"];
   const index = order.indexOf(value.toUpperCase());
   return index < 0 ? 99 : index;
@@ -70,7 +77,7 @@ function componentRank(channel: string) {
   return 99;
 }
 
-export function chooseThreeComponentGroup(channels: EarthScopeChannel[]) {
+export function rankThreeComponentGroups(channels: EarthScopeChannel[]): ThreeComponentGroup[] {
   const groups = new Map<string, EarthScopeChannel[]>();
   for (const channel of channels) {
     const code = channel.channel.toUpperCase();
@@ -83,7 +90,7 @@ export function chooseThreeComponentGroup(channels: EarthScopeChannel[]) {
     groups.set(key, [...(groups.get(key) ?? []), channel]);
   }
 
-  const ranked = [...groups.entries()].map(([key, items]) => {
+  return [...groups.entries()].map(([key, items]) => {
     const vertical = items.find((item) => item.channel.toUpperCase().endsWith("Z"));
     const north = items.find((item) => item.channel.toUpperCase().endsWith("N"))
       ?? items.find((item) => item.channel.toUpperCase().endsWith("1"));
@@ -99,21 +106,23 @@ export function chooseThreeComponentGroup(channels: EarthScopeChannel[]) {
       complete: Boolean(vertical && north && east),
       sampleRateHz: Math.max(0, ...chosen.map((item) => item.sampleRateHz ?? 0)),
     };
-  }).filter((group) => group.channels.length > 0);
-
-  return ranked.sort((a, b) =>
+  }).filter((group) => group.channels.length > 0).sort((a, b) =>
     Number(b.complete) - Number(a.complete)
     || bandPriority(a.band) - bandPriority(b.band)
     || locationPriority(a.location) - locationPriority(b.location)
     || a.sampleRateHz - b.sampleRateHz,
-  )[0] ?? null;
+  );
+}
+
+export function chooseThreeComponentGroup(channels: EarthScopeChannel[]) {
+  return rankThreeComponentGroups(channels)[0] ?? null;
 }
 
 function locationParam(value: string) {
   return !value || value === "--" ? "--" : value;
 }
 
-async function preferredGroup(station: EarthScopeStation, eventTimeUtc: string, signal?: AbortSignal) {
+async function preferredGroups(station: EarthScopeStation, eventTimeUtc: string, signal?: AbortSignal) {
   const event = new Date(eventTimeUtc);
   const end = new Date(event.getTime() + 45 * 60_000);
   const params = new URLSearchParams({
@@ -133,7 +142,7 @@ async function preferredGroup(station: EarthScopeStation, eventTimeUtc: string, 
     cache: "no-store",
   });
   if (!response.ok) throw new Error(`${station.network}.${station.station}: metadata 3C HTTP ${response.status}`);
-  return chooseThreeComponentGroup(parseEarthScopeChannels(await response.text()));
+  return rankThreeComponentGroups(parseEarthScopeChannels(await response.text())).slice(0, 5);
 }
 
 function nearestArrivalTime(source: EarthScopeWaveformSource, station: EarthScopeStation) {
@@ -183,11 +192,10 @@ async function fetchComponentTrace(
     signal,
     cache: "no-store",
   });
-  if (!response.ok) throw new Error(`dataselect waveform HTTP ${response.status}`);
+  if (!response.ok) throw new Error(`dataselect HTTP ${response.status}`);
   const rawPoints = parseEarthScopeGeoCsv(await response.text(), source.timeUtc);
-  if (rawPoints.length < 8) throw new Error("dataselect waveform sin muestras suficientes");
-  const points = demean(rawPoints);
-  const compact = compactAndNormalizeWaveform(points, 600);
+  if (rawPoints.length < 8) throw new Error("dataselect sin muestras suficientes");
+  const compact = compactAndNormalizeWaveform(demean(rawPoints), 600);
   return {
     network: channel.network,
     station: channel.station,
@@ -228,35 +236,49 @@ export async function loadEarthScopeThreeComponentWaveforms(options: {
   const selected = selectWaveformStations(options.stations, Math.max(1, Math.min(5, options.limit ?? 4)));
   const grouped = await withConcurrency(selected, 3, async (station) => {
     try {
-      const group = await preferredGroup(station, options.source.timeUtc, options.signal);
-      if (!group) {
+      const groups = await preferredGroups(station, options.source.timeUtc, options.signal);
+      if (!groups.length) {
         warnings.push(`${station.network}.${station.station}: sin familia de canales 3C compatible.`);
         return null;
       }
-      const traces = await withConcurrency(group.channels, 3, async (channel) => {
-        try {
-          return await fetchComponentTrace(station, channel, options.source, options.signal);
-        } catch (error) {
-          warnings.push(`${station.network}.${station.station}.${channel.channel}: ${error instanceof Error ? error.message : "traza no disponible"}`);
-          return null;
+
+      const failedBands: string[] = [];
+      for (const group of groups) {
+        const traces = await withConcurrency(group.channels, 3, async (channel) => {
+          try {
+            return await fetchComponentTrace(station, channel, options.source, options.signal);
+          } catch {
+            return null;
+          }
+        });
+        if (!traces.length) {
+          failedBands.push(group.band);
+          continue;
         }
-      });
-      if (!traces.length) return null;
-      const suffixes = new Set(traces.map((trace) => trace.channel.slice(-1).toUpperCase()));
-      const complete = suffixes.has("Z") && (suffixes.has("N") || suffixes.has("1")) && (suffixes.has("E") || suffixes.has("2"));
-      return {
-        network: station.network,
-        station: station.station,
-        location: group.location,
-        band: group.band,
-        latitude: station.latitude,
-        longitude: station.longitude,
-        distanceKm: station.distanceKm,
-        azimuthDeg: station.azimuthDeg,
-        siteName: station.siteName,
-        complete,
-        components: traces,
-      } satisfies EarthScopeThreeComponentStation;
+        const suffixes = new Set(traces.map((trace) => trace.channel.slice(-1).toUpperCase()));
+        const complete = suffixes.has("Z") && (suffixes.has("N") || suffixes.has("1")) && (suffixes.has("E") || suffixes.has("2"));
+        if (!complete && groups.some((candidate) => candidate !== group && candidate.complete)) {
+          failedBands.push(group.band);
+          continue;
+        }
+        if (failedBands.length) warnings.push(`${station.network}.${station.station}: se usó ${group.band} tras no encontrar datos útiles en ${failedBands.join("/")}.`);
+        return {
+          network: station.network,
+          station: station.station,
+          location: group.location,
+          band: group.band,
+          latitude: station.latitude,
+          longitude: station.longitude,
+          distanceKm: station.distanceKm,
+          azimuthDeg: station.azimuthDeg,
+          siteName: station.siteName,
+          complete,
+          components: traces,
+        } satisfies EarthScopeThreeComponentStation;
+      }
+
+      warnings.push(`${station.network}.${station.station}: ninguna familia 3C disponible en dataselect para la ventana del evento.`);
+      return null;
     } catch (error) {
       warnings.push(error instanceof Error ? error.message : `${station.network}.${station.station}: 3C no disponible.`);
       return null;
@@ -278,7 +300,7 @@ export async function loadEarthScopeThreeComponentWaveforms(options: {
     traceCount: grouped.reduce((sum, station) => sum + station.components.length, 0),
     windowStartUtc: new Date(eventMs - PRE_EVENT_SECONDS * 1000).toISOString(),
     windowEndUtc: new Date(eventMs + latestWindowSec * 1000).toISOString(),
-    warnings: warnings.slice(0, 30),
-    note: "Fase 2 usa registros reales Z/N/E (o Z/1/2) de EarthScope FDSN dataselect en GeoCSV. scale=AUTO aplica la sensibilidad instrumental; la eliminación completa de respuesta ya no se hace en servidor porque irisws-timeseries fue retirado. La normalización es únicamente para visualización y picking.",
+    warnings: warnings.slice(0, 20),
+    note: "Fase 2 usa registros reales Z/N/E (o Z/1/2) de EarthScope FDSN dataselect en GeoCSV. scale=AUTO aplica la sensibilidad instrumental; la eliminación completa de respuesta ya no se hace en servidor porque irisws-timeseries fue retirado. RDSISMOS prueba familias alternativas de canales cuando una banda no tiene datos. La normalización es únicamente para visualización y picking.",
   };
 }
