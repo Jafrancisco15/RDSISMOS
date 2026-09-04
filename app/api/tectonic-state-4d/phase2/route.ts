@@ -57,7 +57,7 @@ async function loadStations(source: EarthScopeWaveformSource, signal: AbortSigna
     nodata: "404",
   });
   const response = await fetch(`${STATION_URL}?${params}`, {
-    headers: { Accept: "text/plain", "User-Agent": "RDSISMOS/1.3 Tectonic-State-4D-phase3" },
+    headers: { Accept: "text/plain", "User-Agent": "RDSISMOS/1.4 Tectonic-State-4D-phase3-v1" },
     signal,
     cache: "no-store",
   });
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
     const waveforms = await loadEarthScopeThreeComponentWaveforms({
       source,
       stations,
-      limit: 4,
+      limit: 5,
       signal: request.signal,
     });
     const rayStations = stationsFromWaveforms(stations, waveforms.stations);
@@ -144,12 +144,15 @@ export async function POST(request: NextRequest) {
       waveforms,
       rayCoverage,
       phase3,
+      phase4Gate: phase3.readiness,
       warnings: [...waveforms.warnings, ...phase3.warnings].slice(0, 36),
       methodology: {
-        observedWavefield: "EarthScope fdsnws-dataselect GeoCSV, 3 componentes cuando están disponibles; scale=AUTO aplica sensibilidad instrumental",
+        observedWavefield: "EarthScope FDSN dataselect GeoCSV, Z/N/E o Z/1/2; sensibilidad instrumental cuando está disponible y counts crudos como fallback para picking temporal",
         rayGeometry: "RDSISMOS spherical ray tracer, iasp91",
         voxelGrid: "4° × 4° × 50 km",
-        inversionStatus: "arrival-time-backprojection-v0.1",
+        inversionStatus: "arrival-time-backprojection-v1.0",
+        stabilityControl: "leave-one-station-out jackknife + azimuth coverage + sign consistency per voxel",
+        phase4Gate: "solo voxeles/eventos con soporte suficiente deben entrar a la futura fusión GNSS/InSAR",
       },
     }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
