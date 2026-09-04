@@ -48,7 +48,7 @@ function trace(channel: string, latitude: number, longitude: number, distanceKm:
   };
 }
 
-function station(index: number, longitude: number, pResidual: number, sResidual: number): EarthScopeThreeComponentStation {
+function station(index: number, longitude: number, pResidual: number, sResidual: number, azimuthDeg = index * 90): EarthScopeThreeComponentStation {
   const distanceDeg = Math.abs(longitude);
   const distanceKm = distanceDeg * 111.195;
   const rays = traceRayFamilies("iasp91", source.depthKm, 64);
@@ -63,7 +63,7 @@ function station(index: number, longitude: number, pResidual: number, sResidual:
     latitude: 0,
     longitude,
     distanceKm,
-    azimuthDeg: 90,
+    azimuthDeg,
     siteName: `Synthetic ${index}`,
     complete: true,
     components: [
@@ -78,7 +78,7 @@ function waveforms(stations: EarthScopeThreeComponentStation[]): EarthScopeThree
   return {
     provider: "EarthScope NSF SAGE",
     mode: "observed-3c",
-    available: true,
+    available: stations.length > 0,
     source,
     stations,
     requestedStations: stations.length,
@@ -91,15 +91,20 @@ function waveforms(stations: EarthScopeThreeComponentStation[]): EarthScopeThree
   };
 }
 
-test("phase 3 picks P/S, removes common timing bias and reduces residual", () => {
+test("phase 3 v1 picks P/S, removes common timing bias and reduces residual", () => {
   const result = invertTectonicStatePhase3(waveforms([
-    station(1, 10, 4, 6),
-    station(2, 18, 8, 12),
-    station(3, 26, 12, 18),
+    station(1, 10, 4, 6, 0),
+    station(2, 18, 8, 12, 90),
+    station(3, 26, 12, 18, 180),
+    station(4, 34, 16, 24, 270),
   ]));
-  assert.ok(result.pPickCount >= 3);
-  assert.ok(result.sPickCount >= 3);
+  assert.equal(result.version, "1.0");
+  assert.equal(result.completionStatus, "phase3-v1-complete");
+  assert.ok(result.pPickCount >= 4);
+  assert.ok(result.sPickCount >= 4);
   assert.ok(result.usedPickCount >= 4);
+  assert.ok(result.pUsedPickCount >= 2);
+  assert.ok(result.sUsedPickCount >= 2);
   assert.ok(result.voxels.length > 0);
   assert.ok(result.pOriginBiasSec !== null);
   assert.ok(result.sOriginBiasSec !== null);
@@ -108,6 +113,32 @@ test("phase 3 picks P/S, removes common timing bias and reduces residual", () =>
   assert.ok((result.rmsResidualAfterSec ?? Infinity) <= (result.rmsResidualBeforeSec ?? 0));
   assert.ok(result.voxels.some((voxel) => voxel.deltaVpPct !== null));
   assert.ok(result.voxels.some((voxel) => voxel.deltaVsPct !== null));
+  assert.ok(result.azimuthCoverageDeg >= 180);
+  assert.ok(result.jackknifeFoldCount >= 3);
+  assert.equal(result.readiness.checks.length, 6);
+  assert.equal(result.readiness.checks.find((check) => check.id === "waveforms")?.pass, true);
+  assert.equal(result.readiness.checks.find((check) => check.id === "phase-balance")?.pass, true);
+});
+
+test("phase 3 v1 exposes jackknife resolution metadata on resolved voxels", () => {
+  const result = invertTectonicStatePhase3(waveforms([
+    station(1, 10, 4, 7, 15),
+    station(2, 18, 7, 11, 105),
+    station(3, 26, 10, 16, 205),
+    station(4, 34, 14, 21, 300),
+  ]));
+  assert.ok(result.voxels.length > 0);
+  assert.ok(result.voxels.every((voxel) => voxel.resolutionScore >= 0 && voxel.resolutionScore <= 100));
+  assert.ok(result.voxels.some((voxel) => voxel.deltaVpUncertaintyPct !== null || voxel.deltaVsUncertaintyPct !== null));
+  assert.ok(result.voxels.some((voxel) => voxel.pSignAgreement01 !== null || voxel.sSignAgreement01 !== null));
+  assert.equal("probability" in result, false);
+  assert.equal(JSON.stringify(result).toLowerCase().includes("earthquakeprobability"), false);
+});
+
+test("phase 3 readiness rejects sparse one-station geometry", () => {
+  const result = invertTectonicStatePhase3(waveforms([station(1, 10, 4, 6, 20)]));
+  assert.equal(result.readiness.readyForPhase4, false);
+  assert.equal(result.readiness.checks.find((check) => check.id === "geometry")?.pass, false);
 });
 
 test("phase 3 stays unavailable when there are no observed stations", () => {
@@ -115,4 +146,5 @@ test("phase 3 stays unavailable when there are no observed stations", () => {
   assert.equal(result.available, false);
   assert.equal(result.usedPickCount, 0);
   assert.equal(result.voxels.length, 0);
+  assert.equal(result.readiness.readyForPhase4, false);
 });
