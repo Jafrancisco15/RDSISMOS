@@ -9,12 +9,12 @@ import {
   type EarthScopeObservedTrace,
   type EarthScopeWaveformSource,
 } from "./earthscopeWaveforms";
+import { traceRayFamilies, type LocalRayPath } from "./localSeismicRayTracer";
 
 const STATION_URL = "https://service.earthscope.org/fdsnws/station/1/query";
-const TIMESERIES_URL = "https://service.earthscope.org/irisws/timeseries/1/query";
-const USER_AGENT = "RDSISMOS/1.1 Tectonic-State-4D-phase2";
+const DATASELECT_URL = "https://service.earthscope.org/fdsnws/dataselect/1/query";
+const USER_AGENT = "RDSISMOS/1.2 Tectonic-State-4D-dataselect";
 const PRE_EVENT_SECONDS = 60;
-const POST_EVENT_SECONDS = 45 * 60;
 
 export interface EarthScopeThreeComponentStation {
   network: string;
@@ -46,7 +46,9 @@ export interface EarthScopeThreeComponentWaveforms {
 }
 
 function bandPriority(value: string) {
-  const order = ["HH", "BH", "HN", "EH", "LH"];
+  // Prefer moderate-rate broadband channels for arrival picking. This avoids
+  // downloading unnecessarily huge 100+ Hz records when BH/LH exists.
+  const order = ["BH", "LH", "HH", "EH", "HN"];
   const index = order.indexOf(value.toUpperCase());
   return index < 0 ? 99 : index;
 }
@@ -103,7 +105,7 @@ export function chooseThreeComponentGroup(channels: EarthScopeChannel[]) {
     Number(b.complete) - Number(a.complete)
     || bandPriority(a.band) - bandPriority(b.band)
     || locationPriority(a.location) - locationPriority(b.location)
-    || b.sampleRateHz - a.sampleRateHz,
+    || a.sampleRateHz - b.sampleRateHz,
   )[0] ?? null;
 }
 
@@ -113,7 +115,7 @@ function locationParam(value: string) {
 
 async function preferredGroup(station: EarthScopeStation, eventTimeUtc: string, signal?: AbortSignal) {
   const event = new Date(eventTimeUtc);
-  const end = new Date(event.getTime() + POST_EVENT_SECONDS * 1000);
+  const end = new Date(event.getTime() + 45 * 60_000);
   const params = new URLSearchParams({
     network: station.network,
     station: station.station,
@@ -134,6 +136,27 @@ async function preferredGroup(station: EarthScopeStation, eventTimeUtc: string, 
   return chooseThreeComponentGroup(parseEarthScopeChannels(await response.text()));
 }
 
+function nearestArrivalTime(source: EarthScopeWaveformSource, station: EarthScopeStation) {
+  const distanceDeg = station.distanceKm / 111.195;
+  const paths = traceRayFamilies("iasp91", source.depthKm, 48);
+  const candidates: Array<{ path: LocalRayPath; mismatch: number }> = [];
+  for (const path of paths) {
+    if (!["P", "S", "PKP", "PKIKP", "SKS"].includes(path.phase)) continue;
+    candidates.push({ path, mismatch: Math.abs(path.distanceDeg - distanceDeg) });
+  }
+  candidates.sort((a, b) => a.mismatch - b.mismatch);
+  const relevant = candidates.filter((item) => item.mismatch <= 18).slice(0, 8);
+  if (!relevant.length) return 12 * 60;
+  const latest = Math.max(...relevant.map((item) => item.path.timeSec));
+  return Math.max(5 * 60, Math.min(40 * 60, latest + 150));
+}
+
+function demean(points: Array<{ tSec: number; value: number }>) {
+  if (!points.length) return points;
+  const mean = points.reduce((sum, point) => sum + point.value, 0) / points.length;
+  return points.map((point) => ({ ...point, value: point.value - mean }));
+}
+
 async function fetchComponentTrace(
   station: EarthScopeStation,
   channel: EarthScopeChannel,
@@ -141,49 +164,30 @@ async function fetchComponentTrace(
   signal?: AbortSignal,
 ): Promise<EarthScopeObservedTrace> {
   const eventMs = Date.parse(source.timeUtc);
+  const postEventSeconds = nearestArrivalTime(source, station);
   const start = new Date(eventMs - PRE_EVENT_SECONDS * 1000).toISOString();
-  const end = new Date(eventMs + POST_EVENT_SECONDS * 1000).toISOString();
-
-  async function request(corrected: boolean) {
-    const params = new URLSearchParams({
-      net: channel.network,
-      sta: channel.station,
-      loc: locationParam(channel.location),
-      cha: channel.channel,
-      starttime: start,
-      endtime: end,
-      format: "geocsv.tspair",
-      demean: "true",
-      deci: "2.0",
-    });
-    if (corrected) {
-      params.set("correct", "true");
-      params.set("units", "VEL");
-    } else {
-      params.set("scale", "AUTO");
-    }
-    const response = await fetch(`${TIMESERIES_URL}?${params}`, {
-      headers: { Accept: "text/plain", "User-Agent": USER_AGENT },
-      signal,
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`waveform HTTP ${response.status}`);
-    const points = parseEarthScopeGeoCsv(await response.text(), source.timeUtc);
-    if (points.length < 8) throw new Error("waveform sin muestras suficientes");
-    return points;
-  }
-
-  let calibration: EarthScopeObservedTrace["calibration"] = "response-corrected";
-  let units = "m/s";
-  let points: Array<{ tSec: number; value: number }>;
-  try {
-    points = await request(true);
-  } catch {
-    points = await request(false);
-    calibration = "sensitivity-scaled";
-    units = channel.scaleUnits || "unidad física según sensibilidad";
-  }
-  const compact = compactAndNormalizeWaveform(points, 500);
+  const end = new Date(eventMs + postEventSeconds * 1000).toISOString();
+  const params = new URLSearchParams({
+    net: channel.network,
+    sta: channel.station,
+    loc: locationParam(channel.location),
+    cha: channel.channel,
+    start,
+    end,
+    format: "geocsv.inline",
+    scale: "AUTO",
+    nodata: "404",
+  });
+  const response = await fetch(`${DATASELECT_URL}?${params}`, {
+    headers: { Accept: "text/plain,text/csv", "User-Agent": USER_AGENT },
+    signal,
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(`dataselect waveform HTTP ${response.status}`);
+  const rawPoints = parseEarthScopeGeoCsv(await response.text(), source.timeUtc);
+  if (rawPoints.length < 8) throw new Error("dataselect waveform sin muestras suficientes");
+  const points = demean(rawPoints);
+  const compact = compactAndNormalizeWaveform(points, 600);
   return {
     network: channel.network,
     station: channel.station,
@@ -194,8 +198,8 @@ async function fetchComponentTrace(
     distanceKm: Number(haversineKm(source.latitude, source.longitude, channel.latitude, channel.longitude).toFixed(1)),
     siteName: station.siteName,
     sampleRateHz: channel.sampleRateHz,
-    units,
-    calibration,
+    units: channel.scaleUnits || "unidad física según sensibilidad",
+    calibration: "sensitivity-scaled",
     maxAbs: compact.maxAbs,
     samples: compact.samples,
   };
@@ -260,6 +264,9 @@ export async function loadEarthScopeThreeComponentWaveforms(options: {
   });
 
   const eventMs = Date.parse(options.source.timeUtc);
+  const latestWindowSec = grouped.length
+    ? Math.max(...grouped.map((station) => nearestArrivalTime(options.source, station)))
+    : 5 * 60;
   return {
     provider: "EarthScope NSF SAGE",
     mode: "observed-3c",
@@ -270,8 +277,8 @@ export async function loadEarthScopeThreeComponentWaveforms(options: {
     completeStations: grouped.filter((station) => station.complete).length,
     traceCount: grouped.reduce((sum, station) => sum + station.components.length, 0),
     windowStartUtc: new Date(eventMs - PRE_EVENT_SECONDS * 1000).toISOString(),
-    windowEndUtc: new Date(eventMs + POST_EVENT_SECONDS * 1000).toISOString(),
+    windowEndUtc: new Date(eventMs + latestWindowSec * 1000).toISOString(),
     warnings: warnings.slice(0, 30),
-    note: "Fase 2 usa registros reales Z/N/E (o Z/1/2) de EarthScope. La corrección de respuesta se intenta por componente; la normalización es únicamente para visualización.",
+    note: "Fase 2 usa registros reales Z/N/E (o Z/1/2) de EarthScope FDSN dataselect en GeoCSV. scale=AUTO aplica la sensibilidad instrumental; la eliminación completa de respuesta ya no se hace en servidor porque irisws-timeseries fue retirado. La normalización es únicamente para visualización y picking.",
   };
 }
