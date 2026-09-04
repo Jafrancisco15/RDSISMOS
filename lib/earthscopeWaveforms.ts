@@ -3,7 +3,7 @@ import { haversineKm } from "@/lib/regions";
 import { fetchEarthScopeGeoCsv } from "@/lib/earthscopeDataSelect";
 
 const EARTHSCOPE_STATION_URL = "https://service.earthscope.org/fdsnws/station/1/query";
-const USER_AGENT = "RDSISMOS/1.2 EarthScope-observed-waveforms-dataselect";
+const USER_AGENT = "RDSISMOS/1.3 EarthScope-observed-waveforms-dataselect";
 const MAX_WAVEFORM_STATIONS = 10;
 const MAX_POINTS_PER_TRACE = 900;
 const PRE_EVENT_SECONDS = 60;
@@ -72,7 +72,6 @@ function finite(value: string | undefined) {
 }
 
 function channelPriority(channel: string) {
-  // Prefer moderate-rate broadband data for bounded GeoCSV payloads.
   const order = ["BHZ", "LHZ", "HHZ", "EHZ", "HNZ"];
   const index = order.indexOf(channel.toUpperCase());
   return index === -1 ? 99 : index;
@@ -91,9 +90,6 @@ export function parseEarthScopeChannels(text: string): EarthScopeChannel[] {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     const columns = line.split("|");
-    // Channel-level FDSN text columns:
-    // Network Station Location Channel Latitude Longitude Elevation Depth
-    // Azimuth Dip Instrument Scale ScaleFreq ScaleUnits SampleRate Start End
     if (columns.length < 15) continue;
     const latitude = finite(columns[4]);
     const longitude = finite(columns[5]);
@@ -130,7 +126,6 @@ function stationBand(distanceKm: number) {
   return 3;
 }
 
-/** Selects a small geographically diverse subset so observed mode is bounded. */
 export function selectWaveformStations(stations: EarthScopeStation[], limit = MAX_WAVEFORM_STATIONS) {
   const unique = new Map<string, EarthScopeStation>();
   for (const station of stations) unique.set(`${station.network}:${station.station}`, station);
@@ -202,9 +197,7 @@ export function compactAndNormalizeWaveform(
     const bucket = points.slice(start, start + step);
     if (!bucket.length) continue;
     let representative = bucket[0];
-    for (const point of bucket) {
-      if (Math.abs(point.value) > Math.abs(representative.value)) representative = point;
-    }
+    for (const point of bucket) if (Math.abs(point.value) > Math.abs(representative.value)) representative = point;
     compact.push(representative);
   }
   return {
@@ -253,7 +246,7 @@ async function fetchTrace(
   const eventMs = Date.parse(source.timeUtc);
   const start = new Date(eventMs - PRE_EVENT_SECONDS * 1000).toISOString();
   const end = new Date(eventMs + POST_EVENT_SECONDS * 1000).toISOString();
-  const text = await fetchEarthScopeGeoCsv({
+  const fetched = await fetchEarthScopeGeoCsv({
     network: channel.network,
     station: channel.station,
     location: channel.location,
@@ -262,7 +255,7 @@ async function fetchTrace(
     endTimeUtc: end,
     userAgent: USER_AGENT,
   });
-  const points = demean(parseEarthScopeGeoCsv(text, source.timeUtc));
+  const points = demean(parseEarthScopeGeoCsv(fetched.text, source.timeUtc));
   if (points.length < 8) throw new Error("EarthScope dataselect: waveform sin muestras suficientes");
   const compact = compactAndNormalizeWaveform(points);
   return {
@@ -275,7 +268,7 @@ async function fetchTrace(
     distanceKm: Number(haversineKm(source.latitude, source.longitude, channel.latitude, channel.longitude).toFixed(1)),
     siteName: station.siteName,
     sampleRateHz: channel.sampleRateHz,
-    units: channel.scaleUnits || "unidad física según sensibilidad",
+    units: fetched.scaledBySensitivity ? (channel.scaleUnits || "unidad física según sensibilidad") : "counts (raw)",
     calibration: "sensitivity-scaled",
     maxAbs: compact.maxAbs,
     samples: compact.samples,
@@ -340,6 +333,6 @@ export async function loadObservedEarthScopeWaveforms(options: {
     traces,
     requestedStations: selected.length,
     warnings: warnings.slice(0, 20),
-    note: "Las amplitudes/signos provienen de waveforms reales EarthScope FDSN dataselect. GeoCSV scale=AUTO aplica la sensibilidad instrumental; la normalización es visual por estación y no representa probabilidad de disparo sísmico.",
+    note: "Las amplitudes/signos provienen de waveforms reales EarthScope FDSN dataselect. GeoCSV scale=AUTO aplica la sensibilidad instrumental cuando es posible; si no, se conservan counts crudos para análisis temporal. La normalización es visual por estación y no representa probabilidad de disparo sísmico.",
   };
 }
