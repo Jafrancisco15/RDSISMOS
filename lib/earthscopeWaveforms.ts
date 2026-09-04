@@ -1,9 +1,9 @@
 import type { EarthScopeStation } from "@/lib/earthscopeIntegration";
 import { haversineKm } from "@/lib/regions";
+import { fetchEarthScopeGeoCsv } from "@/lib/earthscopeDataSelect";
 
 const EARTHSCOPE_STATION_URL = "https://service.earthscope.org/fdsnws/station/1/query";
-const EARTHSCOPE_TIMESERIES_URL = "https://service.earthscope.org/irisws/timeseries/1/query";
-const USER_AGENT = "RDSISMOS/1.0 EarthScope-observed-waveforms";
+const USER_AGENT = "RDSISMOS/1.2 EarthScope-observed-waveforms-dataselect";
 const MAX_WAVEFORM_STATIONS = 10;
 const MAX_POINTS_PER_TRACE = 900;
 const PRE_EVENT_SECONDS = 60;
@@ -72,7 +72,8 @@ function finite(value: string | undefined) {
 }
 
 function channelPriority(channel: string) {
-  const order = ["HHZ", "BHZ", "HNZ", "EHZ", "LHZ"];
+  // Prefer moderate-rate broadband data for bounded GeoCSV payloads.
+  const order = ["BHZ", "LHZ", "HHZ", "EHZ", "HNZ"];
   const index = order.indexOf(channel.toUpperCase());
   return index === -1 ? 99 : index;
 }
@@ -118,7 +119,7 @@ export function choosePreferredChannel(channels: EarthScopeChannel[]) {
     .sort((a, b) =>
       channelPriority(a.channel) - channelPriority(b.channel)
       || locationPriority(a.location) - locationPriority(b.location)
-      || (b.sampleRateHz ?? 0) - (a.sampleRateHz ?? 0),
+      || (a.sampleRateHz ?? 0) - (b.sampleRateHz ?? 0),
     )[0] ?? null;
 }
 
@@ -216,10 +217,6 @@ export function compactAndNormalizeWaveform(
   };
 }
 
-function locationParam(value: string) {
-  return !value || value === "--" ? "--" : value;
-}
-
 async function fetchPreferredChannel(station: EarthScopeStation, eventTimeUtc: string) {
   const event = new Date(eventTimeUtc);
   const end = new Date(event.getTime() + POST_EVENT_SECONDS * 1000);
@@ -242,6 +239,12 @@ async function fetchPreferredChannel(station: EarthScopeStation, eventTimeUtc: s
   return choosePreferredChannel(parseEarthScopeChannels(await response.text()));
 }
 
+function demean(points: Array<{ tSec: number; value: number }>) {
+  if (!points.length) return points;
+  const mean = points.reduce((sum, point) => sum + point.value, 0) / points.length;
+  return points.map((point) => ({ ...point, value: point.value - mean }));
+}
+
 async function fetchTrace(
   station: EarthScopeStation,
   channel: EarthScopeChannel,
@@ -250,46 +253,17 @@ async function fetchTrace(
   const eventMs = Date.parse(source.timeUtc);
   const start = new Date(eventMs - PRE_EVENT_SECONDS * 1000).toISOString();
   const end = new Date(eventMs + POST_EVENT_SECONDS * 1000).toISOString();
-  const baseEntries: Array<[string, string]> = [
-    ["net", channel.network],
-    ["sta", channel.station],
-    ["loc", locationParam(channel.location)],
-    ["cha", channel.channel],
-    ["starttime", start],
-    ["endtime", end],
-    ["format", "geocsv.tspair"],
-    ["demean", "true"],
-  ];
-
-  async function request(corrected: boolean) {
-    const params = new URLSearchParams(baseEntries);
-    if (corrected) {
-      params.append("correct", "true");
-      params.append("units", "VEL");
-    } else {
-      params.append("scale", "AUTO");
-    }
-    params.append("deci", "2.0");
-    const response = await fetch(`${EARTHSCOPE_TIMESERIES_URL}?${params}`, {
-      headers: { Accept: "text/plain", "User-Agent": USER_AGENT },
-      cache: "no-store",
-    });
-    if (!response.ok) throw new Error(`waveform HTTP ${response.status}`);
-    const points = parseEarthScopeGeoCsv(await response.text(), source.timeUtc);
-    if (points.length < 8) throw new Error("waveform sin muestras suficientes");
-    return points;
-  }
-
-  let calibration: EarthScopeObservedTrace["calibration"] = "response-corrected";
-  let units = "m/s";
-  let points: Array<{ tSec: number; value: number }>;
-  try {
-    points = await request(true);
-  } catch {
-    points = await request(false);
-    calibration = "sensitivity-scaled";
-    units = channel.scaleUnits || "unidad física según sensibilidad";
-  }
+  const text = await fetchEarthScopeGeoCsv({
+    network: channel.network,
+    station: channel.station,
+    location: channel.location,
+    channel: channel.channel,
+    startTimeUtc: start,
+    endTimeUtc: end,
+    userAgent: USER_AGENT,
+  });
+  const points = demean(parseEarthScopeGeoCsv(text, source.timeUtc));
+  if (points.length < 8) throw new Error("EarthScope dataselect: waveform sin muestras suficientes");
   const compact = compactAndNormalizeWaveform(points);
   return {
     network: channel.network,
@@ -301,8 +275,8 @@ async function fetchTrace(
     distanceKm: Number(haversineKm(source.latitude, source.longitude, channel.latitude, channel.longitude).toFixed(1)),
     siteName: station.siteName,
     sampleRateHz: channel.sampleRateHz,
-    units,
-    calibration,
+    units: channel.scaleUnits || "unidad física según sensibilidad",
+    calibration: "sensitivity-scaled",
     maxAbs: compact.maxAbs,
     samples: compact.samples,
   };
@@ -366,6 +340,6 @@ export async function loadObservedEarthScopeWaveforms(options: {
     traces,
     requestedStations: selected.length,
     warnings: warnings.slice(0, 20),
-    note: "Las amplitudes y signos provienen de formas de onda reales de EarthScope. La normalización es solo visual por estación y no convierte el registro en probabilidad de disparo sísmico.",
+    note: "Las amplitudes/signos provienen de waveforms reales EarthScope FDSN dataselect. GeoCSV scale=AUTO aplica la sensibilidad instrumental; la normalización es visual por estación y no representa probabilidad de disparo sísmico.",
   };
 }
