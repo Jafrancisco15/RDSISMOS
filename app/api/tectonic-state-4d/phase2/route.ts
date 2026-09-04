@@ -4,6 +4,7 @@ import { selectWaveformStations, type EarthScopeWaveformSource } from "@/lib/ear
 import { loadEarthScopeThreeComponentWaveforms } from "@/lib/earthscopeThreeComponent";
 import { buildTectonicStatePhase2Coverage } from "@/lib/tectonicStatePhase2";
 import { invertTectonicStatePhase3 } from "@/lib/tectonicStatePhase3";
+import { buildTectonicStatePhase4Seed } from "@/lib/tectonicStatePhase4Bridge";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -115,6 +116,8 @@ export async function POST(request: NextRequest) {
         waveforms: null,
         rayCoverage: null,
         phase3: null,
+        phase4Gate: null,
+        phase4Seed: null,
         warnings: ["EarthScope no devolvió estaciones abiertas para la ventana del evento."],
       }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
     }
@@ -134,6 +137,7 @@ export async function POST(request: NextRequest) {
       horizontalSizeDeg: 4,
       depthSizeKm: 50,
     });
+    const phase4Seed = buildTectonicStatePhase4Seed(phase3);
 
     return NextResponse.json({
       phase: 2,
@@ -145,14 +149,15 @@ export async function POST(request: NextRequest) {
       rayCoverage,
       phase3,
       phase4Gate: phase3.readiness,
+      phase4Seed,
       warnings: [...waveforms.warnings, ...phase3.warnings].slice(0, 36),
       methodology: {
         observedWavefield: "EarthScope FDSN dataselect GeoCSV, Z/N/E o Z/1/2; sensibilidad instrumental cuando está disponible y counts crudos como fallback para picking temporal",
         rayGeometry: "RDSISMOS spherical ray tracer, iasp91",
         voxelGrid: "4° × 4° × 50 km",
-        inversionStatus: "arrival-time-backprojection-v1.0",
+        inversionStatus: "arrival-time-backprojection-v1.0-complete",
         stabilityControl: "leave-one-station-out jackknife + azimuth coverage + sign consistency per voxel",
-        phase4Gate: "solo voxeles/eventos con soporte suficiente deben entrar a la futura fusión GNSS/InSAR",
+        phase4Gate: "solo voxeles/eventos con soporte suficiente pasan al contrato GNSS/InSAR; un gate fallido exporta cero constraints",
       },
     }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
