@@ -3,6 +3,7 @@ import { parseEarthScopeStations, type EarthScopeStation } from "@/lib/earthscop
 import { selectWaveformStations, type EarthScopeWaveformSource } from "@/lib/earthscopeWaveforms";
 import { loadEarthScopeThreeComponentWaveforms } from "@/lib/earthscopeThreeComponent";
 import { buildTectonicStatePhase2Coverage } from "@/lib/tectonicStatePhase2";
+import { invertTectonicStatePhase3 } from "@/lib/tectonicStatePhase3";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -56,7 +57,7 @@ async function loadStations(source: EarthScopeWaveformSource, signal: AbortSigna
     nodata: "404",
   });
   const response = await fetch(`${STATION_URL}?${params}`, {
-    headers: { Accept: "text/plain", "User-Agent": "RDSISMOS/1.1 Tectonic-State-4D-phase2" },
+    headers: { Accept: "text/plain", "User-Agent": "RDSISMOS/1.2 Tectonic-State-4D-phase3" },
     signal,
     cache: "no-store",
   });
@@ -99,7 +100,7 @@ export async function POST(request: NextRequest) {
     const source = sourceFrom(body.event);
     if (!source) {
       return NextResponse.json(
-        { error: "Fase 2 requiere un evento real con ID, tiempo, posición, profundidad y magnitud válidos." },
+        { error: "Fase 2/3 requiere un evento real con ID, tiempo, posición, profundidad y magnitud válidos." },
         { status: 400, headers: { "Cache-Control": "no-store" } },
       );
     }
@@ -113,6 +114,7 @@ export async function POST(request: NextRequest) {
         available: false,
         waveforms: null,
         rayCoverage: null,
+        phase3: null,
         warnings: ["EarthScope no devolvió estaciones abiertas para la ventana del evento."],
       }, { headers: { "Cache-Control": "private, no-store, max-age=0" } });
     }
@@ -128,6 +130,10 @@ export async function POST(request: NextRequest) {
       horizontalSizeDeg: 4,
       depthSizeKm: 50,
     });
+    const phase3 = invertTectonicStatePhase3(waveforms, {
+      horizontalSizeDeg: 4,
+      depthSizeKm: 50,
+    });
 
     return NextResponse.json({
       phase: 2,
@@ -137,19 +143,20 @@ export async function POST(request: NextRequest) {
       stationCandidates: stations.length,
       waveforms,
       rayCoverage,
-      warnings: waveforms.warnings,
+      phase3,
+      warnings: [...waveforms.warnings, ...phase3.warnings].slice(0, 36),
       methodology: {
         observedWavefield: "EarthScope FDSN/irisws timeseries, 3 componentes cuando están disponibles",
         rayGeometry: "RDSISMOS spherical ray tracer, iasp91",
         voxelGrid: "4° × 4° × 50 km",
-        inversionStatus: "coverage-only",
+        inversionStatus: "arrival-time-backprojection-v0.1",
       },
     }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   } catch (error) {
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No fue posible ejecutar Fase 2." },
+      { error: error instanceof Error ? error.message : "No fue posible ejecutar Fase 2/3." },
       { status: 502, headers: { "Cache-Control": "no-store" } },
     );
   }
