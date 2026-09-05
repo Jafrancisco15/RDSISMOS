@@ -11,6 +11,8 @@ import {
 } from "@/lib/coulombBalance";
 import type { SeismicMechanismResponse } from "@/lib/seismicMechanisms";
 
+const STRESS_WINDOW_DAYS = 730;
+
 export interface StressBalanceStatus {
   state: "idle" | "zoom" | "loading" | "ready" | "error";
   sourceCount: number;
@@ -85,21 +87,45 @@ function escapeHtml(value: string) {
   }[char] ?? char));
 }
 
-function balancePopup(balance: FaultStressBalance) {
+function stressClass(balance: FaultStressBalance) {
+  if (balance.confidence === "low") return "incierta";
+  if (balance.netMpa >= 0.05) return "carga neta alta";
+  if (balance.netMpa >= 0.02) return "carga neta elevada";
+  if (balance.netMpa >= 0.005) return "carga neta moderada";
+  if (balance.netMpa <= -0.05) return "relajación neta alta";
+  if (balance.netMpa <= -0.02) return "relajación neta elevada";
+  if (balance.netMpa <= -0.005) return "relajación neta moderada";
+  return "casi neutra";
+}
+
+function faultMetadata(fault: ActiveFaultFeature) {
+  const p = fault.properties;
+  const parts: string[] = [];
+  if (p.slipType) parts.push(`cinemática ${escapeHtml(p.slipType)}`);
+  if (p.strikeSlipRate) parts.push(`strike-slip ${escapeHtml(p.strikeSlipRate)} mm/año`);
+  if (p.dipSlipRate) parts.push(`dip-slip ${escapeHtml(p.dipSlipRate)} mm/año`);
+  if (p.shorteningRate) parts.push(`acortamiento ${escapeHtml(p.shorteningRate)} mm/año`);
+  if (p.lastMovement) parts.push(`último movimiento catalogado: ${escapeHtml(p.lastMovement)}`);
+  return parts;
+}
+
+function balancePopup(balance: FaultStressBalance, fault: ActiveFaultFeature) {
   const sources = balance.contributions.map((item) =>
     `<li>M${item.sourceMagnitude.toFixed(1)} ${escapeHtml(item.sourcePlace)}: ${signed(item.deltaCfsMpa)} MPa · ${item.distanceKm.toFixed(0)} km</li>`).join("");
   const confidence = balance.confidence === "high" ? "alta" : balance.confidence === "medium" ? "media" : "baja";
+  const metadata = faultMetadata(fault).map((item) => `<div>${item}</div>`).join("");
   return `
     <strong>${escapeHtml(balance.faultName)}</strong>
-    <div>ΔCFS neta aprox.: <b>${signed(balance.netMpa)} MPa</b></div>
-    <div>Carga positiva acumulada: +${balance.positiveMpa.toFixed(3)} MPa</div>
-    <div>Relajación acumulada: ${balance.negativeMpa.toFixed(3)} MPa</div>
-    <div>Cancelación: ${balance.cancellationPct.toFixed(0)}%</div>
+    <div style="margin-top:5px"><b>Carga estática positiva acumulada (${STRESS_WINDOW_DAYS} d): +${balance.positiveMpa.toFixed(3)} MPa</b></div>
+    <div>Relajación acumulada (${STRESS_WINDOW_DAYS} d): ${balance.negativeMpa.toFixed(3)} MPa</div>
+    <div>Saldo neto ΔCFS: <b>${signed(balance.netMpa)} MPa</b> · ${stressClass(balance)}</div>
+    <div>Exposición bruta |ΔCFS|: ${balance.grossMpa.toFixed(3)} MPa · cancelación ${balance.cancellationPct.toFixed(0)}%</div>
     <div>Fuentes usadas: ${balance.sourceCount} · confianza geométrica ${confidence}</div>
     <div>Receptor: strike ${balance.strikeDeg.toFixed(0)}° · dip ${balance.dipDeg.toFixed(0)}° · rake ${balance.rakeDeg.toFixed(0)}°</div>
+    ${metadata}
     ${balance.note ? `<small>${escapeHtml(balance.note)}</small>` : ""}
-    ${sources ? `<ul style="margin:6px 0 4px;padding-left:18px">${sources}</ul>` : ""}
-    <small>Modelo exploratorio de transferencia estática: fuente puntual double-couple, medio elástico homogéneo, μ′=0.4 y receptor a 10 km. No equivale a un modelo finite-fault/Okada ni predice ruptura.</small>
+    ${sources ? `<div style="margin-top:5px"><b>Principales contribuciones</b></div><ul style="margin:4px 0 5px;padding-left:18px">${sources}</ul>` : ""}
+    <small><b>Lectura correcta:</b> esta cifra es la suma modelada de cambios estáticos de Coulomb producidos por las fuentes M6+ con tensor disponible durante los últimos ${STRESS_WINDOW_DAYS} días. No es la tensión tectónica absoluta total almacenada en la falla; estimarla requeriría además locking/slip-deficit geodésico, profundidad bloqueada, historia de ruptura y propiedades mecánicas locales.</small>
   `;
 }
 
@@ -135,7 +161,7 @@ export function StressBalanceOverlay({
     if (nextZoom < 3) {
       setFaultData(null);
       setMechanismData(null);
-      onStatus({ ...EMPTY_STRESS_STATUS, state: "zoom", warning: "Acerca el mapa a zoom 3+ para calcular balance de esfuerzos sobre fallas." });
+      onStatus({ ...EMPTY_STRESS_STATUS, state: "zoom", warning: "Acerca el mapa a zoom 3+ para calcular carga acumulada sobre fallas." });
       return;
     }
 
@@ -160,7 +186,7 @@ export function StressBalanceOverlay({
         const faultParams = new URLSearchParams({ bbox: bboxParam(nextBox), limit: "900" });
         const mechanismParams = new URLSearchParams({
           bbox: bboxParam(sourceBox),
-          days: "730",
+          days: String(STRESS_WINDOW_DAYS),
           minMagnitude: "6",
           limit: "36",
           orderBy: "magnitude",
@@ -179,7 +205,7 @@ export function StressBalanceOverlay({
         if (error instanceof DOMException && error.name === "AbortError") return;
         setFaultData(null);
         setMechanismData(null);
-        onStatus({ ...EMPTY_STRESS_STATUS, state: "error", warning: error instanceof Error ? error.message : "No fue posible calcular el balance de esfuerzos." });
+        onStatus({ ...EMPTY_STRESS_STATUS, state: "error", warning: error instanceof Error ? error.message : "No fue posible calcular la carga acumulada por falla." });
       }
     })();
     return () => controller.abort();
@@ -208,7 +234,7 @@ export function StressBalanceOverlay({
       sourceCount: mechanismData.mechanisms.length,
       faultCount: faultData.features.length,
       ...summary,
-      warning: warnings || (mechanismData.mechanisms.length === 0 ? "No hay fuentes M6+ con tensor de momento en la ventana ampliada durante los últimos 730 días." : null),
+      warning: warnings || (mechanismData.mechanisms.length === 0 ? `No hay fuentes M6+ con tensor de momento en la ventana ampliada durante los últimos ${STRESS_WINDOW_DAYS} días.` : null),
     });
   }, [balances, enabled, faultData, mechanismData, onStatus, zoom]);
 
@@ -223,10 +249,12 @@ export function StressBalanceOverlay({
           const id = String(feature?.properties?.id ?? "");
           const balance = balanceById.get(id);
           if (!balance) return { opacity: 0, weight: 0 };
+          const accumulated = balance.positiveMpa;
+          const weight = accumulated >= 0.05 ? 4.5 : accumulated >= 0.02 ? 3.8 : accumulated >= 0.005 ? 3 : 2.2;
           return {
             color: stressBalanceColor(balance),
-            weight: Math.abs(balance.netMpa) >= 0.02 ? 3.2 : 2.2,
-            opacity: balance.confidence === "low" ? 0.5 : 0.92,
+            weight,
+            opacity: balance.confidence === "low" ? 0.5 : 0.94,
             dashArray: balance.confidence === "low" ? "5 5" : undefined,
           };
         }}
@@ -234,8 +262,8 @@ export function StressBalanceOverlay({
           const fault = feature as unknown as ActiveFaultFeature;
           const balance = balanceById.get(fault.properties.id);
           if (!balance) return;
-          layer.bindTooltip(`${balance.faultName} · ΔCFS ${signed(balance.netMpa)} MPa · cancelación ${balance.cancellationPct.toFixed(0)}%`, { sticky: true });
-          layer.bindPopup(balancePopup(balance), { maxWidth: 380 });
+          layer.bindTooltip(`${balance.faultName} · carga +${balance.positiveMpa.toFixed(3)} MPa · neta ${signed(balance.netMpa)} MPa`, { sticky: true });
+          layer.bindPopup(balancePopup(balance, fault), { maxWidth: 420 });
         }}
       />
 
