@@ -3,7 +3,9 @@ import type { GeoFeature, GeoFeatureCollection, GeoGeometry } from "@/lib/plateD
 import type { SlabContour3D, TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
 
 export const runtime = "nodejs";
-export const revalidate = 43_200;
+// Fetch scientific providers at request time: their latency must not block a build.
+// The response below retains the 12-hour CDN cache for structural geometry.
+export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const GPLATES_MODEL = "ZAHIROVIC2022";
