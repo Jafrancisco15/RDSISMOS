@@ -154,7 +154,7 @@ export function TectonicMechanicsScene({data,frame,params,layers,view,anchorId,p
         const {along,down,slip}=planeVectors(plane.strike,plane.dip,plane.rake);
         const a=direction(p,along).multiplyScalar(g.lengthKm/2),b=direction(p,down).multiplyScalar(g.widthKm/2),o=world(p);
         const corners=[o.clone().sub(a).sub(b),o.clone().add(a).sub(b),o.clone().add(a).add(b),o.clone().sub(a).add(b)];
-        if(!visible(p))return;const mesh=primitive(corners,[0,1,2,0,2,3],index?"#b2a6d6":"#ffca84",index?0.14:0.6,index===1);mesh.userData.info={layer:`Plano nodal ${index+1}`,event:source.eventId,...plane,...g,centroid:source.centroid,assumptions:source.assumptions};s.group.add(mesh);
+        if(!visible(p))return;const mesh=primitive(corners,[0,1,2,0,2,3],index?"#b2a6d6":"#ffca84",index?0.14:0.6,index===1);mesh.userData.info={layer:`Plano nodal ${index+1}`,event:source.eventId,...g,...plane,centroid:source.centroid,assumptions:source.assumptions};s.group.add(mesh);
         if(!index)arrow(p,slip,"#ffca84",g.lengthKm*0.8,{layer:"Dirección de slip sobre NP1",event:source.eventId,assumption:"Plano nodal candidato, escala visual de ruptura"});
       });
     }
