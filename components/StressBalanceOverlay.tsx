@@ -129,6 +129,17 @@ function balancePopup(balance: FaultStressBalance, fault: ActiveFaultFeature) {
   `;
 }
 
+function unavailablePopup(fault: ActiveFaultFeature) {
+  const metadata = faultMetadata(fault).map((item) => `<div>${item}</div>`).join("");
+  return `
+    <strong>${escapeHtml(fault.properties.name)}</strong>
+    <div style="margin-top:5px"><b>Carga acumulada: restricciones insuficientes</b></div>
+    ${metadata}
+    <div>No hay una combinación utilizable de fuente M6+ con tensor de momento y geometría receptora para calcular ΔCFS en esta traza durante los últimos ${STRESS_WINDOW_DAYS} días.</div>
+    <small>La falla se mantiene visible en gris para distinguir “sin cálculo” de “carga ≈ 0”. RDSISMOS no asigna una tensión artificial cuando faltan observaciones.</small>
+  `;
+}
+
 export function StressBalanceOverlay({
   enabled,
   onStatus,
@@ -219,11 +230,6 @@ export function StressBalanceOverlay({
   }, [enabled, faultData, mechanismData]);
 
   const balanceById = useMemo(() => new Map(balances.map((item) => [item.faultId, item])), [balances]);
-  const displayed = useMemo(() => {
-    if (!faultData) return null;
-    const features = faultData.features.filter((fault) => balanceById.has(fault.properties.id));
-    return { ...faultData, features };
-  }, [balanceById, faultData]);
 
   useEffect(() => {
     if (!enabled || zoom < 3 || !faultData || !mechanismData) return;
@@ -238,17 +244,17 @@ export function StressBalanceOverlay({
     });
   }, [balances, enabled, faultData, mechanismData, onStatus, zoom]);
 
-  if (!enabled || !displayed || zoom < 3) return null;
+  if (!enabled || !faultData || zoom < 3) return null;
 
   return (
     <>
       <GeoJSON
-        key={`stress-${box ? bboxParam(box) : "none"}-${balances.length}`}
-        data={displayed as never}
+        key={`stress-${box ? bboxParam(box) : "none"}-${balances.length}-${faultData.features.length}`}
+        data={faultData as never}
         style={(feature) => {
           const id = String(feature?.properties?.id ?? "");
           const balance = balanceById.get(id);
-          if (!balance) return { opacity: 0, weight: 0 };
+          if (!balance) return { color: "#64748b", opacity: 0.34, weight: 1.6, dashArray: "3 5" };
           const accumulated = balance.positiveMpa;
           const weight = accumulated >= 0.05 ? 4.5 : accumulated >= 0.02 ? 3.8 : accumulated >= 0.005 ? 3 : 2.2;
           return {
@@ -261,7 +267,11 @@ export function StressBalanceOverlay({
         onEachFeature={(feature, layer) => {
           const fault = feature as unknown as ActiveFaultFeature;
           const balance = balanceById.get(fault.properties.id);
-          if (!balance) return;
+          if (!balance) {
+            layer.bindTooltip(`${fault.properties.name} · carga no calculable`, { sticky: true });
+            layer.bindPopup(unavailablePopup(fault), { maxWidth: 420 });
+            return;
+          }
           layer.bindTooltip(`${balance.faultName} · carga +${balance.positiveMpa.toFixed(3)} MPa · neta ${signed(balance.netMpa)} MPa`, { sticky: true });
           layer.bindPopup(balancePopup(balance, fault), { maxWidth: 420 });
         }}
