@@ -8,6 +8,7 @@ import { frameAt, maxwellTime, prepareNodes } from "@/lib/tectonicMechanics/phys
 import { acceptedTomography, faultReceivers, waveformRays } from "@/lib/tectonicMechanics/adapters";
 import { volumeGrid } from "@/lib/tectonicMechanics/geometry";
 import { evaluateRetrospective, type ValidationInput } from "@/lib/tectonicMechanics/validation";
+import { resolveInspection, type InspectionSelection } from "@/lib/tectonicMechanics/inspection";
 import type { MechanicsLayers, MechanicsView } from "./TectonicMechanicsScene";
 import styles from "./TectonicMechanics.module.css";
 
@@ -34,10 +35,9 @@ export function TectonicMechanics() {
   const [layers,setLayers]=useState(INITIAL_LAYERS),[view,setView]=useState(INITIAL_VIEW),[plateCode,setPlateCode]=useState("CA");
   const [cursor,setCursor]=useState(6),[playing,setPlaying]=useState(false),[customTime,setCustomTime]=useState("");
   const [start,setStart]=useState("2020-01-01"),[end,setEnd]=useState("2020-01-31"),[bbox,setBbox]=useState("-70,16,-64,20"),[minMag,setMinMag]=useState(4.2);
-  const [inspection,setInspection]=useState<Record<string,unknown>|null>(null),[report,setReport]=useState<ReturnType<typeof evaluateRetrospective>|null>(null);
+  const [inspectionSelection,setInspection]=useState<InspectionSelection|null>(null),[report,setReport]=useState<ReturnType<typeof evaluateRetrospective>|null>(null);
   const [calEnd,setCalEnd]=useState("2020-01-15"),[valEnd,setValEnd]=useState("2020-02-01");
   const controller=useRef<AbortController|null>(null),fileRef=useRef<HTMLInputElement>(null);
-  const onInspect=useCallback((value:Record<string,unknown>)=>setInspection(value),[]);
   const install=useCallback((d:MechanicsDataset)=>{
     checkDataset(d);const main=[...d.events].sort((a,b)=>b.magnitude-a.magnitude).find(e=>d.sources.some(s=>s.eventId===e.externalId && s.momentTensor))??d.events[0];
     setData(d);setAnchorId(main?.externalId??"");setSelection(main?[main.externalId]:[]);setMode("one");setCursor(6);setCustomTime("");setPlaying(false);setReport(null);setInspection(null);
@@ -65,6 +65,8 @@ export function TectonicMechanics() {
     return new Date((anchor?Date.parse(anchor.timeUtc):0)+seconds*1000).toISOString();
   },[cursor,customTime,anchor]);
   const frame=useMemo(()=>frameAt(prepared,selectedSources,timestamp,params),[prepared,selectedSources,timestamp,params]);
+  const onInspect=useCallback((value:Record<string,unknown>)=>setInspection({value,frame,data,plateCode}),[frame,data,plateCode]);
+  const inspection=resolveInspection(inspectionSelection,{frame,data,plateCode});
   const tomography=useMemo(()=>acceptedTomography(data?.phase3??null),[data?.phase3]);
   const modeled=frame.voxels.filter(v=>v.status==="modeled").length;
   function begin(label:string) {controller.current?.abort();const c=new AbortController();controller.current=c;setBusy(label);setError("");setPlaying(false);return c;}

@@ -7,10 +7,35 @@ import { acceptedTomography, observedGnssAt, parseMidas, recoverNglEuler, source
 import { classificationMetrics, evaluateRetrospective, type ValidationInput } from "./tectonicMechanics/validation";
 import type { TectonicStatePhase3Result } from "./tectonicStatePhase3";
 import { plateAt } from "./tectonicMechanics/geometry";
+import { resolveInspection } from "./tectonicMechanics/inspection";
 const close=(a:number,b:number,tolerance=1e-6)=>assert.ok(Math.abs(a-b)<=tolerance*Math.max(1,Math.abs(b)),`${a} ≠ ${b}`);
 const caseData=JSON.parse(readFileSync(new URL("../public/tectonic-mechanics/puerto-rico-2020.json",import.meta.url),"utf8")) as MechanicsDataset;
 const source=caseData.sources.find(s=>s.magnitude===6.4)!;
 const params={...DEFAULT_ASSUMPTIONS,allowAssumedReceivers:true};
+
+test("Inspector follows the current mechanical epoch and never retains post-event values before rupture",()=>{
+  const prepared=prepareNodes([{id:"far",lat:18,lon:-65,depth:10}],[source],params);
+  const after=frameAt(prepared,[source],"2020-01-08T00:00:00Z",params);
+  const before=frameAt(prepared,[source],"2020-01-01T00:00:00Z",params);
+  const selected={value:{layer:"Voxel mecánico · SI",...after.voxels[0]},frame:after,data:caseData,plateCode:"CA"};
+  assert.ok(Number.isFinite(selected.value.ux));
+  const result=resolveInspection(selected,{frame:before,data:caseData,plateCode:"CA"});
+  assert.equal(result?.timestamp,before.timestamp);
+  assert.equal(result?.ux,null);
+  assert.equal(result?.stressTensor,null);
+  assert.equal(result?.status,"before-source");
+  assert.equal(resolveInspection(selected,{frame:before,data:{...caseData},plateCode:"CA"}),null);
+});
+
+test("Inspector clears expired reaction vectors and observations from a previous context",()=>{
+  const frame=frameAt([],[],"2020-01-01T00:00:00Z",params);
+  const current={frame,data:caseData,plateCode:"CA"};
+  assert.equal(resolveInspection({...current,value:{layer:"Reaction Vector · m / Pa",id:"expired",dx:1}},current),null);
+  const selected={...current,value:{layer:"GNSS ENU detrended · mm",station:"PRMI",eastMm:2}};
+  assert.deepEqual(resolveInspection(selected,current),selected.value);
+  assert.equal(resolveInspection(selected,{...current,frame:{...frame,timestamp:"2020-01-02T00:00:00Z"}}),null);
+  assert.equal(resolveInspection(selected,{...current,plateCode:"NA"}),null);
+});
 
 test("Kelvin displacement and stress agree with the closed-form isotropic moment solution",()=>{
   const mu=30e9,nu=.25,M=1e18,R=1e5;
