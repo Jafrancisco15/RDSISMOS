@@ -91,8 +91,9 @@ export async function GET() {
   const annual = buildAnnualCoupling(poles, seismicResult.value.events, 1904, currentYear);
   const retrospective = annual.filter(row => row.year <= Math.min(2025, lastCompletedYear));
   const predictors: PredictorKey[] = ["poleSpeedKmYr", "poleAccelerationKmYr2", "jerkIntensity"];
-  const analyses = predictors.flatMap(predictor => ["countM7", "logMoment"] as const)
-    .map(endpoint => analyzeCoupling(retrospective, predictor, endpoint))
+  const analyses = predictors
+    .flatMap(predictor => (["countM7", "logMoment"] as const)
+      .map(endpoint => analyzeCoupling(retrospective, predictor, endpoint)))
     .filter((item): item is NonNullable<typeof item> => item !== null);
 
   const exposure = yearExposure(now);
