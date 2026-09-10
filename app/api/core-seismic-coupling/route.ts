@@ -10,6 +10,11 @@ import {
   type BgsMonthlyPoint,
   type SeismicEventPoint,
 } from "@/lib/coreSeismicMonitor";
+import {
+  buildRelativeCoreSeismicStudy,
+  combineMonthlyStationSecularAcceleration,
+  deriveMonthlyStationSecularAcceleration,
+} from "@/lib/coreSeismicRelative";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -76,21 +81,24 @@ async function loadSecularAcceleration() {
     .map(result => ({
       ...result.value,
       secularAcceleration: deriveStationSecularAcceleration(result.value.points),
+      monthlySecularAcceleration: deriveMonthlyStationSecularAcceleration(result.value.points),
     }))
-    .filter(item => item.secularAcceleration.length >= 3);
+    .filter(item => item.secularAcceleration.length >= 3 || item.monthlySecularAcceleration.length >= 3);
 
   const series = combineStationSecularAcceleration(usable.map(item => item.secularAcceleration), 2);
+  const monthly = combineMonthlyStationSecularAcceleration(usable.map(item => item.monthlySecularAcceleration), 2);
   const failures = results
     .filter((result): result is PromiseRejectedResult => result.status === "rejected")
     .map(result => String(result.reason));
   for (const result of results) {
     if (result.status === "fulfilled" && !usable.some(item => item.station.code === result.value.station.code)) {
-      failures.push(`${result.value.station.code.toUpperCase()}: registros mensuales recibidos, pero menos de tres años de aceleración utilizables`);
+      failures.push(`${result.value.station.code.toUpperCase()}: registros mensuales recibidos, pero menos de tres puntos de aceleración utilizables`);
     }
   }
 
   return {
     series,
+    monthly,
     stations: usable.map(item => ({
       code: item.station.code.toUpperCase(),
       name: item.station.name,
@@ -118,7 +126,7 @@ async function loadGlobalM7(now: Date): Promise<{ events: SeismicEventPoint[]; l
   });
   if (!response.ok) throw new Error(`USGS FDSN event service HTTP ${response.status}`);
   const body = await response.json() as {
-    features?: Array<{ id?: string; geometry?: { coordinates?: number[] }; properties?: { mag?: number | null; time?: number | null; type?: string | null } }>;
+    features?: Array<{ id?: string; geometry?: { coordinates?: number[] }; properties?: { mag?: number | null; magType?: string | null; time?: number | null; type?: string | null } }>;
   };
   let latest: number | null = null;
   const events: SeismicEventPoint[] = [];
@@ -128,7 +136,7 @@ async function loadGlobalM7(now: Date): Promise<{ events: SeismicEventPoint[]; l
     if (!Number.isFinite(magnitude) || !Number.isFinite(time) || magnitude < 7) continue;
     if (p.type && p.type !== "earthquake") continue;
     const coords = feature.geometry?.coordinates;
-    events.push({ year: new Date(time).getUTCFullYear(), magnitude, timeUtc: new Date(time).toISOString(),
+    events.push({ id: feature.id ?? undefined, year: new Date(time).getUTCFullYear(), magnitude, magnitudeType: p.magType ?? null, timeUtc: new Date(time).toISOString(),
       ...(coords && coords.length >= 2 && Number.isFinite(coords[0]) && Number.isFinite(coords[1]) && Math.abs(coords[1]) <= 90 && Math.abs(coords[0]) <= 180
         ? { lon: coords[0], lat: coords[1] } : {}) });
     latest = latest === null ? time : Math.max(latest, time);
@@ -153,11 +161,13 @@ export async function GET() {
     return NextResponse.json({ error: `No se pudo cargar el catálogo sísmico real: ${String(seismicResult.reason)}` }, { status: 502 });
   }
 
-  const sa = saResult.status === "fulfilled" ? saResult.value : { series: [], stations: [], failures: [String(saResult.reason)] };
-  if (!sa.series.length) warnings.push("Aceleración secular BGS no disponible en esta ejecución; no se sustituye con aceleración del polo ni con IGRF derivado.");
+  const sa = saResult.status === "fulfilled" ? saResult.value : { series: [], monthly: [], stations: [], failures: [String(saResult.reason)] };
+  if (!sa.series.length && !sa.monthly.length) warnings.push("Aceleración secular BGS no disponible en esta ejecución; no se sustituye con aceleración del polo ni con IGRF derivado.");
+  else if (!sa.series.length && sa.monthly.length) warnings.push("La serie anual BGS no alcanzó cobertura suficiente, pero la serie mensual sí está disponible para el experimento relativo por evento.");
   if (sa.failures.length) warnings.push(`${sa.failures.length} observatorio(s) BGS no aportaron una serie utilizable.`);
 
   const annual = buildAnnualCoreSeismic(seismicResult.value.events, sa.series, 1904, currentYear);
+  const relativeStudy = buildRelativeCoreSeismicStudy(seismicResult.value.events, sa.monthly, 5);
   const latestSaYear = sa.series.at(-1)?.year ?? null;
   const firstSaYear = sa.series[0]?.year ?? null;
   const saThrough = latestSaYear === null ? null : Math.min(lastCompletedYear, latestSaYear);
@@ -179,7 +189,7 @@ export async function GET() {
 
   return NextResponse.json({
     generatedAtUtc: now.toISOString(),
-    experimentVersion: "core-seismic-v0.4",
+    experimentVersion: "core-seismic-v0.5",
     historicalStartYear: 1904,
     currentYear,
     summary: {
@@ -195,7 +205,19 @@ export async function GET() {
     },
     annual,
     globe: { poles: poleHistory, events: seismicResult.value.events },
-    diagnostics: { failures: sa.failures, saYearsAvailable: annual.filter(r => r.year <= lastCompletedYear && r.secularAccelerationNtYr2 !== null).length, minimumYears: 50 },
+    diagnostics: {
+      failures: sa.failures,
+      saYearsAvailable: annual.filter(r => r.year <= lastCompletedYear && r.secularAccelerationNtYr2 !== null).length,
+      monthlySaObservations: sa.monthly.length,
+      minimumYears: 50,
+      relativeStudy: {
+        status: relativeStudy.status,
+        eligibleEvents: relativeStudy.eligibleEvents,
+        eligibleControls: relativeStudy.eligibleControls,
+        independentEventClusters: relativeStudy.independentEventClusters,
+      },
+    },
+    relativeStudy,
     analyses,
     jerkEpochs: GEOMAGNETIC_JERKS,
     stations: sa.stations,
@@ -204,7 +226,7 @@ export async function GET() {
         name: "British Geological Survey · WDC geomagnetic observatory monthly means",
         url: "https://wdc.bgs.ac.uk/monthlymeans/",
         service: BGS_MONTHLY_URL,
-        method: "Monthly X/Y/Z → annual component means → second finite difference; yearly network value = median |d²B/dt²| across available long-record observatories.",
+        method: "Monthly X/Y/Z → annual component means → second finite difference for the secondary annual view. The primary event study retains monthly means, uses a time-aware centered second derivative, then takes a robust network median and aligns it at τ = 0 for every M7+ event.",
         units: "nT/year²",
         caveat: "Observatory ensemble, not a global spherical-harmonic SA field. Requires at least two usable stations per year; coverage is shown explicitly.",
       },
@@ -223,6 +245,8 @@ export async function GET() {
     interpretationRules: {
       positiveLag: "A positive lag means the geomagnetic change precedes the M≥7 response by that many years.",
       negativeLag: "A negative lag means the M≥7 response precedes the geomagnetic change; this is a reverse-direction falsification test.",
+      relativeEventStudy: "Each M7+ earthquake is assigned τ = 0. Profiles use bins from −5 to +5 years, with deterministic coverage-matched non-event control epochs. Counts and uncertainty are clustered by calendar year to avoid treating overlapping sequences as independent.",
+      historicalReplication: "The 2–5-year replication uses exact Ms labels when at least three are available; otherwise it reports M≥8 from the USGS magnitude field as a sensitivity analysis and does not equate Mw with Ms.",
       significance: "A positive out-of-sample score without corrected p < 0.05 is reported as no robust evidence, not as a positive finding.",
       causalClaim: false,
       predictionClaim: false,
