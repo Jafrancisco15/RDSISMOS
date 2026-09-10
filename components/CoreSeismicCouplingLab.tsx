@@ -5,6 +5,8 @@ import type { CoreGlobeData } from "./CoreSeismicGlobe";
 const CoreSeismicGlobe = dynamic(() => import("./CoreSeismicGlobe"), { ssr: false, loading: () => <p>Cargando globo…</p> });
 
 import { useEffect, useMemo, useState } from "react";
+import { CoreSeismicRelativeStudyPanel } from "./CoreSeismicRelativeStudyPanel";
+import type { CoreSeismicRelativeStudy } from "@/lib/coreSeismicRelative";
 
 type Predictor = "secularAccelerationNtYr2" | "jerkIntensity";
 type Interpretation = "sin-evidencia-robusta" | "senal-in-sample" | "ganancia-oos-exploratoria" | "asociacion-retrospectiva-replicada";
@@ -50,6 +52,7 @@ type ApiResult = {
     jerkCount: number;
   };
   annual: Annual[];
+  relativeStudy: CoreSeismicRelativeStudy;
   analyses: Analysis[];
   jerkEpochs: Array<{ year: number; weight: number; source: string }>;
   stations: Array<{ code: string; name: string; firstYear: number | null; lastYear: number | null }>;
@@ -186,7 +189,7 @@ export function CoreSeismicCouplingLab() {
     <div style={{ background: "linear-gradient(135deg,#0b2132,#111b2b)", border: "1px solid #27465a", borderRadius: 16, padding: 22 }}>
       <div style={{ color: "#8cc7ff", letterSpacing: ".08em", fontSize: 12, fontWeight: 800 }}>DATOS REALES · {data.experimentVersion}</div>
       <h2 style={{ margin: "8px 0" }}>Aceleración secular + magnetic jerks vs sismos M7+</h2>
-      <p style={{ margin: 0, maxWidth: 1030, lineHeight: 1.55, color: "#b8c8d2" }}>Explora en el globo la trayectoria histórica del polo norte magnético y los sismos M7+, con las épocas de magnetic jerks. La prueba histórica compara aceleración secular BGS y jerks con la frecuencia sísmica; la trayectoria del polo aporta contexto visual.</p>
+      <p style={{ margin: 0, maxWidth: 1030, lineHeight: 1.55, color: "#b8c8d2" }}>Explora en el globo la trayectoria histórica del polo norte magnético y los sismos M7+, con las épocas de magnetic jerks. El experimento principal alinea cada terremoto en τ = 0 y compara los cinco años anteriores y posteriores; el análisis anual queda como referencia secundaria.</p>
       <button onClick={() => void load()} disabled={loading} style={{ marginTop: 15, padding: "9px 14px", borderRadius: 9, border: "1px solid #3d6075", background: "#123047", color: "#e8f3f8", cursor: "pointer" }}>{loading ? "Actualizando…" : "Actualizar datos"}</button>
     </div>
 
@@ -202,17 +205,19 @@ export function CoreSeismicCouplingLab() {
       <div style={{ background: "#0a1b2a", borderRadius: 12, padding: 14 }}><div style={{ color: "#91a8b7", fontSize: 11 }}>M7+ en {data.currentYear}</div><strong style={{ fontSize: 23 }}>{data.summary.currentYearM7Observed}</strong><div style={{ color: "#7f95a4", fontSize: 11 }}>{(data.summary.currentYearExposure * 100).toFixed(1)}% del año transcurrido</div></div>
     </div>
 
+    <CoreSeismicRelativeStudyPanel study={data.relativeStudy} />
+
     <div style={{ marginTop: 20, background: "#081724", border: "1px solid #20384a", borderRadius: 15, padding: 18 }}>
-      <h3 style={{ marginTop: 0 }}>Historia completa: 1904 → presente</h3>
+      <h3 style={{ marginTop: 0 }}>Referencia secundaria · historia anual 1904 → presente</h3>
       <HistoricalChart rows={data.annual} jerkEpochs={data.jerkEpochs} currentYear={data.currentYear} />
-      <p style={{ fontSize: 12, color: "#8fa5b4", lineHeight: 1.5, marginBottom: 0 }}>Las barras son el número real de terremotos M7+ por año. La línea morada es |d²B/dt²| en nT/año² calculada desde medias mensuales de observatorios. Las líneas turquesa marcan jerks publicados. El año actual se muestra en seguimiento, pero no se usa como año completo en la prueba histórica.</p>
+      <p style={{ fontSize: 12, color: "#8fa5b4", lineHeight: 1.5, marginBottom: 0 }}>Las barras son el número real de terremotos M7+ por año. La línea morada es |d²B/dt²| en nT/año² calculada desde medias mensuales de observatorios. Las líneas turquesa marcan jerks publicados. Esta vista anual no sustituye el alineamiento relativo por evento. El año actual se muestra en seguimiento, pero no se usa como año completo en la prueba histórica.</p>
     </div>
 
     {data.globe && <CoreSeismicGlobe data={data.globe} currentYear={data.currentYear} jerks={data.jerkEpochs} />}
 
     <div style={{ display: "flex", flexWrap: "wrap", gap: 14, marginTop: 18 }}>
-      <ResultCard unavailable={data.summary.bgsStationsUsed === 0 ? "No se recuperaron series BGS utilizables. El catálogo M7+ está disponible; falta la serie geomagnética." : `${data.diagnostics?.saYearsAvailable ?? 0} años geomagnéticos utilizables; se requieren al menos 50, con cobertura de desarrollo y evaluación suficientes.`} analysis={saAnalysis} title="Aceleración secular ↔ M7+" description="Prueba si cambios rápidos de la variación secular del campo contienen información temporal adicional sobre la tasa anual de sismos M7+." />
-      <ResultCard analysis={jerkAnalysis} title="Magnetic jerks ↔ M7+" description="Prueba si las épocas de jerks geomagnéticos publicados presentan una relación temporal reproducible con los años de mayor o menor ocurrencia de M7+." />
+      <ResultCard unavailable={data.summary.bgsStationsUsed === 0 ? "No se recuperaron series BGS utilizables para esta referencia anual; el experimento relativo conserva el diagnóstico por evento." : `${data.diagnostics?.saYearsAvailable ?? 0} años geomagnéticos utilizables; el análisis anual se conserva como control secundario.`} analysis={saAnalysis} title="Aceleración secular ↔ M7+ · secundario" description="Prueba si cambios rápidos de la variación secular del campo contienen información temporal adicional sobre la tasa anual de sismos M7+." />
+      <ResultCard analysis={jerkAnalysis} title="Magnetic jerks ↔ M7+ · secundario" description="Referencia anual: prueba si las épocas de jerks publicados presentan una relación temporal reproducible con los años de mayor o menor ocurrencia de M7+." />
     </div>
 
     <div style={{ marginTop: 18, background: "#081724", border: "1px solid #20384a", borderRadius: 14, padding: 17 }}>
