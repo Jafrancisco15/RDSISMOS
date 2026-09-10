@@ -6,6 +6,7 @@ import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
 import { BoundaryHistoryAboutNote } from "./BoundaryHistoryAboutNote";
 import { BoundaryHistoryPanel } from "./BoundaryHistoryPanel";
+import { CoreSeismicCouplingLab } from "./CoreSeismicCouplingLab";
 import { HistoricalHeatmap } from "./HistoricalHeatmap";
 import { SeismicDashboard } from "./SeismicDashboard";
 import { EarthquakeEventsDashboard } from "./EarthquakeEventsDashboard";
@@ -40,7 +41,7 @@ const TectonicMechanics = dynamic(
   { ssr: false, loading: () => <div className="map-loading">Cargando laboratorio mecánico 3D…</div> },
 );
 
-type AppTab = "globe" | "depth3d" | "tectonic4d" | "mechanics4d" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
+type AppTab = "globe" | "depth3d" | "tectonic4d" | "mechanics4d" | "coreseismic" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -73,6 +74,7 @@ export function AppShell() {
         <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Placas 3D</button>
         <button className={tab === "tectonic4d" ? "active" : ""} onClick={() => setTab("tectonic4d")}>Tectonic State 4D</button>
         <button className={tab === "mechanics4d" ? "active" : ""} onClick={() => setTab("mechanics4d")}>Estado mecánico 3D</button>
+        <button className={tab === "coreseismic" ? "active" : ""} onClick={() => setTab("coreseismic")}>Núcleo–Sismicidad</button>
         <button className={tab === "extractions" ? "active" : ""} onClick={() => setTab("extractions")}>Extracciones</button>
         <button className={tab === "geomagnetism" ? "active" : ""} onClick={() => setTab("geomagnetism")}>Geomagnetismo</button>
         <button className={tab === "volcano" ? "active" : ""} onClick={() => setTab("volcano")}>Volcano activity</button>
@@ -137,6 +139,7 @@ export function AppShell() {
       {tab === "depth3d" && <TectonicDepth3D />}
       {tab === "tectonic4d" && <TectonicState4D />}
       {tab === "mechanics4d" && <TectonicMechanics />}
+      {tab === "coreseismic" && <CoreSeismicCouplingLab />}
       {tab === "extractions" && <ExtractionDashboard />}
       {tab === "geomagnetism" && <>
         <GeomagneticWorldObservation />
