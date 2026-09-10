@@ -228,7 +228,7 @@ export async function GET() {
         service: BGS_MONTHLY_URL,
         method: "Monthly X/Y/Z → annual component means → second finite difference for the secondary annual view. The primary event study retains monthly means, uses a time-aware centered second derivative, then takes a robust network median and aligns it at τ = 0 for every M7+ event.",
         units: "nT/year²",
-        caveat: "Observatory ensemble, not a global spherical-harmonic SA field. Requires at least two usable stations per year; coverage is shown explicitly.",
+        caveat: "Observatory ensemble, not a global spherical-harmonic SA field. The primary monthly network requires at least two usable stations per month; the annual reference applies the analogous yearly coverage rule, and coverage is shown explicitly.",
       },
       jerks: {
         name: "Versioned literature-consensus geomagnetic jerk epochs",
