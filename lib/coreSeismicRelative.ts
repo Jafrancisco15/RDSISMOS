@@ -4,7 +4,7 @@ import {
   type BgsMonthlyPoint,
   type SeismicEventPoint,
   type StationSecularAcceleration,
-} from "@/lib/coreSeismicMonitor";
+} from "./coreSeismicMonitor";
 
 export type MonthlySecularAccelerationPoint = {
   decimalYear: number;
