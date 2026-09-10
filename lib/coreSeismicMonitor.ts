@@ -17,9 +17,11 @@ export type SecularAccelerationYear = {
 };
 
 export type SeismicEventPoint = {
+  id?: string;
   lat?: number;
   lon?: number;
   timeUtc?: string;
+  magnitudeType?: string | null;
   year: number;
   magnitude: number;
 };
