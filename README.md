@@ -38,6 +38,15 @@ Pantalla para consultar USGS ComCat con:
 - reintentos y backoff exponencial;
 - importación histórica administrativa por lotes.
 
+### Hipótesis Sísmicas
+
+Laboratorio histórico con dos pruebas independientes y conclusiones falsables:
+
+- **Disparo dinámico remoto:** alinea sismicidad M≥2 por el tiempo de llegada de ondas superficiales de M≥7.5, excluye eventos a ≤1,000 km, compara cinco días antes/después, aplica test Z de tasas, bootstrap con fechas aleatorias y FDR regional.
+- **Redistribución intraplaca:** asigna M≥6.5 a PB2002, forma pares de una misma placa separados por más de 500 km, descarta transferencia estática mediante una cota de campo lejano y compara un kernel de Maxwell contra 1,000 catálogos temporalmente aleatorizados.
+
+Cada ejecución devuelve p, tamaño de efecto, IC95%, parámetros, cobertura, limitaciones y una conclusión explícita. El análisis M≥2 incluye una sensibilidad M≥4.5 porque la completitud global del catálogo pequeño no es uniforme.
+
 ## API interna
 
 - `GET /api/earthquakes`
@@ -49,8 +58,9 @@ Pantalla para consultar USGS ComCat con:
 - `POST /api/migration/history`
 - `GET /api/migration/learning/status`
 - `POST /api/migration/learning/evaluate`
+- `GET /api/seismic-hypotheses`
 
-El frontend consume únicamente estas APIs internas.
+El frontend consume únicamente estas APIs internas. `/api/seismic-hypotheses` acepta `triggerLimit`, `randomDateLimit`, `bootstrap` y `monteCarlo`, con límites del servidor para proteger ComCat y Vercel.
 
 ## Límites y estrategia histórica
 
@@ -124,10 +134,12 @@ curl "http://localhost:3000/api/earthquakes/sync/status?id=<JOB_ID>"
 RASPBERRY_SHAKE_EVENTS_URL=https://quakelink.raspberryshake.org/events/query
 EARTHQUAKE_ADMIN_TOKEN=un-token-largo-y-secreto
 DATABASE_URL=postgresql://...
+CRON_SECRET=un-token-cron-largo-y-secreto
 ```
 
 - `DATABASE_URL` debe usar una conexión server-side; nunca utilice el prefijo `NEXT_PUBLIC_`.
 - `EARTHQUAKE_ADMIN_TOKEN` protege sincronización y evaluación cuando está definido.
+- `CRON_SECRET` permite que la ejecución diaria fuerce la renovación del catálogo base sin exponer esa operación al público.
 - Con Transaction Pooler de Supabase, el cliente usa `prepare: false`.
 
 ## Desarrollo y pruebas
@@ -149,5 +161,7 @@ Abra `http://localhost:3000`.
 4. Ejecute ambas migraciones SQL en Supabase.
 5. Despliegue nuevamente después de cambiar variables de entorno.
 6. Programe la llamada protegida a `/api/migration/learning/evaluate` cuando quiera automatizar el cierre de cápsulas.
+
+`vercel.json` actualiza diariamente el laboratorio de hipótesis y mantiene en caché las ventanas históricas estables. Si existe `CRON_SECRET`, solo la solicitud cron autorizada fuerza la renovación del catálogo base.
 
 > RDSISMOS no sustituye las alertas ni recomendaciones de las autoridades sismológicas y de protección civil. Las asociaciones históricas no demuestran causalidad entre placas distantes.

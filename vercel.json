@@ -26,6 +26,10 @@
     {
       "path": "/api/geomagnetism/projections/evaluate?limit=18",
       "schedule": "55 */6 * * *"
+    },
+    {
+      "path": "/api/seismic-hypotheses?triggerLimit=200&randomDateLimit=200&bootstrap=1000&monteCarlo=1000&refresh=1",
+      "schedule": "20 5 * * *"
     }
   ]
 }

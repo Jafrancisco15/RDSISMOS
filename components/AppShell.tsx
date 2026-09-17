@@ -41,7 +41,12 @@ const TectonicMechanics = dynamic(
   { ssr: false, loading: () => <div className="map-loading">Cargando laboratorio mecánico 3D…</div> },
 );
 
-type AppTab = "globe" | "depth3d" | "tectonic4d" | "mechanics4d" | "coreseismic" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
+const SeismicHypothesesLab = dynamic(
+  () => import("./SeismicHypothesesLab").then((module) => module.SeismicHypothesesLab),
+  { loading: () => <div className="map-loading" style={{ margin: 28 }}>Cargando laboratorio de hipótesis…</div> },
+);
+
+type AppTab = "globe" | "depth3d" | "tectonic4d" | "mechanics4d" | "coreseismic" | "hypotheses" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -75,6 +80,7 @@ export function AppShell() {
         <button className={tab === "tectonic4d" ? "active" : ""} onClick={() => setTab("tectonic4d")}>Tectonic State 4D</button>
         <button className={tab === "mechanics4d" ? "active" : ""} onClick={() => setTab("mechanics4d")}>Estado mecánico 3D</button>
         <button className={tab === "coreseismic" ? "active" : ""} onClick={() => setTab("coreseismic")}>Núcleo–Sismicidad</button>
+        <button className={tab === "hypotheses" ? "active" : ""} onClick={() => setTab("hypotheses")}>Hipótesis Sísmicas</button>
         <button className={tab === "extractions" ? "active" : ""} onClick={() => setTab("extractions")}>Extracciones</button>
         <button className={tab === "geomagnetism" ? "active" : ""} onClick={() => setTab("geomagnetism")}>Geomagnetismo</button>
         <button className={tab === "volcano" ? "active" : ""} onClick={() => setTab("volcano")}>Volcano activity</button>
@@ -140,6 +146,7 @@ export function AppShell() {
       {tab === "tectonic4d" && <TectonicState4D />}
       {tab === "mechanics4d" && <TectonicMechanics />}
       {tab === "coreseismic" && <CoreSeismicCouplingLab />}
+      {tab === "hypotheses" && <SeismicHypothesesLab />}
       {tab === "extractions" && <ExtractionDashboard />}
       {tab === "geomagnetism" && <>
         <GeomagneticWorldObservation />
