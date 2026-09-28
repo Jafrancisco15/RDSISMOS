@@ -399,6 +399,73 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.loadPanel {
+  margin-top: 18px;
+  padding: 21px;
+  border: 1px solid rgba(251, 191, 36, 0.22);
+  border-radius: 20px;
+  background: linear-gradient(145deg, rgba(30, 41, 59, 0.88), rgba(15, 23, 42, 0.86));
+}
+
+.loadIntro h2 {
+  margin: 7px 0;
+  color: #f8fafc;
+  font-size: clamp(1.2rem, 2vw, 1.7rem);
+}
+
+.loadIntro p,
+.loadCaveat {
+  max-width: 1000px;
+  color: #b9c8d8;
+  line-height: 1.55;
+}
+
+.loadControls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 13px;
+  margin-top: 16px;
+}
+
+.loadControls label {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 12px;
+  background: rgba(2, 6, 23, 0.38);
+  color: #cbd5e1;
+  font-size: 0.84rem;
+}
+
+.loadControls label span {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.loadControls b { color: #f8fafc; }
+.loadControls input { width: 100%; accent-color: #fbbf24; }
+
+.loadResults {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.loadResults article {
+  padding: 14px;
+  border: 1px solid rgba(251, 191, 36, 0.2);
+  border-radius: 13px;
+  background: rgba(120, 53, 15, 0.14);
+}
+
+.loadResults span { display: block; color: #cbd5e1; font-size: 0.84rem; }
+.loadResults strong { display: block; margin-top: 5px; color: #fde68a; font-size: clamp(1.15rem, 2.3vw, 1.8rem); }
+.loadCaveat { margin: 14px 0 0; font-size: 0.82rem; }
+
 .summaryGrid strong {
   font-size: 1.05rem;
 }
@@ -438,7 +505,9 @@
   .metrics,
   .layerPanel,
   .depthControls,
-  .summaryGrid {
+  .summaryGrid,
+  .loadControls,
+  .loadResults {
     grid-template-columns: 1fr;
   }
   .presetRow {

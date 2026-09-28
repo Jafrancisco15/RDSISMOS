@@ -7,8 +7,9 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const DAY_MS = 86_400_000;
-const MAX_RANGE_DAYS = 365;
+const MAX_RANGE_DAYS = 500 * 365.25;
 const MAX_EVENTS = 20_000;
+const HISPANIOLA_CENTER = { latitude: 18.8, longitude: -70.5, radiusKm: 1_000 };
 
 function parseDate(value: string | null, fallback: Date, endOfDay: boolean) {
   if (!value) return fallback;
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
     if (start > end) throw new Error("La fecha inicial no puede superar la fecha final.");
     const rangeDays = (end.getTime() - start.getTime()) / DAY_MS;
     if (rangeDays > MAX_RANGE_DAYS) {
-      throw new Error(`La vista tectónica 3D admite hasta ${MAX_RANGE_DAYS} días por consulta.`);
+      throw new Error("La vista tectónica regional admite rangos de hasta 500 años por consulta.");
     }
 
     const minMagnitude = magnitude(request.nextUrl.searchParams.get("minmagnitude"));
@@ -45,6 +46,9 @@ export async function GET(request: NextRequest) {
       endTime: end.toISOString(),
       minMagnitude,
       eventType: "earthquake",
+      latitude: HISPANIOLA_CENTER.latitude,
+      longitude: HISPANIOLA_CENTER.longitude,
+      maxRadiusKm: HISPANIOLA_CENTER.radiusKm,
       orderBy: "time",
       limit: MAX_EVENTS,
       offset: 1,
