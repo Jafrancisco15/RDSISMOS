@@ -29,6 +29,16 @@ const PLATE_COLORS = ["#00d4ff", "#ffd166", "#ef476f", "#9b5de5"];
 const SLAB_SHALLOW = "#ff5d73";
 const SLAB_INTERMEDIATE = "#ff9f43";
 const SLAB_DEEP = "#667eea";
+const YUMA_REGION: PlateReliefRegion = {
+  id: "guaymate-yuma",
+  name: "Guaymate–Boca de Yuma",
+  west: -70.15,
+  south: 17.7,
+  east: -67.85,
+  north: 19.2,
+  centerLongitude: -69,
+  focusPlateName: "Guaymate–Boca de Yuma",
+};
 
 type Pair = [number, number];
 type ReliefGrid = {
@@ -49,6 +59,7 @@ type Props = {
   showFaults: boolean;
   showSlabs: boolean;
   showEarthquakes: boolean;
+  focusArea?: "plates" | "yuma";
 };
 
 type QuakeCounts = Record<SlabEventClass, number>;
@@ -424,6 +435,37 @@ function faultLines(features: ActiveFaultFeature[], region: PlateReliefRegion) {
   return groups;
 }
 
+function isYumaFault(feature: ActiveFaultFeature) {
+  const text = [feature.properties.name, feature.properties.faultZoneName]
+    .filter(Boolean)
+    .join(" ");
+  return /\byuma\b/i.test(text);
+}
+
+function createHypocenterGuides(
+  events: EarthquakeEvent[],
+  grid: ReliefGrid,
+  region: PlateReliefRegion,
+  isMobile: boolean,
+) {
+  const selected = events
+    .filter((event) => insideRegion([event.longitude, event.latitude], region, 0))
+    .sort((a, b) => b.magnitude - a.magnitude)
+    .slice(0, isMobile ? 160 : 360);
+  const positions: number[] = [];
+  for (const event of selected) {
+    const scene = pointToScene(event.longitude, event.latitude, grid, region);
+    const depthY = -Math.max(1, event.depthKm) * BASE_DEPTH_Y;
+    positions.push(scene.x, 0.35, scene.z, scene.x, depthY, scene.z);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(
+    geometry,
+    new THREE.LineBasicMaterial({ color: "#d7e5f3", transparent: true, opacity: 0.22 }),
+  );
+}
+
 function slabDepthColor(depthKm: number) {
   if (depthKm <= 70) return SLAB_SHALLOW;
   if (depthKm <= 300) return SLAB_INTERMEDIATE;
@@ -530,6 +572,7 @@ export function TectonicRelief3DRenderer({
   showFaults,
   showSlabs,
   showEarthquakes,
+  focusArea = "plates",
 }: Props) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const terrainGroupRef = useRef<THREE.Group | null>(null);
@@ -539,6 +582,7 @@ export function TectonicRelief3DRenderer({
   const quakeGroupRef = useRef<THREE.Group | null>(null);
   const [status, setStatus] = useState("Preparando zona de interacción…");
   const [faultCount, setFaultCount] = useState<number | null>(null);
+  const [yumaFaultCount, setYumaFaultCount] = useState(0);
   const [quakeCount, setQuakeCount] = useState(0);
   const [quakeCounts, setQuakeCounts] = useState<QuakeCounts>(emptyQuakeCounts());
   const [warning, setWarning] = useState<string | null>(null);
@@ -546,8 +590,10 @@ export function TectonicRelief3DRenderer({
 
   const activePlateIds = useMemo(() => [...new Set(plateIds.filter(Boolean))].slice(0, 4), [plateIds]);
   const region = useMemo(
-    () => computePlatesReliefRegion(tectonic.platePolygons.features, activePlateIds),
-    [activePlateIds, tectonic.platePolygons.features],
+    () => focusArea === "yuma"
+      ? YUMA_REGION
+      : computePlatesReliefRegion(tectonic.platePolygons.features, activePlateIds),
+    [activePlateIds, focusArea, tectonic.platePolygons.features],
   );
   const selectedPlates = useMemo(() => activePlateIds.map((id, index) => {
     const features = plateFeatures(tectonic.platePolygons.features, id);
@@ -664,6 +710,7 @@ export function TectonicRelief3DRenderer({
 
       const quakeGroup = new THREE.Group();
       const quakeData = createEarthquakes(earthquakes, regionalSlabs, grid, activeRegion, isMobile);
+      if (focusArea === "yuma") quakeGroup.add(createHypocenterGuides(earthquakes, grid, activeRegion, isMobile));
       quakeGroup.add(quakeData.mesh);
       quakeGroup.scale.y = depthExaggeration;
       quakeGroup.visible = showEarthquakes;
@@ -675,6 +722,7 @@ export function TectonicRelief3DRenderer({
     const initialGrid = buildSurfaceGroups(fallbackGrid);
     rebuildDepthLayers(initialGrid);
     setFaultCount(null);
+    setYumaFaultCount(0);
     setError(null);
     setWarning(null);
     const focusText = activeRegion.focusPlateName ? ` · foco ${activeRegion.focusPlateName}` : "";
@@ -718,13 +766,26 @@ export function TectonicRelief3DRenderer({
             if (disposed) return;
             const group = new THREE.Group();
             if (faults) {
-              const grouped = faultLines(faults.features, activeRegion);
+              const yumaFaults = focusArea === "yuma" ? faults.features.filter(isYumaFault) : [];
+              const otherFaults = focusArea === "yuma"
+                ? faults.features.filter((feature) => !isYumaFault(feature))
+                : faults.features;
+              const grouped = faultLines(otherFaults, activeRegion);
               group.add(createLineSegments(grouped.reverse, grid, activeRegion, "#ff3b3b", 0.82));
               group.add(createLineSegments(grouped.normal, grid, activeRegion, "#39d8ff", 0.79));
               group.add(createLineSegments(grouped.strike, grid, activeRegion, "#ffbf47", 0.85));
               group.add(createLineSegments(grouped.other, grid, activeRegion, "#f472b6", 0.78));
+              if (yumaFaults.length) {
+                const highlighted = faultLines(yumaFaults, activeRegion);
+                const yumaLines = [...highlighted.reverse, ...highlighted.normal, ...highlighted.strike, ...highlighted.other];
+                group.add(createLineSegments(yumaLines, grid, activeRegion, "#fff176", 1.02, 1));
+              }
+              setYumaFaultCount(yumaFaults.length);
               setFaultCount(faults.features.length);
-            } else setFaultCount(0);
+            } else {
+              setYumaFaultCount(0);
+              setFaultCount(0);
+            }
             group.scale.y = reliefExaggeration;
             group.visible = showFaults;
             faultGroupRef.current = replaceGroup(faultGroupRef.current, group);
@@ -734,6 +795,7 @@ export function TectonicRelief3DRenderer({
         if (!disposed) {
           setWarning(`DEM no disponible: ${demError instanceof Error ? demError.message : "error de elevación"}. Se mantiene la base tectónica plana.`);
           setStatus(`Base tectónica visible · ${selectedPlates.length} placas`);
+          setYumaFaultCount(0);
           setFaultCount(0);
         }
       });
@@ -753,7 +815,7 @@ export function TectonicRelief3DRenderer({
       renderer.dispose();
       if (host.contains(renderer.domElement)) renderer.domElement.remove();
     };
-  }, [depthExaggeration, earthquakes, region, reliefExaggeration, selectedFeatureCount, selectedPlates, showEarthquakes, showFaults, showPlates, showSlabs, tectonic]);
+  }, [depthExaggeration, earthquakes, focusArea, region, reliefExaggeration, selectedFeatureCount, selectedPlates, showEarthquakes, showFaults, showPlates, showSlabs, tectonic]);
 
   return (
     <div style={{ position: "relative", minHeight: 520, overflow: "hidden", borderRadius: 18, background: "#020712" }}>
@@ -762,6 +824,7 @@ export function TectonicRelief3DRenderer({
       <div style={{ position: "absolute", top: 12, left: 12, zIndex: 4, display: "flex", gap: 7, flexWrap: "wrap", maxWidth: "calc(100% - 24px)", pointerEvents: "none" }}>
         <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.86)", border: "1px solid rgba(125,211,252,.25)", color: "#d8f2ff", fontSize: 11, fontWeight: 800 }}>{selectedPlates.length} placas · {selectedFeatureCount} fragmentos agrupados</span>
         <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(2,7,18,.86)", border: "1px solid rgba(255,255,255,.13)", color: "#d9e4ef", fontSize: 11 }}>{status}</span>
+        {focusArea === "yuma" && <span style={{ padding: "6px 9px", borderRadius: 999, background: "rgba(67,56,8,.88)", border: "1px solid rgba(253,224,71,.45)", color: "#fff7ae", fontSize: 11, fontWeight: 900 }}>Caso Guaymate–Yuma</span>}
       </div>
 
       <div style={{ position: "absolute", top: 48, left: 12, right: 12, zIndex: 4, display: "flex", gap: 6, flexWrap: "wrap", pointerEvents: "none" }}>
@@ -778,11 +841,15 @@ export function TectonicRelief3DRenderer({
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_EVENT_COLORS.interface, fontSize: 10 }}>● interfaz {quakeCounts.interface}</span>
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_EVENT_COLORS.intraslab, fontSize: 10 }}>● intraslab {quakeCounts.intraslab}</span>
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: SLAB_EVENT_COLORS.deep, fontSize: 10 }}>● profundo {quakeCounts.deep}</span>
+        {focusArea === "yuma" && <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: "#fff176", fontSize: 10 }}>— Yuma {yumaFaultCount ? `${yumaFaultCount} traza${yumaFaultCount === 1 ? "" : "s"} GEM` : "sin nombre Yuma en GEM"}</span>}
+        {focusArea === "yuma" && <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: "#d7e5f3", fontSize: 10 }}>│ guía superficie → hipocentro</span>}
         <span style={{ padding: "5px 8px", borderRadius: 8, background: "rgba(2,7,18,.82)", color: "#cad8e6", fontSize: 10 }}>{faultCount === null ? "fallas…" : `${faultCount} fallas`} · {quakeCount} sismos</span>
       </div>
 
-      <div style={{ position: "absolute", right: 12, top: 84, zIndex: 4, maxWidth: 260, padding: "7px 9px", borderRadius: 10, background: "rgba(2,7,18,.78)", color: "#a8b8c8", fontSize: 9.5, lineHeight: 1.35, pointerEvents: "none" }}>
-        Interfaz/intraslab = clasificación geométrica aproximada respecto a la superficie Slab2; no sustituye mecanismos focales ni interpretación publicada.
+      <div style={{ position: "absolute", right: 12, top: 84, zIndex: 4, maxWidth: 290, padding: "7px 9px", borderRadius: 10, background: "rgba(2,7,18,.78)", color: "#a8b8c8", fontSize: 9.5, lineHeight: 1.35, pointerEvents: "none" }}>
+        {focusArea === "yuma"
+          ? "Las fallas se dibujan sobre la superficie; los puntos sísmicos se colocan en su profundidad hipocentral y la línea vertical muestra la separación. Coincidencia en planta no demuestra que una falla superficial haya producido un evento profundo."
+          : "Interfaz/intraslab = clasificación geométrica aproximada respecto a la superficie Slab2; no sustituye mecanismos focales ni interpretación publicada."}
       </div>
 
       {warning && <div style={{ position: "absolute", top: 118, left: 12, right: 12, zIndex: 5, padding: 9, borderRadius: 10, background: "rgba(86,54,8,.9)", color: "#fde68a", fontSize: 11 }}>{warning}</div>}
