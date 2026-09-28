@@ -20,6 +20,7 @@ const TectonicRelief3DRenderer = dynamic(
 
 type PeriodPreset = "10y" | "50y" | "100y" | "300y" | "custom";
 type ViewMode = "globe" | "relief";
+type ReliefFocus = "plates" | "yuma";
 
 type DepthEventsResponse = {
   events: EarthquakeEvent[];
@@ -86,6 +87,7 @@ async function loadEarthquakes({
 export function TectonicDepth3D() {
   const today = todayKey();
   const [viewMode, setViewMode] = useState<ViewMode>("globe");
+  const [reliefFocus, setReliefFocus] = useState<ReliefFocus>("plates");
   const [tectonic, setTectonic] = useState<TectonicDepth3DResponse | null>(null);
   const [earthquakes, setEarthquakes] = useState<EarthquakeEvent[]>([]);
   const [eventTotal, setEventTotal] = useState(0);
@@ -213,8 +215,28 @@ export function TectonicDepth3D() {
     if (!plateId) return;
     setGlobePlateId(plateId);
     setReliefPlateIds([plateId]);
+    setReliefFocus("plates");
     setViewMode("relief");
   }, []);
+
+  function openYumaCase() {
+    const start = "2026-09-27";
+    const caribbean = plateOptions.find((plate) => /caribbean|caribe/i.test(plate.name));
+    const northAmerica = plateOptions.find((plate) => /north american|norte.?americana/i.test(plate.name));
+    const ids = [caribbean?.id, northAmerica?.id].filter((id): id is string => Boolean(id));
+    if (ids.length) setReliefPlateIds([...new Set(ids)].slice(0, 4));
+    setReliefFocus("yuma");
+    setViewMode("relief");
+    setPeriodPreset("custom");
+    setStartDraft(start);
+    setEndDraft(today);
+    setMinMagnitude(4.5);
+    setApplied({ start, end: today, minMagnitude: 4.5 });
+    setDepthExaggeration((current) => Math.max(current, 4));
+    setShowFaults(true);
+    setShowSlabs(true);
+    setShowEarthquakes(true);
+  }
 
   function addReliefPlate(plateId: string) {
     if (!plateId) return;
@@ -260,13 +282,16 @@ export function TectonicDepth3D() {
       </header>
 
       <section className={styles.viewModePanel} aria-label="Modo de visualización 3D">
-        <button type="button" className={!isRelief ? styles.activeViewMode : ""} onClick={() => setViewMode("globe")}>Globo</button>
-        <button type="button" className={isRelief ? styles.activeViewMode : ""} onClick={() => setViewMode("relief")}>Relieve 3D</button>
-        <span>{isRelief ? "1–4 placas en un mismo bloque topobatimétrico" : "Países visibles · toca una placa para seleccionarla"}</span>
+        <button type="button" className={!isRelief ? styles.activeViewMode : ""} onClick={() => { setViewMode("globe"); setReliefFocus("plates"); }}>Globo</button>
+        <button type="button" className={isRelief && reliefFocus === "plates" ? styles.activeViewMode : ""} onClick={() => { setViewMode("relief"); setReliefFocus("plates"); }}>Relieve 3D</button>
+        <button type="button" className={isRelief && reliefFocus === "yuma" ? styles.activeViewMode : ""} onClick={openYumaCase}>Caso Guaymate–Yuma</button>
+        <span>{isRelief ? reliefFocus === "yuma" ? "Fallas superficiales + Slab2 + profundidad hipocentral" : "1–4 placas en un mismo bloque topobatimétrico" : "Países visibles · toca una placa para seleccionarla"}</span>
       </section>
 
       <section className={styles.scienceNote}>
-        {isRelief ? (
+        {isRelief ? reliefFocus === "yuma" ? (
+          <><strong>Caso Guaymate–Yuma.</strong> La vista recorta el Este de La Española y dibuja las fallas activas sobre el relieve, mientras cada sismo aparece en su profundidad hipocentral con una guía vertical hacia la superficie. Así se puede ver por qué un epicentro proyectado cerca de una falla superficial no basta para atribuirle un evento ocurrido a ~100 km de profundidad.</>
+        ) : (
           <><strong>Cómo leer el bloque de relieve.</strong> La extensión se calcula a partir del conjunto de placas seleccionado. Cada placa activa se superpone con un color diferente sobre la misma topografía/batimetría; fallas GEM, Slab2 e hipocentros se recortan al área común. Si eliges placas muy alejadas, el DEM reduce automáticamente su resolución para proteger WebGL en móvil.</>
         ) : (
           <><strong>Cómo usar el globo.</strong> Los países y costas sirven de referencia geográfica. Las placas permanecen visibles simultáneamente; al tocar una, queda resaltada y Slab2/hipocentros se enfocan en su entorno. Puedes abrir esa selección directamente en Relieve 3D.</>
@@ -406,8 +431,8 @@ export function TectonicDepth3D() {
       <section className={styles.viewerPanel}>
         <div className={styles.viewerHead}>
           <div>
-            <span className={styles.eyebrow}>{isRelief ? "BLOQUE TOPOBATIMÉTRICO MULTIPLACA" : "GLOBO TECTÓNICO INTERACTIVO"}</span>
-            <h2>{isRelief ? `${reliefNames || "Placas"} · relieve → fallas → Slab2 → hipocentros` : globePlate ? `${globePlate.name} · toca otra placa o abre Relieve 3D` : "Países → placas → subducción → hipocentros"}</h2>
+            <span className={styles.eyebrow}>{isRelief ? reliefFocus === "yuma" ? "CASO GUAYMATE–YUMA · CORTE 3D" : "BLOQUE TOPOBATIMÉTRICO MULTIPLACA" : "GLOBO TECTÓNICO INTERACTIVO"}</span>
+            <h2>{isRelief ? reliefFocus === "yuma" ? "Este de RD · superficie → fallas → Slab2 → hipocentros" : `${reliefNames || "Placas"} · relieve → fallas → Slab2 → hipocentros` : globePlate ? `${globePlate.name} · toca otra placa o abre Relieve 3D` : "Países → placas → subducción → hipocentros"}</h2>
           </div>
           <div className={styles.legend}>
             <span><i className={styles.shallow} /> 0–70 km</span><span><i className={styles.intermediate} /> 70–300 km</span><span><i className={styles.deep} /> &gt;300 km</span>
@@ -428,6 +453,7 @@ export function TectonicDepth3D() {
                 showFaults={showFaults}
                 showSlabs={showSlabs}
                 showEarthquakes={showEarthquakes}
+                focusArea={reliefFocus}
               />
             ) : <div className={styles.loading}>Selecciona al menos una placa para el relieve…</div>
           ) : (
