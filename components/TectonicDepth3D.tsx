@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
 import { buildPlateOptions, preferredReliefPlateId } from "@/lib/plateRelief";
 import type { TectonicDepth3DResponse } from "@/lib/tectonicDepth3d";
+import { calculateFaultLoadScenario } from "@/lib/faultLoadScenario";
 import styles from "./TectonicDepth3D.module.css";
 
 const TectonicDepth3DRenderer = dynamic(
@@ -17,8 +18,7 @@ const TectonicRelief3DRenderer = dynamic(
   { ssr: false, loading: () => <div className={styles.loading}>Inicializando relieve topobatimétrico…</div> },
 );
 
-const DAY_MS = 86_400_000;
-type PeriodPreset = "7" | "15" | "30" | "60" | "custom";
+type PeriodPreset = "10y" | "50y" | "100y" | "300y" | "custom";
 type ViewMode = "globe" | "relief";
 
 type DepthEventsResponse = {
@@ -32,9 +32,10 @@ function todayKey() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function daysAgoKey(days: number, endKey = todayKey()) {
+function yearsAgoKey(years: number, endKey = todayKey()) {
   const end = new Date(`${endKey}T23:59:59.999Z`);
-  return new Date(end.getTime() - days * DAY_MS).toISOString().slice(0, 10);
+  end.setUTCFullYear(end.getUTCFullYear() - years);
+  return end.toISOString().slice(0, 10);
 }
 
 function formatDate(value: string) {
@@ -88,11 +89,11 @@ export function TectonicDepth3D() {
   const [tectonic, setTectonic] = useState<TectonicDepth3DResponse | null>(null);
   const [earthquakes, setEarthquakes] = useState<EarthquakeEvent[]>([]);
   const [eventTotal, setEventTotal] = useState(0);
-  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("30");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("custom");
   const [endDraft, setEndDraft] = useState(today);
-  const [startDraft, setStartDraft] = useState(daysAgoKey(30, today));
-  const [minMagnitude, setMinMagnitude] = useState(4.5);
-  const [applied, setApplied] = useState({ start: daysAgoKey(30, today), end: today, minMagnitude: 4.5 });
+  const [startDraft, setStartDraft] = useState("1700-01-01");
+  const [minMagnitude, setMinMagnitude] = useState(6);
+  const [applied, setApplied] = useState({ start: "1700-01-01", end: today, minMagnitude: 6 });
   const [exploded, setExploded] = useState(true);
   const [depthExaggeration, setDepthExaggeration] = useState(4);
   const [reliefExaggeration, setReliefExaggeration] = useState(3.5);
@@ -109,6 +110,16 @@ export function TectonicDepth3D() {
   const [geometryError, setGeometryError] = useState<string | null>(null);
   const [eventError, setEventError] = useState<string | null>(null);
   const [eventWarnings, setEventWarnings] = useState<string[]>([]);
+  const [loadInputs, setLoadInputs] = useState({
+    slipRateMinMmPerYear: 1.9,
+    slipRateMaxMmPerYear: 2.8,
+    elapsedYears: 275,
+    ruptureLengthKm: 50,
+    downDipWidthKm: 60,
+    rigidityGPa: 40,
+    couplingPct: 100,
+  });
+  const loadScenario = useMemo(() => calculateFaultLoadScenario(loadInputs), [loadInputs]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -183,6 +194,8 @@ export function TectonicDepth3D() {
 
   useEffect(() => {
     if (!plateOptions.length) return;
+    const caribbean = plateOptions.find((plate) => /caribbean|caribe/i.test(plate.name));
+    if (!globePlateId && caribbean) setGlobePlateId(caribbean.id);
     const valid = reliefPlateIds.filter((id) => plateOptions.some((plate) => plate.id === id)).slice(0, 4);
     if (!valid.length) {
       const preferred = preferredReliefPlateId(plateOptions);
@@ -190,7 +203,7 @@ export function TectonicDepth3D() {
       return;
     }
     if (valid.length !== reliefPlateIds.length || valid.some((id, index) => id !== reliefPlateIds[index])) setReliefPlateIds(valid);
-  }, [plateOptions, reliefPlateIds]);
+  }, [plateOptions, reliefPlateIds, globePlateId]);
 
   const selectGlobePlate = useCallback((plateId: string) => {
     setGlobePlateId(plateId);
@@ -214,12 +227,12 @@ export function TectonicDepth3D() {
 
   function choosePreset(next: Exclude<PeriodPreset, "custom">) {
     setPeriodPreset(next);
-    setStartDraft(daysAgoKey(Number(next), endDraft || today));
+    setStartDraft(yearsAgoKey(Number.parseInt(next, 10), endDraft || today));
   }
 
   function applyPeriod() {
     const end = endDraft || today;
-    const start = periodPreset === "custom" ? startDraft : daysAgoKey(Number(periodPreset), end);
+    const start = periodPreset === "custom" ? startDraft : yearsAgoKey(Number.parseInt(periodPreset, 10), end);
     setStartDraft(start);
     setApplied({ start, end, minMagnitude });
   }
@@ -231,12 +244,12 @@ export function TectonicDepth3D() {
     <main className={styles.dashboard}>
       <header className={styles.hero}>
         <div>
-          <span className={styles.eyebrow}>{isRelief ? "RELIEVE + GEM + GPLATES + SLAB2" : "MAPA MUNDIAL + GPLATES + SLAB2 + HIPOCENTROS"}</span>
-          <h1>Placas tectónicas en profundidad · 3D</h1>
+          <span className={styles.eyebrow}>{isRelief ? "CARIBE · RELIEVE + FALLAS + LOSAS" : "LA ESPAÑOLA · PLACAS + SUBDUCCIÓN + HISTORIAL"}</span>
+          <h1>El Caribe tectónico · mapa 3D</h1>
           <p>
             {isRelief
               ? "Bloque topobatimétrico dinámico para comparar hasta cuatro placas simultáneamente junto a fallas activas, Slab2 e hipocentros bajo la superficie."
-              : "Globo mundial con países, límites tectónicos y selección directa de placas. Toca una placa para aislar su contexto sísmico o abrirla en relieve."}
+              : "Explora la interacción de las placas del Caribe y Norteamérica, la subducción y los sismos históricos dentro de 1,000 km de La Española."}
           </p>
         </div>
         <div className={styles.modelChip}>
@@ -262,8 +275,8 @@ export function TectonicDepth3D() {
 
       <section className={styles.periodPanel} aria-label="Período sísmico">
         <div className={styles.presetRow}>
-          {(["7", "15", "30", "60"] as const).map((value) => (
-            <button key={value} type="button" className={periodPreset === value ? styles.activePreset : ""} onClick={() => choosePreset(value)}>{value} días</button>
+          {(["10y", "50y", "100y", "300y"] as const).map((value) => (
+            <button key={value} type="button" className={periodPreset === value ? styles.activePreset : ""} onClick={() => choosePreset(value)}>{value.replace("y", " años")}</button>
           ))}
           <button type="button" className={periodPreset === "custom" ? styles.activePreset : ""} onClick={() => setPeriodPreset("custom")}>Personalizado</button>
         </div>
@@ -276,16 +289,42 @@ export function TectonicDepth3D() {
           <input type="date" value={endDraft} max={today} onChange={(event) => {
             const next = event.target.value;
             setEndDraft(next);
-            if (periodPreset !== "custom" && next) setStartDraft(daysAgoKey(Number(periodPreset), next));
+            if (periodPreset !== "custom" && next) setStartDraft(yearsAgoKey(Number.parseInt(periodPreset, 10), next));
           }} />
         </label>
         <label>
           <span>Magnitud mínima</span>
           <select value={minMagnitude} onChange={(event) => setMinMagnitude(Number(event.target.value))}>
-            <option value={4.2}>M4.2+</option><option value={4.5}>M4.5+</option><option value={5}>M5.0+</option><option value={5.5}>M5.5+</option><option value={6}>M6.0+</option>
+            <option value={4.5}>M4.5+</option><option value={5}>M5.0+</option><option value={6}>M6.0+</option><option value={7}>M7.0+</option>
           </select>
         </label>
         <button type="button" className={styles.applyButton} onClick={applyPeriod} disabled={loadingEvents}>{loadingEvents ? "Cargando…" : "Aplicar período"}</button>
+      </section>
+
+      <section className={styles.scienceNote}>
+        <strong>Catálogo histórico.</strong> Eventos USGS ComCat dentro de 1,000 km de La Española. La cobertura y la precisión disminuyen hacia los siglos anteriores; ausencia de eventos registrados no significa ausencia de terremotos.
+      </section>
+
+      <section className={styles.loadPanel} aria-labelledby="fault-load-title">
+        <div className={styles.loadIntro}>
+          <span className={styles.eyebrow}>ESCENARIO MECÁNICO · ENTRADAS EDITABLES</span>
+          <h2 id="fault-load-title">Cinturón de Los Muertos · carga acumulada</h2>
+          <p>El déficit se aproxima como tasa de deslizamiento × años elegidos. La magnitud supone que ese déficit se libera en un solo tramo, usando momento sísmico; no indica cuándo ocurrirá ni qué tan probable es.</p>
+        </div>
+        <div className={styles.loadControls}>
+          <label><span>Tasa mínima <b>{loadInputs.slipRateMinMmPerYear.toFixed(1)} mm/año</b></span><input type="range" min="0.5" max="8" step="0.1" value={loadInputs.slipRateMinMmPerYear} onChange={(event) => setLoadInputs((current) => ({ ...current, slipRateMinMmPerYear: Math.min(Number(event.target.value), current.slipRateMaxMmPerYear) }))} /></label>
+          <label><span>Tasa máxima <b>{loadInputs.slipRateMaxMmPerYear.toFixed(1)} mm/año</b></span><input type="range" min="0.5" max="8" step="0.1" value={loadInputs.slipRateMaxMmPerYear} onChange={(event) => setLoadInputs((current) => ({ ...current, slipRateMaxMmPerYear: Math.max(Number(event.target.value), current.slipRateMinMmPerYear) }))} /></label>
+          <label><span>Años modelados <b>{loadInputs.elapsedYears} años</b></span><input type="range" min="25" max="500" step="5" value={loadInputs.elapsedYears} onChange={(event) => setLoadInputs((current) => ({ ...current, elapsedYears: Number(event.target.value) }))} /></label>
+          <label><span>Longitud del tramo <b>{loadInputs.ruptureLengthKm} km</b></span><input type="range" min="25" max="450" step="5" value={loadInputs.ruptureLengthKm} onChange={(event) => setLoadInputs((current) => ({ ...current, ruptureLengthKm: Number(event.target.value) }))} /></label>
+          <label><span>Ancho bajo tierra <b>{loadInputs.downDipWidthKm} km</b></span><input type="range" min="10" max="80" step="5" value={loadInputs.downDipWidthKm} onChange={(event) => setLoadInputs((current) => ({ ...current, downDipWidthKm: Number(event.target.value) }))} /></label>
+          <label><span>Rigidez de la roca <b>{loadInputs.rigidityGPa} GPa</b></span><input type="range" min="20" max="60" step="1" value={loadInputs.rigidityGPa} onChange={(event) => setLoadInputs((current) => ({ ...current, rigidityGPa: Number(event.target.value) }))} /></label>
+          <label><span>Acoplamiento supuesto <b>{loadInputs.couplingPct}%</b></span><input type="range" min="0" max="100" step="5" value={loadInputs.couplingPct} onChange={(event) => setLoadInputs((current) => ({ ...current, couplingPct: Number(event.target.value) }))} /></label>
+        </div>
+        <div className={styles.loadResults}>
+          <article><span>Déficit acumulado del escenario</span><strong>{loadScenario.deficitMinM.toFixed(2)}–{loadScenario.deficitMaxM.toFixed(2)} m</strong></article>
+          <article><span>Mw equivalente si se libera todo en un tramo</span><strong>Mw {loadScenario.magnitudeMin.toFixed(2)}–{loadScenario.magnitudeMax.toFixed(2)}</strong></article>
+        </div>
+        <p className={styles.loadCaveat}><strong>Lectura responsable:</strong> las tasas, el tiempo, el área de ruptura y el acoplamiento tienen incertidumbre. La falla puede liberar deformación de forma parcial, en varios sismos o por deslizamiento lento. Las tasas iniciales reflejan el rango que aparece en tu referencia y deben cotejarse con publicaciones geodésicas antes de presentarse como estimación observada.</p>
       </section>
 
       <section className={styles.metrics}>

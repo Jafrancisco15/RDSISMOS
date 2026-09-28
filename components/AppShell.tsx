@@ -73,10 +73,10 @@ export function AppShell() {
     <>
       <nav className="main-tabs" aria-label="Navegación principal">
         <button className={tab === "globe" ? "active" : ""} onClick={() => setTab("globe")}>Mapa 3D</button>
+        <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Caribe 3D</button>
         <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
         <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
         <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>ETAS Projection</button>
-        <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Placas 3D</button>
         <button className={tab === "tectonic4d" ? "active" : ""} onClick={() => setTab("tectonic4d")}>Tectonic State 4D</button>
         <button className={tab === "mechanics4d" ? "active" : ""} onClick={() => setTab("mechanics4d")}>Estado mecánico 3D</button>
         <button className={tab === "coreseismic" ? "active" : ""} onClick={() => setTab("coreseismic")}>Núcleo–Sismicidad</button>
