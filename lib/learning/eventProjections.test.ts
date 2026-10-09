@@ -16,7 +16,7 @@ const prediction: ArchivedEventPrediction = {
   id: "capsule:DO", countryName: "República Dominicana", generatedAt: "2026-08-03T12:00:00Z",
   createdAt: "2026-08-03T12:01:00Z", sourceEventExternalId: "source-event", latitude: 18.8, longitude: -70.2,
   radiusKm: 340, probabilityPct: 35, surveillanceStart: "2026-08-01T00:00:00Z",
-  surveillanceEnd: "2026-08-10T23:59:59Z", magnitudeMin: 4.5, magnitudeMax: 5.2,
+  surveillanceEnd: "2026-08-10T23:59:59Z", magnitudeMin: 4.5, magnitudeMax: 5.2, fulfilled: true, matchedEventIds: [event.id],
 };
 
 test("archived geographic, temporal and magnitude match links to the exact prediction", () => {
@@ -43,20 +43,25 @@ test("rejects source event by either catalogue ID and geographic/time misses", (
   ]) assert.equal(matchEventProjections(event, [{ ...prediction, ...patch }]).matches.length, 0);
 });
 
-test("outside magnitude is linked but never counted as a complete hit", () => {
-  const result = matchEventProjections({ ...event, magnitude: 7 }, [prediction]);
-  assert.equal(result.status, "outside_range");
-  assert.equal(result.matches[0].withinMagnitude, false);
+test("outside magnitude never links even if an old outcome marked it fulfilled", () => {
+  assert.equal(matchEventProjections({ ...event, magnitude: 7 }, [prediction]).matches.length, 0);
 });
 
-test("complete matches lead, all matching predictions remain accessible", () => {
+test("requires the exact observed event in a positive stored evaluation", () => {
+  assert.equal(matchEventProjections(event, [{ ...prediction, fulfilled: false }]).matches.length, 0);
+  assert.equal(matchEventProjections(event, [{ ...prediction, matchedEventIds: ["another-event"] }]).matches.length, 0);
+  assert.equal(matchEventProjections(event, [{ ...prediction, matchedEventIds: [event.externalId] }]).status, "projected");
+});
+
+test("links only fulfilled matches within magnitude, ordered by probability", () => {
   const result = matchEventProjections(event, [
     { ...prediction, id: "outside", probabilityPct: 90, magnitudeMin: 6 },
+    { ...prediction, id: "unfulfilled", fulfilled: false },
     prediction,
     { ...prediction, id: "second", probabilityPct: 50 },
   ]);
   assert.equal(result.status, "projected");
-  assert.deepEqual(result.matches.map((match) => match.id), ["second", "capsule:DO", "outside"]);
+  assert.deepEqual(result.matches.map((match) => match.id), ["second", "capsule:DO"]);
 });
 
 test("closed windows and magnitude boundaries are inclusive", () => {
@@ -64,14 +69,14 @@ test("closed windows and magnitude boundaries are inclusive", () => {
 });
 
 test("matches use the same minimum displayed by the historical globe", () => {
-  assert.equal(matchEventProjections({ ...event, magnitude: 4 }, [{ ...prediction, magnitudeMin: 3.8 }]).status, "outside_range");
+  assert.equal(matchEventProjections({ ...event, magnitude: 4 }, [{ ...prediction, magnitudeMin: 3.8 }]).status, "not_projected");
 });
 
 test("rendered status exposes the archived link and never calls unknown data a miss", () => {
   const markup = renderToStaticMarkup(createElement(EventProjectionStatus, { projection: matchEventProjections(event, [prediction]) }));
-  assert.match(markup, /Sí · proyectado/);
+  assert.match(markup, /Proyección cumplida/);
   assert.match(markup, /href="\/predicciones\/capsule%3ADO"/);
-  assert.match(renderToStaticMarkup(createElement(EventProjectionStatus)), /Sin verificar/);
+  assert.match(renderToStaticMarkup(createElement(EventProjectionStatus)), /Archivo de proyecciones no disponible/);
 });
 
 test("missing database leaves verification unknown, never a false negative", async () => {

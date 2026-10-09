@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
+import { AppNavigation, type AppTab } from "./AppNavigation";
 import { AboutRdsismos } from "./AboutRdsismos";
 import { AutoValidationPanel } from "./AutoValidationPanel";
 import { BoundaryHistoryAboutNote } from "./BoundaryHistoryAboutNote";
@@ -46,7 +47,6 @@ const SeismicHypothesesLab = dynamic(
   { loading: () => <div className="map-loading" style={{ margin: 28 }}>Cargando laboratorio de hipótesis…</div> },
 );
 
-type AppTab = "globe" | "depth3d" | "tectonic4d" | "mechanics4d" | "coreseismic" | "hypotheses" | "extractions" | "geomagnetism" | "volcano" | "scope" | "projection" | "validation" | "history" | "heatmap" | "events" | "plates" | "lunar" | "simulator" | "about";
 
 export function AppShell() {
   const [tab, setTab] = useState<AppTab>("globe");
@@ -71,27 +71,7 @@ export function AppShell() {
 
   return (
     <>
-      <nav className="main-tabs" aria-label="Navegación principal">
-        <button className={tab === "globe" ? "active" : ""} onClick={() => setTab("globe")}>Mapa 3D</button>
-        <button className={tab === "depth3d" ? "active" : ""} onClick={() => setTab("depth3d")}>Caribe 3D</button>
-        <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>Historial</button>
-        <button className={tab === "scope" ? "active" : ""} onClick={() => setTab("scope")}>Scope Projection</button>
-        <button className={tab === "projection" ? "active" : ""} onClick={() => setTab("projection")}>ETAS Projection</button>
-        <button className={tab === "tectonic4d" ? "active" : ""} onClick={() => setTab("tectonic4d")}>Tectonic State 4D</button>
-        <button className={tab === "mechanics4d" ? "active" : ""} onClick={() => setTab("mechanics4d")}>Estado mecánico 3D</button>
-        <button className={tab === "coreseismic" ? "active" : ""} onClick={() => setTab("coreseismic")}>Núcleo–Sismicidad</button>
-        <button className={tab === "hypotheses" ? "active" : ""} onClick={() => setTab("hypotheses")}>Hipótesis Sísmicas</button>
-        <button className={tab === "extractions" ? "active" : ""} onClick={() => setTab("extractions")}>Extracciones</button>
-        <button className={tab === "geomagnetism" ? "active" : ""} onClick={() => setTab("geomagnetism")}>Geomagnetismo</button>
-        <button className={tab === "volcano" ? "active" : ""} onClick={() => setTab("volcano")}>Volcano activity</button>
-        <button className={tab === "plates" ? "active" : ""} onClick={() => setTab("plates")}>GPlates</button>
-        <button className={tab === "validation" ? "active" : ""} onClick={() => setTab("validation")}>Auto-Validación</button>
-        <button className={tab === "heatmap" ? "active" : ""} onClick={() => setTab("heatmap")}>Mapa de Calor Histórico</button>
-        <button className={tab === "events" ? "active" : ""} onClick={() => setTab("events")}>Eventos Sísmicos</button>
-        <button className={tab === "lunar" ? "active" : ""} onClick={() => setTab("lunar")}>Lunar Phase Experimental</button>
-        <button className={tab === "simulator" ? "active" : ""} onClick={() => setTab("simulator")}>Simulador</button>
-        <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>Acerca</button>
-      </nav>
+      <AppNavigation tab={tab} onSelect={setTab} />
 
       {tab === "globe" && (
         <>

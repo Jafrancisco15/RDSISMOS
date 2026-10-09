@@ -310,13 +310,13 @@ export function EarthquakeEventsDashboard() {
       </div>
 
       <article className="panel earthquake-table-panel">
-        <p className="event-projection-note">Proyección previa: compara ubicación, fecha y magnitud con proyecciones por país emitidas y guardadas antes del sismo. «No consta» significa que no hay coincidencia archivada; no prueba que nunca se mostrara. ETAS no conserva aquí un archivo de emisiones.</p>
+        <p className="event-projection-note">Solo se enlazan proyecciones cumplidas cuya evaluación registra este sismo.</p>
         <div className="section-heading">
           <div><span className="eyebrow">Resultados paginados</span><h2>{page ? page.total.toLocaleString() : "—"} eventos encontrados</h2></div>
           <div className="export-actions"><button onClick={() => exportData("csv")}>CSV</button><button onClick={() => exportData("json")}>JSON</button><button onClick={() => exportData("geojson")}>GeoJSON</button></div>
         </div>
         {loading ? <div className="table-skeleton">Cargando eventos…</div> : page?.events.length ? (
-          <div className="table-scroll"><table><thead><tr><th>UTC</th><th>Hora local</th><th>Lugar</th><th>Región</th><th>Magnitud</th><th>Tipo</th><th>Prof. km</th><th>Lat/Lon</th><th>Fuente</th><th>Red</th><th>Estado</th><th>Proyectado en mapa</th><th /></tr></thead><tbody>
+          <div className="table-scroll"><table><thead><tr><th>UTC</th><th>Hora local</th><th>Lugar</th><th>Región</th><th>Magnitud</th><th>Tipo</th><th>Prof. km</th><th>Lat/Lon</th><th>Fuente</th><th>Red</th><th>Estado</th><th>Proyección cumplida</th><th /></tr></thead><tbody>
             {page.events.map((event) => (
               <tr key={`${event.sourceCatalog}:${event.id}`} className={selected?.id === event.id ? "selected" : ""} onClick={() => setSelected(event)} tabIndex={0} onKeyDown={(keyboard) => { if (keyboard.key === "Enter") setSelected(event); }}>
                 <td>{formatUtc(event.timeUtc)}</td><td>{new Date(event.timeUtc).toLocaleString()}</td><td>{event.place}</td><td>{event.countryOrRegion}</td><td><strong>M{event.magnitude.toFixed(1)}</strong></td><td>{event.magnitudeType}</td><td>{event.depthKm.toFixed(1)}</td>
@@ -363,7 +363,7 @@ function EventDetail({ event }: { event: EarthquakeEvent }) {
     ["Error horizontal", event.horizontalError], ["Error profundidad", event.depthError],
     ["Error magnitud", event.magnitudeError], ["Actualizado", formatUtc(event.updatedUtc)],
   ];
-  return <><span className="eyebrow">Detalle del evento</span><h2>{event.place}</h2><h3>Proyectado en mapa</h3><EventProjectionStatus projection={event.projection} /><dl>{fields.map(([key, value]) => <div key={String(key)}><dt>{key}</dt><dd>{value ?? "—"}</dd></div>)}</dl>{event.sourceUrl && <a href={event.sourceUrl} target="_blank" rel="noreferrer">Abrir evento en la fuente original</a>}</>;
+  return <><span className="eyebrow">Detalle del evento</span><h2>{event.place}</h2><h3>Proyección cumplida</h3><EventProjectionStatus projection={event.projection} /><dl>{fields.map(([key, value]) => <div key={String(key)}><dt>{key}</dt><dd>{value ?? "—"}</dd></div>)}</dl>{event.sourceUrl && <a href={event.sourceUrl} target="_blank" rel="noreferrer">Abrir evento en la fuente original</a>}</>;
 }
 
 function buildParams(form: FormState, offset: number) {

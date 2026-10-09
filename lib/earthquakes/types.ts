@@ -50,7 +50,7 @@ export interface EarthquakeEvent {
 }
 
 export interface EventProjection {
-  status: "projected" | "outside_range" | "not_projected" | "unavailable";
+  status: "projected" | "not_projected" | "unavailable";
   matches: Array<{
     id: string;
     href: string;
@@ -59,7 +59,6 @@ export interface EventProjection {
     probabilityPct: number;
     magnitudeMin: number;
     magnitudeMax: number;
-    withinMagnitude: boolean;
   }>;
 }
 

@@ -16,17 +16,21 @@ export interface ArchivedEventPrediction {
   surveillanceEnd: string;
   magnitudeMin: number;
   magnitudeMax: number;
+  fulfilled: boolean;
+  matchedEventIds: string[];
 }
 
-/** Match archived forecasts, never a retrospective reconstruction of ETAS. */
+/** Only link evaluated fulfillments that explicitly identify this observed event. */
 export function matchEventProjections(event: EarthquakeEvent, predictions: ArchivedEventPrediction[]): EventProjection {
   const time = Date.parse(event.timeUtc);
   const matches = predictions.filter((prediction) => {
+    if (!prediction.fulfilled || ![event.id, event.externalId].some((id) => prediction.matchedEventIds.includes(id))) return false;
     const issued = Date.parse(prediction.generatedAt);
     const stored = Date.parse(prediction.createdAt);
     if (!Number.isFinite(time) || !Number.isFinite(issued) || !Number.isFinite(stored)) return false;
     if (issued >= time || stored >= time || prediction.probabilityPct <= 0 || prediction.magnitudeMax < 4.2) return false;
     if ([event.id, event.externalId].includes(prediction.sourceEventExternalId)) return false;
+    if (event.magnitude < Math.max(4.2, prediction.magnitudeMin) || event.magnitude > prediction.magnitudeMax) return false;
     return eventFallsWithinPredictionWindow(event, prediction)
       && eventDistanceFromPrediction(event, prediction) <= prediction.radiusKm;
   }).map((prediction) => ({
@@ -37,11 +41,9 @@ export function matchEventProjections(event: EarthquakeEvent, predictions: Archi
     probabilityPct: prediction.probabilityPct,
     magnitudeMin: Math.max(4.2, prediction.magnitudeMin),
     magnitudeMax: prediction.magnitudeMax,
-    withinMagnitude: event.magnitude >= Math.max(4.2, prediction.magnitudeMin) && event.magnitude <= prediction.magnitudeMax,
-  })).sort((a, b) => Number(b.withinMagnitude) - Number(a.withinMagnitude)
-    || b.probabilityPct - a.probabilityPct || a.id.localeCompare(b.id));
+  })).sort((a, b) => b.probabilityPct - a.probabilityPct || a.id.localeCompare(b.id));
   return {
-    status: matches.some((match) => match.withinMagnitude) ? "projected" : matches.length ? "outside_range" : "not_projected",
+    status: matches.length ? "projected" : "not_projected",
     matches,
   };
 }
@@ -57,6 +59,7 @@ export async function annotateEventProjections(events: EarthquakeEvent[]): Promi
   const sql = getDb();
   if (!sql) return { events: unavailable(), warning: "Archivo de proyecciones no disponible; no se puede verificar la proyección previa." };
   const times = events.map((event) => event.timeUtc).sort();
+  const eventIds = [...new Set(events.flatMap((event) => [event.id, event.externalId]))];
   try {
     // One bounded, parameterized archive read for the entire catalogue page.
     // Both timestamps prevent backdated/recomputed capsules from becoming hits.
@@ -64,10 +67,18 @@ export async function annotateEventProjections(events: EarthquakeEvent[]): Promi
       SELECT p.id, p.country_name, p.latitude, p.longitude, p.radius_km,
         p.probability_pct, p.surveillance_start, p.surveillance_end,
         p.magnitude_min, p.magnitude_max, p.created_at,
-        c.generated_at, c.source_event_external_id
+        c.generated_at, c.source_event_external_id,
+        o.first_event_external_id, o.strongest_event_external_id,
+        o.evaluation_payload->'matchedEventIds' AS matched_event_ids
       FROM migration_country_predictions p
       JOIN migration_capsules c ON c.id = p.capsule_id
-      WHERE p.surveillance_end >= ${times[0]}
+      JOIN migration_outcomes o ON o.prediction_id = p.id AND o.occurred IS TRUE
+      WHERE (
+          o.first_event_external_id = ANY(${eventIds}::text[])
+          OR o.strongest_event_external_id = ANY(${eventIds}::text[])
+          OR (o.evaluation_payload->'matchedEventIds') ?| ${eventIds}::text[]
+        )
+        AND p.surveillance_end >= ${times[0]}
         AND p.surveillance_start <= ${times[times.length - 1]}
         AND c.generated_at < ${times[times.length - 1]}
         AND p.created_at < ${times[times.length - 1]}
@@ -89,6 +100,10 @@ export async function annotateEventProjections(events: EarthquakeEvent[]): Promi
       surveillanceStart: new Date(String(row.surveillance_start)).toISOString(),
       surveillanceEnd: new Date(String(row.surveillance_end)).toISOString(),
       magnitudeMin: Number(row.magnitude_min), magnitudeMax: Number(row.magnitude_max),
+      fulfilled: true,
+      matchedEventIds: [row.first_event_external_id, row.strongest_event_external_id,
+        ...(Array.isArray(row.matched_event_ids) ? row.matched_event_ids : [])]
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
     }));
     return { events: events.map((event) => ({ ...event, projection: matchEventProjections(event, predictions) })) };
   } catch {
