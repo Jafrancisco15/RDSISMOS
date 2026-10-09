@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { queryEarthquakeCatalog } from "@/lib/earthquakes/catalog";
 import { parseEarthquakeFilters } from "@/lib/earthquakes/query";
+import { annotateEventProjections } from "@/lib/learning/eventProjections";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,7 +11,10 @@ export async function GET(request: NextRequest) {
   try {
     const filters = parseEarthquakeFilters(request.nextUrl.searchParams);
     const page = await queryEarthquakeCatalog(filters, request.signal);
-    return NextResponse.json(page, {
+    const annotated = await annotateEventProjections(page.events);
+    return NextResponse.json({ ...page, events: annotated.events,
+      warnings: [...(page.warnings ?? []), ...(annotated.warning ? [annotated.warning] : [])],
+    }, {
       headers: { "Cache-Control": "private, no-store, max-age=0" },
     });
   } catch (error) {

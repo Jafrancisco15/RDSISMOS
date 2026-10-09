@@ -85,6 +85,7 @@ export interface ProjectionHistoryItem {
 }
 
 export interface ProjectionHistoryFilters {
+  predictionId?: string;
   page?: number;
   pageSize?: number;
   status?: ProjectionHistoryStatus | "all";
@@ -209,6 +210,7 @@ export async function loadProjectionHistory(
   const pageSize = Math.min(100, Math.max(20, Math.trunc(filters.pageSize ?? 50)));
   const page = Math.max(1, Math.trunc(filters.page ?? 1));
   const status = filters.status ?? "all";
+  const predictionId = filters.predictionId ?? "";
   const countryCode = (filters.countryCode ?? "").trim().toUpperCase();
   const search = (filters.search ?? "").trim().slice(0, 120);
   const searchPattern = `%${search}%`;
@@ -293,7 +295,8 @@ export async function loadProjectionHistory(
         FROM migration_country_predictions p
         JOIN migration_capsules c ON c.id = p.capsule_id
         LEFT JOIN migration_outcomes o ON o.prediction_id = p.id
-        WHERE COALESCE(p.analog_hits, 0) > 0 OR o.prediction_id IS NOT NULL
+        WHERE (${predictionId} = '' OR p.id = ${predictionId})
+          AND (COALESCE(p.analog_hits, 0) > 0 OR o.prediction_id IS NOT NULL OR p.id = ${predictionId})
       ), projection_rows AS (
         SELECT
           *,

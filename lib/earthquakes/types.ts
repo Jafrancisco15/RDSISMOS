@@ -46,6 +46,21 @@ export interface EarthquakeEvent {
   magnitudeError?: number;
   magnitudeStationCount?: number;
   sourceUrl?: string;
+  projection?: EventProjection;
+}
+
+export interface EventProjection {
+  status: "projected" | "outside_range" | "not_projected" | "unavailable";
+  matches: Array<{
+    id: string;
+    href: string;
+    countryName: string;
+    generatedAt: string;
+    probabilityPct: number;
+    magnitudeMin: number;
+    magnitudeMax: number;
+    withinMagnitude: boolean;
+  }>;
 }
 
 export interface EarthquakePage {

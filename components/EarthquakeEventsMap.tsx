@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from "react-leaflet";
 import type { EarthquakeEvent } from "@/lib/earthquakes/types";
+import { EventProjectionStatus } from "./EventProjectionStatus";
 
 function FocusEvent({ event }: { event: EarthquakeEvent | null }) {
   const map = useMap();
@@ -35,6 +36,7 @@ export function EarthquakeEventsMap({ events, selectedId, onSelect }: { events: 
               {new Date(event.timeUtc).toLocaleString(undefined, { timeZoneName: "short" })}<br />
               Profundidad: {event.depthKm.toFixed(1)} km<br />
               {event.latitude.toFixed(4)}, {event.longitude.toFixed(4)}
+              <EventProjectionStatus projection={event.projection} />
             </Popup>
           </CircleMarker>
         );
