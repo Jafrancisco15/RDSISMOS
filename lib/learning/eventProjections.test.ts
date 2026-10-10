@@ -22,7 +22,7 @@ const prediction: ArchivedEventPrediction = {
 test("archived geographic, temporal and magnitude match links to the exact prediction", () => {
   const result = matchEventProjections(event, [prediction]);
   assert.equal(result.status, "projected");
-  assert.equal(result.matches[0].href, "/predicciones/capsule%3ADO");
+  assert.equal(result.matches[0].href, "/predicciones?id=capsule%3ADO");
 });
 
 test("does not claim a prediction for historical reconstructions or backdated storage", () => {
@@ -75,7 +75,7 @@ test("matches use the same minimum displayed by the historical globe", () => {
 test("rendered status exposes the archived link and never calls unknown data a miss", () => {
   const markup = renderToStaticMarkup(createElement(EventProjectionStatus, { projection: matchEventProjections(event, [prediction]) }));
   assert.match(markup, /Proyección cumplida/);
-  assert.match(markup, /href="\/predicciones\/capsule%3ADO"/);
+  assert.match(markup, /href="\/predicciones\?id=capsule%3ADO"/);
   assert.match(renderToStaticMarkup(createElement(EventProjectionStatus)), /Archivo de proyecciones no disponible/);
 });
 
@@ -91,4 +91,17 @@ test("missing database leaves verification unknown, never a false negative", asy
     if (original === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = original;
   }
+});
+
+
+test("empty or stale hrefs are reconstructed from the archived ID; missing IDs show N/A", () => {
+  const related = matchEventProjections(event, [prediction]);
+  related.matches[0].href = "";
+  assert.match(renderToStaticMarkup(createElement(EventProjectionStatus, { projection: related })), /href="\/predicciones\?id=capsule%3ADO"/);
+  related.matches[0].id = "";
+  const missing = renderToStaticMarkup(createElement(EventProjectionStatus, { projection: related }));
+  assert.match(missing, /N\/A/);
+  assert.doesNotMatch(missing, /<a/);
+  assert.equal(matchEventProjections(event, [{ ...prediction, id: " " }]).status, "not_projected");
+  assert.match(renderToStaticMarkup(createElement(EventProjectionStatus, { projection: { status: "not_projected", matches: [] } })), /N\/A/);
 });

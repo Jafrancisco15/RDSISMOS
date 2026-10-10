@@ -6,12 +6,12 @@ export type AppTab = "globe" | "depth3d" | "tectonic4d" | "mechanics4d" | "cores
 
 const PRIMARY_TABS: Array<{ id: AppTab; label: string }> = [
   { id: "globe", label: "Mapa 3D" },
-  { id: "history", label: "Historial Scope Projection" },
+  { id: "scope", label: "Scope Projection" },
+  { id: "history", label: "Historial" },
   { id: "events", label: "Eventos Sísmicos" },
 ];
 const OTHER_TABS: Array<{ id: AppTab; label: string }> = [
   { id: "depth3d", label: "Caribe 3D" },
-  { id: "scope", label: "Scope Projection" },
   { id: "projection", label: "ETAS Projection" },
   { id: "tectonic4d", label: "Tectonic State 4D" },
   { id: "mechanics4d", label: "Estado mecánico 3D" },

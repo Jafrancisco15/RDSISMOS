@@ -378,7 +378,7 @@ export async function loadProjectionHistory(
       OFFSET ${offset}
     `;
 
-    const countRows = await sql`
+    const countRows = predictionId ? [] : await sql`
       WITH joined AS (
         SELECT
           p.id,

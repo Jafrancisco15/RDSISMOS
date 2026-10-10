@@ -1,3 +1,4 @@
+import { predictionHref } from "./predictionLink";
 import { getDb } from "@/lib/db";
 import type { EarthquakeEvent, EventProjection } from "@/lib/earthquakes/types";
 import { eventDistanceFromPrediction, eventFallsWithinPredictionWindow } from "./evaluate";
@@ -24,7 +25,7 @@ export interface ArchivedEventPrediction {
 export function matchEventProjections(event: EarthquakeEvent, predictions: ArchivedEventPrediction[]): EventProjection {
   const time = Date.parse(event.timeUtc);
   const matches = predictions.filter((prediction) => {
-    if (!prediction.fulfilled || ![event.id, event.externalId].some((id) => prediction.matchedEventIds.includes(id))) return false;
+    if (!predictionHref(prediction.id) || !prediction.fulfilled || ![event.id, event.externalId].some((id) => prediction.matchedEventIds.includes(id))) return false;
     const issued = Date.parse(prediction.generatedAt);
     const stored = Date.parse(prediction.createdAt);
     if (!Number.isFinite(time) || !Number.isFinite(issued) || !Number.isFinite(stored)) return false;
@@ -35,7 +36,7 @@ export function matchEventProjections(event: EarthquakeEvent, predictions: Archi
       && eventDistanceFromPrediction(event, prediction) <= prediction.radiusKm;
   }).map((prediction) => ({
     id: prediction.id,
-    href: `/predicciones/${encodeURIComponent(prediction.id)}`,
+    href: predictionHref(prediction.id)!,
     countryName: prediction.countryName,
     generatedAt: prediction.generatedAt,
     probabilityPct: prediction.probabilityPct,
