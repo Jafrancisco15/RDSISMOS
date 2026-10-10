@@ -33,7 +33,7 @@ import { TectonicSimulator } from "./TectonicSimulator";
 import { VolcanoActivityDashboard } from "./VolcanoActivityDashboard";
 
 const LunarPhaseExperimental = dynamic(
-  () => import("./LunarPhaseExperimental").then((module) => module.LunarPhaseExperimental),
+  () => import("./LunarPhaseTemporalExperimental").then((module) => module.LunarPhaseTemporalExperimental),
   { ssr: false, loading: () => <div className="map-loading" style={{ margin: 28 }}>Inicializando globo lunar 3D…</div> },
 );
 
